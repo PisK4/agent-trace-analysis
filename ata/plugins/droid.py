@@ -56,7 +56,8 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
             mid = str(raw.get("id") or f"{session_id}:{role}:{ts}")
             if role == "assistant":
                 state["last_assistant_id"] = mid
-            text = texts or "(empty)"
+                state["request_no"] = int(state.get("request_no") or 0) + 1
+            text = texts or ""
             out.append(_ev(
                 f"{session_id}:msg:{mid}", agent_id, session_id, ts,
                 "message.upserted", turn,
@@ -65,16 +66,13 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                     "role": role,
                     "text": text[:200],
                     "status": "completed",
-                    "request_no": None if role == "user" else int(state.get("request_no", 0)) + (1 if role == "assistant" else 0) or None,
+                    "request_no": state.get("request_no") if role == "assistant" else None,
                     "usage": None,
                     "started_at": ts,
                     "duration_ms": 1,
                     "output_text": text if role == "assistant" else None,
                 },
             ))
-            if role == "assistant":
-                state["request_no"] = int(state.get("request_no") or 0) + 1
-                out[-1]["payload"]["request_no"] = state["request_no"]
         else:
             turn = state.get("turn") or 1
         for block in _blocks(content):
@@ -96,8 +94,11 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                     "duration_ms": None,
                 }
                 state.setdefault("tools", {})[cid] = payload
+                # 与 Pi 插件同款修法（见 plugins/pi.py）：start/end 拆成两个 event id，
+                # 否则幂等账本（重复 id 只认第一条）会吞掉 tool_result 的完成态，
+                # 工具行永远 pending。投影层按 tool_call_id 合并，后写覆盖前写。
                 out.append(_ev(
-                    f"{session_id}:tool:{cid}", agent_id, session_id, ts,
+                    f"{session_id}:tool:{cid}:start", agent_id, session_id, ts,
                     "tool.upserted", state.get("turn") or 1,
                     payload,
                 ))
@@ -108,7 +109,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 result = _result_text(block.get("content"))
                 prev = state.setdefault("tools", {}).get(cid, {})
                 out.append(_ev(
-                    f"{session_id}:tool:{cid}", agent_id, session_id, ts,
+                    f"{session_id}:tool:{cid}:end", agent_id, session_id, ts,
                     "tool.upserted", state.get("turn") or 1,
                     {
                         "tool_call_id": cid,
