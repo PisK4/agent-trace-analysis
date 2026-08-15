@@ -40,7 +40,11 @@ def translate_file(path: Path, translate_line, offset: int = 0):
     for line in rest.splitlines():
         if not line.strip():
             continue
-        raw = json.loads(line)
+        try:
+            raw = json.loads(line)
+        except (ValueError, TypeError):
+            # 运行中写入一半的行、或厂商文件自身的损坏行：跳过，不拖垮整个会话。
+            continue
         events.extend(translate_line(raw, state))
     return events, new_offset
 
