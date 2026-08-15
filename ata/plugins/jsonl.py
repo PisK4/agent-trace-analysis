@@ -2,7 +2,21 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime
 from pathlib import Path
+
+
+def iso_to_ms(value, fallback: int = 1) -> int:
+    """ISO 8601 字符串或 Unix 秒/毫秒 → Unix 毫秒。解析失败用 fallback。"""
+    if value is None:
+        return fallback
+    if isinstance(value, (int, float)):
+        return int(value) if value > 10**12 else int(value * 1000)
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return int(dt.timestamp() * 1000)
+    except ValueError:
+        return fallback
 
 
 def translate_file(path: Path, translate_line, offset: int = 0):

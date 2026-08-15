@@ -1,0 +1,11 @@
+{"timestamp":"2026-08-16T09:00:00Z","type":"session_meta","payload":{"session_id":"codex-verify","id":"codex-verify","cwd":"/tmp/fixture","originator":"implement the codex adapter","base_instructions":"You are Codex, the command line tool for OpenAI."}}
+{"timestamp":"2026-08-16T09:00:01Z","type":"turn_context","payload":{"turn_id":"t1","model":"gpt-5","cwd":"/tmp/fixture"}}
+{"timestamp":"2026-08-16T09:00:02Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1","started_at":1786870801}}
+{"timestamp":"2026-08-16T09:00:03Z","type":"response_item","payload":{"type":"message","role":"user","id":"m1","content":[{"type":"input_text","text":"implement the codex adapter"}]}}
+{"timestamp":"2026-08-16T09:00:09Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"m2","content":[{"type":"output_text","text":"here is the plan"}]}}
+{"timestamp":"2026-08-16T09:00:10Z","type":"response_item","payload":{"type":"function_call","call_id":"call-1","name":"shell","arguments":"{\"command\":\"ls\"}","id":"r1"}}
+{"timestamp":"2026-08-16T09:00:12Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"fixture\n","id":"r2"}}
+{"timestamp":"2026-08-16T09:00:13Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"cached_input_tokens":100,"cache_write_input_tokens":50,"output_tokens":120,"reasoning_output_tokens":40,"total_tokens":770},"last_token_usage":{"input_tokens":380,"cached_input_tokens":100,"cache_write_input_tokens":50,"output_tokens":120,"reasoning_output_tokens":40,"total_tokens":650}}}}
+{"timestamp":"2026-08-16T09:00:14Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","duration_ms":13000}}
+{"timestamp":"2026-08-16T09:00:15Z","type":"event_msg","payload":{"type":"context_compacted"}}
+{"timestamp":"2026-08-16T09:00:16Z","type":"response_item","payload":{"type":"reasoning","id":"r3"}}

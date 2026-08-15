@@ -93,6 +93,12 @@ def main(argv=None):
         ingest_vendor(led, p, claude_tf)
         if p.is_file():
             spawn_tail(p, claude_tf, led)
+    if args.codex_path:
+        from ata.plugins.codex import translate_file as codex_tf
+        p = Path(args.codex_path)
+        ingest_vendor(led, p, codex_tf)
+        if p.is_file():
+            spawn_tail(p, codex_tf, led)
     httpd = make_server(led, Path(args.web), "127.0.0.1", args.port)
     print(f"atatrace http://127.0.0.1:{args.port}")
     httpd.serve_forever()
