@@ -50,12 +50,21 @@ def seed_demo(ledger: Ledger):
     seed_long(ledger)
 
 
-def ingest_vendor(ledger, droid_path):
-    if not droid_path:
+def ingest_vendor(ledger, path, translate_file_fn):
+    """一次性灌入：目录递归扫全部 JSONL，单文件直接翻。显式传入才打开，默认不碰厂商目录。"""
+    if not path:
         return
-    events, _ = translate_file(droid_path, offset=0)
-    for ev in events:
-        ledger.append(parse_event(ev))
+    path = Path(path)
+    files = sorted(path.rglob("*.jsonl")) if path.is_dir() else [path]
+    for f in files:
+        events, _ = translate_file_fn(f, offset=0)
+        for ev in events:
+            ledger.append(parse_event(ev))
+
+
+def spawn_tail(path, translate_file_fn, led):
+    from ata.plugins.jsonl import tail_forever as jtail
+    threading.Thread(target=jtail, args=(path, translate_file_fn, led), daemon=True).start()
 
 
 def main(argv=None):
@@ -65,6 +74,8 @@ def main(argv=None):
     p.add_argument("--ledger", default="./data")
     p.add_argument("--web", default="web")
     p.add_argument("--droid-path")
+    p.add_argument("--claude-path")
+    p.add_argument("--codex-path")
     args = p.parse_args(argv)
     led = Ledger(Path(args.ledger))
     if args.cmd == "seed":
@@ -72,9 +83,16 @@ def main(argv=None):
         print(f"seeded {led.path}")
         return
     if args.droid_path:
-        ingest_vendor(led, Path(args.droid_path))
-        # ponytail: one global tail thread, split per file if more than one path appears
-        threading.Thread(target=tail_forever, args=(Path(args.droid_path), led), daemon=True).start()
+        # droid 路径语义保持原样：单文件灌入 + tail
+        p = Path(args.droid_path)
+        ingest_vendor(led, p, translate_file)
+        threading.Thread(target=tail_forever, args=(p, led), daemon=True).start()
+    if args.claude_path:
+        from ata.plugins.claude import translate_file as claude_tf
+        p = Path(args.claude_path)
+        ingest_vendor(led, p, claude_tf)
+        if p.is_file():
+            spawn_tail(p, claude_tf, led)
     httpd = make_server(led, Path(args.web), "127.0.0.1", args.port)
     print(f"atatrace http://127.0.0.1:{args.port}")
     httpd.serve_forever()
