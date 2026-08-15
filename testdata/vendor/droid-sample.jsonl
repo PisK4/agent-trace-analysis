@@ -1,0 +1,7 @@
+{"type":"session_start","sessionId":"droid-missing"}
+{"type":"message","id":"m1","role":"user","content":[{"type":"text","text":"open first-party jsonl"}]}
+{"type":"message","id":"m2","role":"assistant","content":[{"type":"text","text":"no token fields"},{"type":"tool_use","id":"tu1","name":"Read","input":{"path":"session.jsonl"}}]}
+{"type":"message","id":"m3","role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"type=message"}]}
+{"type":"agent_turn_outcome","resultKind":"success","reason":"completed"}
+{"type":"todo_state","todos":[]}
+{"type":"compaction_state","summaryKind":"llm_summary"}

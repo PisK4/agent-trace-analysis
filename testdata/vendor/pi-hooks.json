@@ -1,0 +1,11 @@
+[
+  {"name":"agent_start","event":{},"ctx":{"session_id":"pi-compact","title":"synthetic pi turn"}},
+  {"name":"turn_start","event":{"turnIndex":0,"timestamp":1000}},
+  {"name":"message_end","event":{"message":{"role":"user","content":"ask about usage","timestamp":1001}}},
+  {"name":"message_end","event":{"message":{"role":"assistant","content":[{"type":"text","text":"reported"}],"usage":{"input":10,"output":2,"cacheRead":1,"cacheWrite":0,"totalTokens":13,"cost":{"total":0}},"stopReason":"stop"}}},
+  {"name":"tool_execution_start","event":{"toolCallId":"c1","toolName":"Read","args":{"path":"f"}}},
+  {"name":"tool_execution_end","event":{"toolCallId":"c1","toolName":"Read","result":{"content":[{"type":"text","text":"ok"}]},"isError":false}},
+  {"name":"turn_end","event":{"turnIndex":0,"message":{"role":"assistant","usage":{"input":10,"output":2,"cacheRead":1,"cacheWrite":0,"totalTokens":13,"cost":{"total":0}},"stopReason":"stop"},"toolResults":[]}},
+  {"name":"agent_end","event":{"messages":[]}},
+  {"name":"turn_end","event":{"turnIndex":1,"message":{"role":"assistant","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"total":0}},"stopReason":"error"},"toolResults":[]}}
+]
