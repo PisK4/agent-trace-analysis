@@ -5,6 +5,7 @@ ALLOWED_TYPES = {
     "tool.upserted",
     "turn.ended",
     "session.closed",
+    "system.upserted",
 }
 ALLOWED_AGENTS = {"pi", "droid"}
 USAGE_KEYS = ("status", "input", "output", "cache_read", "cache_write", "total_tokens", "cost")
@@ -33,9 +34,9 @@ def parse_event(raw: dict) -> dict:
     if not isinstance(raw["payload"], dict):
         raise ValidationError("payload must be object")
     turn = raw.get("turn", None)
-    if raw["type"].startswith("session."):
+    if raw["type"].startswith("session.") or raw["type"] == "system.upserted":
         if turn is not None:
-            raise ValidationError("session turn must be null")
+            raise ValidationError("session/system turn must be null")
     elif not isinstance(turn, int) or turn < 1:
         raise ValidationError("turn must be positive int")
     _check_payload(raw["type"], raw["payload"])
@@ -54,6 +55,8 @@ def parse_event(raw: dict) -> dict:
 def _check_payload(typ, p):
     if typ == "session.opened" and not p.get("title"):
         raise ValidationError("title required")
+    if typ == "system.upserted" and not p.get("prompt_text"):
+        raise ValidationError("prompt_text required")
     if typ == "message.upserted":
         if p.get("role") not in {"user", "assistant"}:
             raise ValidationError("bad role")

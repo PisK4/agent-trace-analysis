@@ -16,6 +16,16 @@ def _usage(raw):
     }
 
 
+def _esc(s):
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
 def project_session(session_id, agent, recs, *, tail=None, before=None):
     title = session_id
     entities = {}
@@ -74,11 +84,43 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
             entities[key] = row
             if key not in order:
                 order.append(key)
+        elif ev["type"] == "system.upserted":
+            key = ("s", ev["id"])
+            catalog = p.get("tools_catalog") or []
+            row = entities.get(key) or {"_first": seq, "_seq": seq}
+            row.update({
+                "id": ev["id"],
+                "_seq": seq,
+                "turn": None,
+                "kind": "system",
+                "tag": "SYSTEM",
+                "text": (p.get("prompt_text") or "")[:120],
+                "startedAt": ev["ts"],
+                "durationMs": 0,
+                "status": "completed",
+                "promptText": p.get("prompt_text"),
+                "previousPrompt": p.get("previous_prompt"),
+                "toolsCatalog": catalog,
+                "usage": dict(NA),
+            })
+            entities[key] = row
+            if key not in order:
+                order.append(key)
 
     rows = [entities[k] for k in sorted(order, key=lambda k: entities[k]["_first"])]
-    step = 0
     seen_turn = set()
     for row in rows:
+        if row["turn"] not in seen_turn:
+            row["start"] = True
+            seen_turn.add(row["turn"])
+        else:
+            row["start"] = False
+
+    step = 0
+    for row in rows:
+        # step 是「本轮第几次请求」，轮次边界重置；system 行（turn 为 null）不重置。
+        if row["start"] and row["turn"] is not None:
+            step = 0
         if row["kind"] == "assistant":
             step += 1
             row["step"] = step
@@ -91,11 +133,6 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
             row["step"] = step
             if step:
                 row["group"] = f"Step {step}"
-        if row["turn"] not in seen_turn:
-            row["start"] = True
-            seen_turn.add(row["turn"])
-        else:
-            row["start"] = False
 
     has_older = False
     cursor = rows[0]["_seq"] if rows else 0
@@ -115,9 +152,10 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
         "id": session_id,
         "agent": agent,
         "title": title,
-        "crumb": f"{agent} · <b>{title}</b>",
+        # 标题可能来自用户消息原文，crumb 走 innerHTML，必须转义。
+        "crumb": f"{agent} · <b>{_esc(title)}</b>",
         "has_older": has_older,
         "cursor": cursor,
-        "turns": len(seen_turn),
+        "turns": len({t for t in seen_turn if t is not None}),
         "rows": rows,
     }
