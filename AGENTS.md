@@ -8,6 +8,18 @@
 /ponytail full <your coding prompt>
 ```
 
+## 1.1 常驻服务维护
+
+本机的 ATA trace 服务以 launchd 常驻（label `com.ata.atatrace`，plist 在 `~/Library/LaunchAgents/com.ata.atatrace.plist`），随登录自启，崩溃自动拉起（KeepAlive，已验证）。端口默认 8787（`ATA_PORT` 可改），账本 `~/.ata/dev.sqlite`，日志 `~/.ata/atatrace.log` / `~/.ata/atatrace.err.log`。
+
+**改完任何生产代码（`ata/`、`web/`、`extensions/`）后**：
+
+1. `make test` 全量测试通过
+2. `./scripts/install-service.sh restart` 重建常驻服务（旧进程先杀、立即以新代码拉起）
+3. `curl -s http://127.0.0.1:8787/api/health` 确认恢复
+
+其他操作：`./scripts/install-service.sh status` 查看状态；`uninstall` 停止并移除常驻；临时用 `make serve` 前台起服务时，先 `uninstall` 避免端口冲突。改 plist 本身（端口/窗口/日志路径）后同样 `restart` 生效。
+
 ## 2. 第三方能力复用优先
 
 - 实现一个组件前，先核对已有依赖、官方扩展和稳定社区包；**“自己写更顺手”不是重复实现的理由**。
