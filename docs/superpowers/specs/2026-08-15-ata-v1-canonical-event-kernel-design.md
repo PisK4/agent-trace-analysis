@@ -1,15 +1,15 @@
 # ATA v1 · 规范事件内核
 
-- **状态**：产品边界与架构已锁定；Claude Code / Codex 接入面已核过源码锚点，公约数已回填。字段名仍未冻结
-- **日期**：2026-08-15
+- **状态**：产品边界与架构已锁定；Claude Code / Codex 接入面已核过源码锚点，公约数已回填。字段名已由实施计划冻结
+- **日期**：2026-08-15（字段名冻结回填 2026-08-16）
 - **项目**：`repos/ata`（空仓库，不导入旧 AVA 实现）
 - **实现门**：在 `repos/ata/` 写生产代码前必须先跑 `/ponytail full`
 
-本文只记录已经拍板的合同，以及四家对照后必须守住的公约数。字段名尚未冻结；先冻结谁写、谁读、缺了怎么标。Claude Code / Codex 不是 v1 实现范围。
+本文只记录已经拍板的合同，以及四家对照后必须守住的公约数。字段名的权威清单在《2026-08-15-ata-v1-end-to-end-reader》实施计划第 1 节，本文只钉概念与边界；先冻结谁写、谁读、缺了怎么标。Claude Code / Codex 的账本适配器已于 2026-08-16 纳入 v1 首段并实现（见第 6.3 / 6.4 节）；反向代理仍不是实现范围。
 
 ## 1. 一句话
 
-ATA 是本地 Agent 轨迹阅读器。产品 UI 名是 **Atatrace**。内核只收带版本号的规范事件；每个 agent 自己的插件负责把方言翻成这种事件。第一期做空 Atatrace、Pi 参考插件、Droid 第一方 JSONL 适配器。反向代理放最后。
+ATA 是本地 Agent 轨迹阅读器。产品 UI 名是 **Atatrace**。内核只收带版本号的规范事件；每个 agent 自己的插件负责把方言翻成这种事件。第一期做空 Atatrace、Pi 参考插件，以及 Droid / Claude Code / Codex 的第一方账本适配器。反向代理放最后。
 
 ## 2. 已锁定决策
 
@@ -19,7 +19,7 @@ ATA 是本地 Agent 轨迹阅读器。产品 UI 名是 **Atatrace**。内核只�
 | 权威平面 | 规范事件。来源可以是 live 流，也可以是第一方账本适配器；HTTP 抓包可选，没有就 `Missing` | 以代理流量当账本 |
 | 插件产出 | ATA 规范事件 + 显式 `agent_id` | 内核认识各家方言 |
 | 推进顺序 | 一次打通一个 agent，代理最后 | 先做万能代理再补插件 |
-| 第一期生产者 | Pi + Droid | 17 个名字当第一期范围 |
+| 第一期生产者 | Pi + Droid + Claude Code + Codex | 其余 13 个名字当远期范围 |
 | Droid 第一期 | 适配器 tail 本机第一方 `~/.factory/sessions/**/*.jsonl` | Droid 整只标 incomplete；扫描第三方 transcript |
 | 用量 | 要的是每一轮模型调用的 usage，不要工具自己的 usage | 会话合计充数；用合计除以轮数 |
 | 阅读器 | 只画 Atatrace，只吃规范事件 | 第一期做 Evidence / 全量 `loadDetail()` |
@@ -39,11 +39,13 @@ ATA 是本地 Agent 轨迹阅读器。产品 UI 名是 **Atatrace**。内核只�
 | Atatrace | 会话列表与按轮次组织的账本；第一屏只拉索引和一页事件 |
 | Pi 插件 | `v0.83.0` / `845d6ff1` 的官方 extension：`ExtensionAPI.on()` 或嵌入式 `Agent.subscribe()` |
 | Droid 插件 | 本机第一方 JSONL 的增量 tail，以及为会话合计准备的同目录 `*.settings.json`（合计不是每轮 usage） |
+| Claude Code 插件 | 本机第一方 transcript（`~/.claude/projects/**/*.jsonl`）的适配器，锚点 `2.1.88` / `a8a678c`；消息/tool_result 走官方 API 消息形态，无 system 行、无 turn 事件（缺了标缺口） |
+| Codex 插件 | 本机第一方 rollout（`~/.codex/sessions/**/rollout-*.jsonl`）的适配器，锚点 `2b5bdcf675`；`session_meta` 带 `base_instructions`（可发 SYSTEM）与 `originator`（标题），`token_count.last_token_usage` 对齐每轮 usage |
 
 ### 3.2 v1 不看见什么
 
 - 反向代理、Docker、桌面壳、sub2api 级按请求计费
-- 其余 15 个 agent 名字（只是远期目录）
+- 其余 13 个 agent 名字（只是远期目录）
 - 旧 AVA 的 record / Evidence / 一次拉全量详情。AVA 只作辅证；v1 不把 Evidence 或全量详情卡嵌进主时间线
 - 插件没声明的 vendor 字段
 - 第三方 transcript 的隐式扫描
@@ -94,16 +96,25 @@ flowchart LR
 | --- | --- | --- |
 | 轮次账本 | 主视图是垂直事件表，按厂商自己划的 Turn 分段 | README：turn-aware event ledger |
 | 粗分割线 | Turn 边界用比行内步骤更粗的分割线 | README：thick rules mark Turn boundaries |
-| 主表三列 | 已加载窗口里，主表只留索引、事件、内容；用量和耗时进局部检查器 | README：index / event / content；selection opens a local inspector |
+| 主表三列 | 已加载窗口里，主表只留索引、事件、内容；用量、耗时、载荷和结果进局部检查器 | README：index / event / content；selection opens a local inspector |
 | 尾部打开 | 长账本打开时停在当前尾部；流式更新默认跟着尾部；用户上滚后暂停跟随 | README：open at the current tail；scrolling upward suspends following |
 | 虚拟行 | 行数过阈值后只挂可见窗口加少量 overscan；分隔行并入下一可测行 | `TrajectoryTable.tsx`：阈值 100、overscan 12；`trajectory-virtual-rows.ts` |
-| Overview 时间轴 | 账本上方一条从左到右的时间轴，投影已加载记录的真实开始与耗时；未知前缀不虚构时长 | README：fixed Overview；neutral ellipsis for omitted prefix |
+| Overview 三泳道 | 账本上方固定一条从左到右的时间轴，三条泳道是 Input / Model / Tools；色块按当前投影落到泳道上，未知前缀只画中性省略号，不虚构时长 | README：fixed Overview；`TrajectoryTimeline.tsx` 的 `LaneLabels` |
+| 四投影 | 工具栏 Duration × Actual time 组出 `sequence` / `duration` / `time` / `actual`。默认 `sequence`。切投影会清掉当前时间窗 | `timeline.ts` 的 `deriveTrajectoryTimeline()`；`TrajectoryView` 的 mode 组合 |
+| 缩放与平移 | 滚轮按光标位置缩放；放大后右键拖平移；拖选碰到左右 8% 边带时视口跟着走。缩回全窗后右键不再平移 | `TrajectoryTimeline.tsx`：`exp(deltaY * 0.0015)`；最小域 `sequence=4` / 其余 `20` |
+| 拖选时间窗 | 在时间轴上横拖，框住一段闭区间；账本只强调这段里活跃过的记录，窗外色块压到 20%、行压到 24%。右键单击、双击或 Escape 清掉区间，恢复已加载全窗 | README：Dragging an interval focuses the ledger；`trajectoryTimelineFocusIndexes()` |
+| 点色块选记录 | 单击一条色块选中对应账本行并打开检查器；点空白只聚焦最近记录并落下最小区间。悬停 500ms 弹出 kind、起止钟面和 Total | README：500 ms hover；`onRecordSelect` / `onRecordFocus` |
+| 折叠与搜索 | Turns 折整轮、Calls 折 Assistant 后的工具；双击行与工具栏按钮同一套状态。搜索按词全中，命中才留在表里；时间轴上不匹配色块压到 14%，折叠此时不再生效 | `TrajectoryToolbar.tsx`；`trajectory-search-index.ts` |
+| 更早页与虚拟行 | 时间轴左侧 `…` 与表头 `Load earlier history` 真加载更早页；滚到顶 48px 内也会要下一页。行数过 100 或仍有更早页时只挂可见窗口，overscan 12 | `TrajectoryTable.tsx`：阈值 100、overscan 12；`trajectory-virtual-rows.ts` |
+| Request 与 SYSTEM | 事件列小圆点打开 Request 检查器（Summary / Usage / Timing），不改行选中。SYSTEM 行打开 Prompt / Tools，有上一版时多 Diff | `selectRequest()`；`trajectory-request-header-definition.ts` |
+| 多分栏检查器 | 选中后右侧打开检查器。工具行至少有 Summary / Payload / Result / Schema / Timing；标题是角色标签加 `Turn N · Step M`。Summary 先写 Hierarchy、Status，再预览各栏。页签按最近使用记忆；左侧拖宽 320–720，双击复原；Started 可切 Unix 秒 | `TrajectoryTable.tsx` 的 `detailTabs()` 与 `detailsHeader` |
 
 辅证与明确不做：
 
 - AVA Evidence 与全量详情卡是另一证据面。v1 不把它们嵌进主时间线，也不做一次 `loadDetail()` 拉整包。
 - 不把 dsh 的产品名、composer 浮层、`'conversation.view'` slot 环或 Session 快照写进 Atatrace。
-- 选择、折叠、搜索和请求汇总只覆盖当前已加载窗口，不假装已经看见未加载的前缀。
+- 选择、折叠、搜索、时间窗聚焦和请求汇总只覆盖当前已加载窗口，不假装已经看见未加载的前缀。
+- 可点稿 `sketches/002-beautiful-workbench/index.html` 是 Atatrace 账本交互的视觉合同。上线版本按这份稿复刻泳道、四投影、缩放平移、拖选、折叠、更早页、虚拟行、Request/SYSTEM 和检查器页签，以及浅色/深色表面，不另做简化条。
 
 ## 5. 用量
 
@@ -127,7 +138,7 @@ Pi 出错或中止时 usage 可能全是 0。Pi 自己的 compaction 代码已�
 
 插件形态：官方 TypeScript extension，放到 `~/.pi/agent/extensions/` 或项目 `.pi/extensions/`，不改 Pi 内核。
 
-第一期挂这些事件：`agent_start`、`turn_start`、`message_*`、`tool_execution_*`、`turn_end`、`agent_end`。每轮 usage 从 `turn_end.message.usage` 读取。
+第一期挂这些事件：`before_agent_start`、`agent_start`、`turn_start`、`message_*`、`tool_execution_*`、`turn_end`、`agent_end`。每轮 usage 从 `turn_end.message.usage` 读取。`before_agent_start` 把 `systemPrompt` 与 `systemPromptOptions.toolSnippets` 转成 `system.upserted`（SYSTEM 快照发射，见第 7 节概念表；2026-08-15 真机验收发现 System Prompt 与 Tools 目录在 Atatrace 里不可见，计划默认条款已翻转为发射）。
 
 ### 6.2 Droid（第一方账本适配器）
 
@@ -145,14 +156,40 @@ Pi 出错或中止时 usage 可能全是 0。Pi 自己的 compaction 代码已�
 
 适配器按文件偏移增量 tail，显式配置本机第一方路径。这不是 AVA 那种对第三方 transcript 的隐式扫描。
 
+### 6.3 Claude Code（第一方账本适配器）
+
+锚点：`2.1.88` / 还原提交 `a8a678c`（纯净树，`src/types/logs.ts`）。会话文件 `~/.claude/projects/<encoded-path>/<uuid>.jsonl`，每行一个 `Entry`：`user` / `assistant` 消息带 `message` 字段（官方 API 消息形态：`content[]` 里的 `text` / `tool_use` / `tool_result` / `thinking` 块，assistant 带驼峰 `usage`）；`ai-title` 行可提供标题；其余行（`summary`、`custom-title`、`last-prompt`、`queue-operation` 等）跳过。
+
+| 规范面 | 本机样本能对上的东西 |
+| --- | --- |
+| Turn | Claude 无显式 turn 事件：用户消息到达即递增（同 Droid 规则），纯 `tool_result` 用户消息不算新轮；补发 `turn.started` |
+| Tool | `message.content[]` 的 `tool_use` / `tool_result`，配对键 `tool_use_id`，拆 `:start`/`:end` |
+| SYSTEM 快照 | **没有**——transcript 不落盘系统提示，因此不发射 `system.upserted`（诚实缺失） |
+| 每轮 usage | assistant `message.usage`（`input_tokens` / `output_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens`），全 0 或缺失标 `missing` |
+
+### 6.4 Codex（第一方账本适配器）
+
+锚点：`repos-external/codex` @ `2b5bdcf675`（`codex-rs/protocol/src/protocol.rs`）。会话文件 `~/.codex/sessions/YYYY/MM/DD/rollout-<uuid>.jsonl`，每行 `{timestamp, type, payload}`。
+
+| 规范面 | 本机样本能对上的东西 |
+| --- | --- |
+| Turn | `event_msg` 的 `task_started` / `task_complete`（`turn_id` 首次出现分配轮次号） |
+| Tool | `response_item` 的 `function_call` / `function_call_output` 与 `custom_tool_call` / `custom_tool_call_output`，配对键 `call_id`，拆 `:start`/`:end` |
+| SYSTEM 快照 | `session_meta.base_instructions` → `system.upserted`（`prompt_text`） |
+| 每轮 usage | `event_msg.token_count.info.last_token_usage`（`input_tokens` / `cached_input_tokens` / `cache_write_input_tokens` / `output_tokens` / `total_tokens`），对齐最近一轮；全 0 或缺失标 `missing` |
+| 标题 | `session_meta.originator`（首条用户 prompt） |
+
+消息以 `response_item.message` 为单一来源，`event_msg` 的 `user_message` / `agent_message` 跳过（避免双写）；`compacted` / `context_compacted` 首段不发射。适配器支持显式传入路径（文件 tail / 目录一次性灌入），默认不碰 `~/.codex`。
+
 ## 7. 规范事件：先冻结概念，不冻结字段名
 
-下面这些概念必须在 Pi / Droid / Claude Code / Codex 之间站得住。具体 JSON 键名等实现计划再钉。
+下面这些概念必须在 Pi / Droid / Claude Code / Codex 之间站得住。具体 JSON 键名由实施计划第 1 节冻结，本文只钉概念。
 
 | 概念 | 含义 | 缺了怎么办 |
 | --- | --- | --- |
 | `agent_id` | 这条事件属于哪个 agent 实现 | 插件必须写；内核拒收 |
 | `session_id` | 一条可打开的会话 | 插件必须写；内核拒收 |
+| SYSTEM 快照 | 会话起始的系统提示与当时可见的工具目录，由 `system.upserted` 携带 `prompt_text` / `previous_prompt` / `tools_catalog`；`previous_prompt` 供 Diff 页签对照上一版 | 没有快照时，Atatrace 的 System Prompt / Tools 页签无内容可显示；不要把「没记录」当成「没有」 |
 | Turn | 厂商自己划的一轮：一次 assistant 回复，加上这轮点出来的工具。不是一次 HTTP 请求 | 对不上就 `Missing`，不把多轮消息捏成一轮，也不把一轮里的多次 completion 拆成多轮 |
 | Tool | 一次工具调用的开始/结束 | 只有结果没有开始也要标缺口 |
 | Spawn | 落了盘、带父子 id 的派生会话 | 短命不落盘的派生不画 |
@@ -208,9 +245,9 @@ Pi 出错或中止时 usage 可能全是 0。Pi 自己的 compaction 代码已�
 - 不在知识库根目录加 Node 工作区；本仓内部不建嵌套 git
 - 密钥、真实 Base URL、会话正文、用户采集内容不进代码、fixture、日志或本文
 
-## 9. Claude Code 与 Codex（防翻案核验，不是 v1 工期）
+## 9. Claude Code 与 Codex（锚点参考）
 
-这一节不是 v1 实现范围。核验目的：确认第 7 节公约数站得住。源码里有路径，不等于用户安装的版本会发出。
+这一节在 2026-08-16 之前是防翻案核验；两家账本适配器纳入 v1 后，这里仍是锚点与引用边界。源码里有路径，不等于用户安装的版本会发出。
 
 ### 9.1 Claude Code `2.1.88` / `a8a678c`
 

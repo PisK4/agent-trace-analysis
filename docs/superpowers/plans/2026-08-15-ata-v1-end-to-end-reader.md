@@ -17,8 +17,8 @@
 | 题目 | 默认 |
 | --- | --- |
 | spec 字段名 | 本计划第 1 节就是 v1 首段冻结名。未列出的键内核拒收 |
-| SYSTEM / tools catalog 快照 | **不发射**。02 检查器代码保留，账本里没有 `kind:"system"` 行 |
-| Compaction / Spawn | **不发射**。不挂 `before_agent_start` / `session_compact` / `session_start` 的父子字段 |
+| SYSTEM / tools catalog 快照 | **发射**。挂 `before_agent_start`，转成 `system.upserted`（`prompt_text` / `previous_prompt` / `tools_catalog`）。2026-08-15 真机验收发现首条 System Prompt 与 Tools 目录在 Atatrace 里不可见，属数据缺失，本计划翻转为发射 |
+| Compaction / Spawn | **不发射**。不挂 `session_compact` / `session_start` 的父子字段 |
 | Compare / AVA Evidence | 不做 |
 | 实时通道 | 跟随尾部用 1s 轮询，不上 SSE |
 | 前端框架 | 不引入 React/Vite。复制 02 |
@@ -94,7 +94,7 @@ repos/ata/
 | `agent_id` | `pi` 或 `droid`。缺了拒收 |
 | `session_id` | 非空字符串。缺了拒收 |
 | `ts` | Unix 毫秒。缺了拒收 |
-| `type` | 下表六种之一 |
+| `type` | 下表七种之一 |
 | `turn` | 整数或 `null`。`session.*` 用 `null`；其余必须是正整数 |
 | `payload` | 必须是对象 |
 
@@ -108,6 +108,7 @@ repos/ata/
 | `tool.upserted` | 见下 | 工具 start 与 end。按 `tool_call_id` 配对 |
 | `turn.ended` | `{ "usage": Usage \| null }` | Pi `turn_end`；Droid `agent_turn_outcome`（`usage` 恒为 `null`） |
 | `session.closed` | `{}` | Pi `agent_end`。Droid 首段可以不写 |
+| `system.upserted` | 见下 | Pi `before_agent_start`。`turn` 必须 `null` |
 
 `message.upserted.payload`：
 
@@ -160,6 +161,22 @@ repos/ata/
   "duration_ms": 233
 }
 ```
+
+`system.upserted.payload`：
+
+```json
+{
+  "prompt_text": "You are Pi...",
+  "previous_prompt": null,
+  "tools_catalog": [{"name": "Read", "description": "read a file", "parameters": {}}]
+}
+```
+
+| 键 | 规则 |
+| --- | --- |
+| `prompt_text` | 系统提示全文，必填 |
+| `previous_prompt` | 上一版系统提示；没有上一版为 `null`（Diff 页签据此显示差异） |
+| `tools_catalog` | 工具目录数组；`parameters` 首段恒为空对象（契约上限见 Pi 锚点 `845d6ff1`：`toolSnippets` 只是名字到单行描述的映射） |
 
 `Usage`：
 
@@ -1207,7 +1224,7 @@ Expected: `ModuleNotFoundError`。
 
 `session_id` 缺省用文件名。`turn`：每遇到一条 `role=user` 的非 `tool_result` 消息 +1。`tool_result` 不算新 turn。
 
-配对：`tool_use.id` == `tool_result.tool_use_id`。只有 result 没有 use：仍写 `tool.upserted`，`status` 保持 `completed`，`parent_message_id` 为 `null`（缺口留给检查器空态，不补猜助手）。
+配对：`tool_use.id` == `tool_result.tool_use_id`。start/end 拆成两个 event id（`{session_id}:tool:{cid}:start` 与 `{session_id}:tool:{cid}:end`）：幂等账本对重复 id 只认第一条并返回原 seq，同一 id 会让 tool_result 的完成态被吞、工具行永远 pending（Pi 插件 2026-08-15 修过同款 bug，Droid 于 2026-08-16 对齐，见提交 `e025e05`）。投影层按 `tool_call_id` 合并，后写覆盖前写，行顺序由第一次出现的 seq 定。只有 result 没有 use：仍写 `tool.upserted`，`status` 保持 `completed`，`parent_message_id` 为 `null`（缺口留给检查器空态，不补猜助手）。
 
 增量 tail：`translate_file(path, offset=0) -> (events, new_offset)`。按字节偏移读，半行留到下次。`serve --droid-path FILE` 时在后台线程每秒 tail；**默认不传，内核不会碰 `~/.factory`**。
 
@@ -1457,13 +1474,155 @@ EOF
 
 ---
 
+### Task 9: Claude Code 第一方账本适配器
+
+**Files:**
+- Create: `ata/plugins/claude.py`
+- Create: `testdata/vendor/claude-sample.jsonl`
+- Create: `tests/test_claude.py`
+- Modify: `ata/schema.py`（`ALLOWED_AGENTS` 加 `"claude"`）
+- Modify: `ata/__main__.py`（`--claude-path`，文件 tail / 目录一次性灌入）
+
+锚点：Claude Code `2.1.88` / 还原提交 `a8a678c`（`repos-external/claude-code-sourcemap` 纯净树，`src/types/logs.ts`），运行形状用本机 `~/.claude/projects/**/*.jsonl` 结构抽样核对。不得读承载仓库工作树。
+
+会话文件：`~/.claude/projects/<encoded-path>/<uuid>.jsonl`，每行一个 `Entry`。本计划只翻译这些行 type，其余跳过：
+
+| 行 type | 动作 |
+| --- | --- |
+| `user` / `assistant`（`message` 字段） | `message.upserted`。正文在 `message.content`：文本块是 `{"type":"text","text":...}` 或纯字符串；`thinking` 块并入文本；assistant 行带官方 API 驼峰 `usage` |
+| 上面消息的 `content[]` 里 `tool_use` | `tool.upserted` pending，id 拆 `:start` |
+| 上面消息的 `content[]` 里 `tool_result` | `tool.upserted` completed/failed，id 拆 `:end`，配对键 `tool_use_id` |
+| `ai-title` | 再发一次 `session.opened` 更新标题 |
+| `summary` / `custom-title` / `last-prompt` / `task-summary` / `queue-operation` / `attribution-snapshot` 等 | 跳过 |
+
+翻译规则（与 Droid 对齐）：
+
+- `session_id` = 文件名 stem（uuid）。`session.opened` 首见即发，`title` = uuid；遇到 `ai-title` 行再发 `session.opened` 覆盖标题（`{session_id}:opened:title`，幂等账本按 id 追加）
+- `turn`：用户消息到达时递增；`content` 里只有 `tool_result` 的用户消息不算新轮。工具事件挂当前轮
+- `request_no`：assistant 消息到达时递增（同一会话单调）
+- usage：assistant `message.usage` 驼峰转 ATA 蛇形（`input_tokens→input`、`output_tokens→output`、`cache_read_input_tokens→cache_read`、`cache_creation_input_tokens→cache_write`、`total_tokens` 与 `cost` 置 `null`）；`usage` 缺失或全 0 → `missing`（status:"missing"，计数置 `null`）
+- SYSTEM 快照：Claude transcript 没有 system 行（系统提示不落盘）→ **不发射** `system.upserted`，与 Pi 的契约上限同理
+- `turn.started`：Claude 无显式 turn 事件，用 Droid 同款补发（该轮第一条用户消息之前）
+- `turn.ended`：不发射（Claude 无等价事件；usage 已挂在 assistant 行上，投影能回填）
+- 工具 `parent_message_id`：最后一条 assistant 消息的 `message.id`
+- 时间：`timestamp` 是 ISO 字符串 → Unix 毫秒
+- 半行容错：复用 Droid 的增量 tail 语义（`translate_file` 按 offset 读，半行留到下次）
+
+`--claude-path`：传入**文件**时灌入 + tail（同 `--droid-path`）；传入**目录**时一次性灌入该目录全部 `**/*.jsonl`（不 tail）。默认不传则内核不碰 `~/.claude`。
+
+合成 fixture（占位文案，`testdata/vendor/claude-sample.jsonl`）：
+
+```json
+{"type":"user","uuid":"u1","sessionId":"claude-verify","timestamp":"2026-08-16T08:00:00Z","message":{"role":"user","content":[{"type":"text","text":"open the first-party transcript"}]}}
+{"type":"assistant","uuid":"a1","sessionId":"claude-verify","timestamp":"2026-08-16T08:00:03Z","message":{"id":"msg-a1","role":"assistant","content":[{"type":"text","text":"no system row in transcript"}],"usage":{"input_tokens":120,"output_tokens":40,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}}
+{"type":"assistant","uuid":"a2","sessionId":"claude-verify","timestamp":"2026-08-16T08:00:05Z","message":{"id":"msg-a2","role":"assistant","content":[{"type":"tool_use","id":"toolu-1","name":"Read","input":{"path":"transcript.jsonl"}}]}}
+{"type":"user","uuid":"u2","sessionId":"claude-verify","timestamp":"2026-08-16T08:00:08Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu-1","content":[{"type":"text","text":"type=user"}]}]}}
+{"type":"user","uuid":"u3","sessionId":"claude-verify","timestamp":"2026-08-16T08:00:10Z","message":{"role":"user","content":[{"type":"text","text":"second question"}]}}
+{"type":"ai-title","sessionId":"claude-verify","timestamp":"2026-08-16T08:00:12Z","aiTitle":"claude fixture title"}
+{"type":"summary","sessionId":"claude-verify","summary":"..."}
+```
+
+测试（`tests/test_claude.py`）：与 `test_droid.py` 同构——翻译出的 type 集合含 `session.opened` / `turn.started` / `message.upserted` / `tool.upserted` 且不含 system/compaction；工具 start/end id 不同且都以 `tool:` 开头；assistant 行 usage 是 `reported` 且 `cache_read` 映射正确；第二个用户消息之后 turns=2；ai-title 行覆盖标题；tool_result-only 用户消息不新增轮次。
+
+Commit（单独一个提交，schema 只加 `"claude"`）：
+
+```bash
+git add ata/plugins/claude.py ata/schema.py ata/__main__.py testdata/vendor/claude-sample.jsonl tests/test_claude.py
+git commit -m "$(cat <<'EOF'
+feat(claude): translate first-party transcripts into canonical events
+
+Read ~/.claude/projects transcripts (line type user/assistant, ai-title)
+into the canonical event shapes already used by pi/droid: user-message
+turn boundaries, tool_use/tool_result paired with distinct :start/:end
+ids, assistant API-style usage mapped to camelCase-free canonical keys,
+and Missing usage when the message carries none. The transcript has no
+system prompt row and no turn events, so system.upserted and
+turn.ended are deliberately not emitted.
+EOF
+)"
+```
+
+---
+
+### Task 10: Codex 第一方账本适配器
+
+**Files:**
+- Create: `ata/plugins/codex.py`
+- Create: `testdata/vendor/codex-sample.jsonl`
+- Create: `tests/test_codex.py`
+- Modify: `ata/schema.py`（`ALLOWED_AGENTS` 加 `"codex"`）
+- Modify: `ata/__main__.py`（`--codex-path`，文件 tail / 目录一次性灌入）
+
+锚点：`repos-external/codex` @ `2b5bdcf675`（`codex-rs/protocol/src/protocol.rs` 的 `RolloutItem` / `EventMsg` / `TokenUsageInfo`），运行形状用本机 `~/.codex/sessions/**/**/rollout-*.jsonl` 结构抽样核对。本地 remote 是个人 fork，引用前已确认锚点提交仍存在。
+
+会话文件：`~/.codex/sessions/YYYY/MM/DD/rollout-<uuid>.jsonl`，每行 `{"timestamp": "...", "type": ..., "payload": {...}}`。
+
+| 行 type | payload.type（若有） | 动作 |
+| --- | --- | --- |
+| `session_meta` | — | `session.opened`；`base_instructions` → `system.upserted`（`prompt_text`，`tools_catalog` 空数组）；`originator` → 标题 |
+| `turn_context` | — | 跳过（信息与消息行重复） |
+| `response_item` | `message` | `message.upserted`（`content[]` 块是 `input_text`/`output_text`；`role` user/assistant） |
+| `response_item` | `function_call` / `custom_tool_call` | `tool.upserted` pending，id 拆 `:start`；`arguments`/`input` 是字符串 JSON → 解析成 payload 对象 |
+| `response_item` | `function_call_output` / `custom_tool_call_output` | `tool.upserted` completed，id 拆 `:end`，配对键 `call_id`；`output` 落 `result` |
+| `response_item` | `reasoning` / `agent_message` / `web_search_call` 等 | 跳过 |
+| `event_msg` | `task_started` | `turn.started`（`turn_id` 首次出现时轮次号递增） |
+| `event_msg` | `task_complete` | `turn.ended`，usage 取该轮最近一次 `token_count` 的 `last_token_usage` |
+| `event_msg` | `token_count` | 只更新 state 里的 `last_token_usage`（每轮会发多次，不逐条写），键：`input_tokens` / `cached_input_tokens` / `cache_write_input_tokens` / `output_tokens` / `total_tokens` |
+| `event_msg` | `user_message` / `agent_message` | 跳过（消息以 `response_item.message` 为单一来源，避免双写） |
+| `event_msg` | `context_compacted` / `turn_aborted` | 跳过（compaction 首段不发射） |
+| `compacted` / `world_state` / `inter_agent_communication_metadata` | — | 跳过 |
+
+翻译规则：
+
+- `session_id` = `payload.session_id`（缺省用文件名 stem）
+- `session.opened` 的 `title` = `originator`（首条用户 prompt，截 80）；`system.upserted` 用 `base_instructions`
+- usage 映射：`input_tokens→input`、`cached_input_tokens→cache_read`、`cache_write_input_tokens→cache_write`、`output_tokens→output`、`total_tokens→total_tokens`、`cost→null`；usage 缺失或全 0 → `missing`
+- 工具 `parent_message_id`：最后一条 assistant `response_item.message.id`
+- 时间：`timestamp` ISO 字符串 → Unix 毫秒
+- `--codex-path` 语义同 `--claude-path`；默认不传内核不碰 `~/.codex`
+
+合成 fixture（占位文案，`testdata/vendor/codex-sample.jsonl`）：
+
+```json
+{"timestamp":"2026-08-16T09:00:00Z","type":"session_meta","payload":{"session_id":"codex-verify","id":"codex-verify","cwd":"/tmp/fixture","originator":"implement the codex adapter","base_instructions":"You are Codex, the command line tool for OpenAI."}}
+{"timestamp":"2026-08-16T09:00:01Z","type":"turn_context","payload":{"turn_id":"t1","model":"gpt-5","cwd":"/tmp/fixture"}}
+{"timestamp":"2026-08-16T09:00:02Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1","started_at":1786870801}}
+{"timestamp":"2026-08-16T09:00:03Z","type":"response_item","payload":{"type":"message","role":"user","id":"m1","content":[{"type":"input_text","text":"implement the codex adapter"}]}}
+{"timestamp":"2026-08-16T09:00:09Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"m2","content":[{"type":"output_text","text":"here is the plan"}]}}
+{"timestamp":"2026-08-16T09:00:10Z","type":"response_item","payload":{"type":"function_call","call_id":"call-1","name":"shell","arguments":"{\"command\":\"ls\"}","id":"r1"}}
+{"timestamp":"2026-08-16T09:00:12Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"fixture\n","id":"r2"}}
+{"timestamp":"2026-08-16T09:00:13Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"cached_input_tokens":100,"cache_write_input_tokens":50,"output_tokens":120,"reasoning_output_tokens":40,"total_tokens":770},"last_token_usage":{"input_tokens":380,"cached_input_tokens":100,"cache_write_input_tokens":50,"output_tokens":120,"reasoning_output_tokens":40,"total_tokens":650}}}}
+{"timestamp":"2026-08-16T09:00:14Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","duration_ms":13000}}
+```
+
+测试（`tests/test_codex.py`）：与 `test_claude.py` 同构——type 集合不含 compaction；`session_meta` 映射 `system.upserted` 且 `prompt_text` 非空；`function_call`/`_output` 拆 `:start`/`:end` 配对；`task_complete` 的 `turn.ended` usage 是 `reported` 且 `cache_read=100`；`context_compacted` 行不产生事件；assistant 行 usage 在 message 上。
+
+Commit（单独一个提交，schema 加 `"codex"`）：
+
+```bash
+git add ata/plugins/codex.py ata/schema.py ata/__main__.py testdata/vendor/codex-sample.jsonl tests/test_codex.py
+git commit -m "$(cat <<'EOF'
+feat(codex): translate rollout jsonl into canonical events
+
+Map session_meta (base_instructions -> system.upserted, originator ->
+title), response_item message/function_call(+output), and event_msg
+task_started/task_complete/token_count. Per-turn usage comes from the
+latest last_token_usage, compaction rows are skipped, and event_msg
+user/agent messages are ignored to keep response_item.message the
+single message source.
+EOF
+)"
+```
+
+---
+
 ## 明确不做（看见就停）
 
 - 改 `sketches/002-beautiful-workbench/`
 - 引入 Node 工作区、Vite、React、嵌套 git
 - 内核读取 `~/.factory` / `~/.pi` / AVA `records.jsonl`
 - 把真实 session 正文写进 `testdata/`
-- SYSTEM 快照、Compare、SSE、会话合计摊销、sub2api / TTFT 计费
+- Compare、SSE、会话合计摊销、sub2api / TTFT 计费
 - 把 `inclusiveTokenUsage` 或工具 usage 写成 Turn usage
 - 用漂了的 Pi `b1efcf7d7` 当字段依据
 
