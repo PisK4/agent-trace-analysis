@@ -32,6 +32,8 @@
       --red-tint: #FCECEC;
       --assistant: #7A4FD3;
       --assistant-tint: #F1E9FF;
+      --cyan: #0E8AA8;
+      --cyan-tint: #E6F6FA;
       --stripe: #49494913;
       --tooltip: #1A1B1E;
       --json-key: #7A3E9D;
@@ -69,6 +71,8 @@
       --red-tint: #EE5C6124;
       --assistant: #8B8DFF;
       --assistant-tint: #8B8DFF24;
+      --cyan: #22D3EE;
+      --cyan-tint: #22D3EE24;
       --stripe: #FFFFFF0E;
       --tooltip: #111214;
       --json-key: #C792EA;
@@ -114,10 +118,19 @@
       background: var(--page);
       box-shadow: inset -1px 0 0 var(--line);
     }
-    .brand { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px; }
-    .mark { width: 16px; height: 16px; border-radius: 4px; background: var(--ink); }
-    .brand b { font-size: 13px; font-weight: 600; }
-    .brand em { color: var(--ink-3); font-style: normal; font-size: 11px; }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      height: 52px;
+      padding: 0 14px;
+      text-align: left;
+    }
+    .brand:hover { background: var(--hover); }
+    .mark { width: 22px; height: 22px; border-radius: 6px; background: var(--ink); }
+    .brand b { font-size: 16px; font-weight: 650; letter-spacing: -.02em; }
+    .brand em { color: var(--ink-3); font-style: normal; font-size: 12px; }
     .nav-label {
       padding: 8px 14px 4px;
       color: var(--ink-3);
@@ -126,26 +139,53 @@
       letter-spacing: .06em;
       text-transform: uppercase;
     }
-    .sess-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 10px 6px; }
-    .sess-tabs .tab {
-      padding: 3px 9px;
-      border-radius: 999px;
-      border: 1px solid var(--line);
-      background: transparent;
-      color: var(--ink-2);
-      font-size: 11px;
-      line-height: 1.3;
-      cursor: pointer;
+    .sess-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0 2px;
+      margin: 0 10px 6px;
+      padding: 0;
+      box-shadow: inset 0 -1px 0 var(--line);
     }
-    .sess-tabs .tab:hover { background: var(--hover); }
-    .sess-tabs .tab[aria-pressed="true"] { background: var(--ink); color: var(--page); border-color: var(--ink); }
+    .sess-tabs .tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 26px;
+      padding: 0 8px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--ink-3);
+      font-size: 11.5px;
+      font-weight: 500;
+      line-height: 1;
+    }
+    .sess-tabs .tab .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--agent, var(--ink-3));
+    }
+    .sess-tabs .tab:hover { color: var(--ink); }
+    .sess-tabs .tab[aria-pressed="true"] {
+      color: var(--ink);
+      font-weight: 600;
+      background: var(--agent-soft, var(--hover));
+      box-shadow: inset 0 -1.5px 0 var(--agent, var(--ink));
+    }
+    .agent-claude { --agent: var(--orange); --agent-soft: var(--orange-tint); }
+    .agent-codex { --agent: var(--green); --agent-soft: var(--green-tint); }
+    .agent-pi { --agent: var(--ink); --agent-soft: var(--hover); }
+    .agent-droid { --agent: var(--cyan); --agent-soft: var(--cyan-tint); }
     .item {
       display: grid;
       grid-template-columns: 1fr auto;
       gap: 2px 8px;
       margin: 1px 8px;
-      padding: 8px;
+      padding: 8px 8px 8px 7px;
       border-radius: 7px;
+      border-left: 2px solid var(--agent, transparent);
       color: var(--ink-2);
       text-align: left;
     }
@@ -153,6 +193,26 @@
     .item[aria-current="true"] { background: var(--hover); color: var(--ink); font-weight: 500; }
     .item .t { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
     .item small { color: var(--ink-3); font-size: 11px; font-family: "JetBrains Mono", ui-monospace, monospace; }
+    .item small.agent { color: var(--agent, var(--ink-3)); }
+    .home-empty {
+      display: none;
+      flex: 1;
+      align-items: center;
+      justify-content: center;
+      color: var(--ink-3);
+      font-size: 13px;
+    }
+    .shell[data-home="true"] .overview,
+    .shell[data-home="true"] .ledger,
+    .shell[data-home="true"] .follow,
+    .shell[data-home="true"] .mode-chip,
+    .shell[data-home="true"] #durBtn,
+    .shell[data-home="true"] #timeBtn,
+    .shell[data-home="true"] #turnsBtn,
+    .shell[data-home="true"] #callsBtn,
+    .shell[data-home="true"] #followBtn,
+    .shell[data-home="true"] .search { display: none; }
+    .shell[data-home="true"] .home-empty { display: flex; }
     .stage { display: flex; min-width: 0; min-height: 0; flex-direction: column; background: var(--surface); }
     .top {
       display: flex;
@@ -567,16 +627,16 @@
   </style>
 </head>
 <body>
-  <div class="shell" id="app" data-inspect="open">
+  <div class="shell" id="app" data-home="true">
     <aside class="nav">
-      <div class="brand"><i class="mark"></i><b>Atatrace</b><em>ledger</em></div>
+      <button class="brand" type="button" id="homeBtn" aria-label="Back to home"><i class="mark"></i><b>Atatrace</b><em>ledger</em></button>
       <div class="nav-label">Sessions</div>
       <div id="sessTabs" class="sess-tabs" role="group" aria-label="Filter by agent"></div>
       <div id="sessList"></div>
     </aside>
     <main class="stage">
       <header class="top">
-        <div class="crumb" id="crumb">pi · <b>compaction 边界</b></div>
+        <div class="crumb" id="crumb">选择一条会话</div>
         <span class="follow" id="live" data-on="true">跟随尾部</span>
         <span class="mode-chip" id="modeChip">sequence</span>
         <div class="grow"></div>
@@ -591,6 +651,7 @@
         </div>
         <input class="search" id="q" type="search" placeholder="Search" aria-label="Search trajectory" />
       </header>
+      <div class="home-empty" id="homeEmpty">选择一条会话</div>
       <section class="overview">
         <div class="plot">
           <div class="labels" aria-hidden="true"><span>Input</span><span>Model</span><span>Tools</span></div>
@@ -698,15 +759,9 @@
         turns: item.turns,
         toolsIndex: {}
       }));
-      if (!sessions.length) {
-        document.getElementById("crumb").textContent = "no sessions";
-        paintTabs();
-        paintSessions();
-        return;
-      }
       paintTabs();
       paintSessions();
-      await openSession(sessions[0].id);
+      showHome();
     }
 
     const app = document.getElementById("app");
@@ -726,6 +781,7 @@
     let current = { id:"", agent:"", title:"", crumb:"", rows:[], older:false, cursor:0, toolsIndex:{} };
     let agentFilter = null;
     const AGENT_LABELS = { pi: "Pi", droid: "Droid", claude: "Claude Code", codex: "Codex" };
+    const AGENT_CLASS = { pi: "agent-pi", droid: "agent-droid", claude: "agent-claude", codex: "agent-codex" };
     let selected = null;
     let follow = true;
     let actualDuration = false;
@@ -984,7 +1040,11 @@
       const agents = [];
       for (const s of sessions) if (!agents.includes(s.agent)) agents.push(s.agent);
       const el = document.getElementById("sessTabs");
-      const tab = (key, label) => `<button type="button" class="tab" data-agent="${key}" aria-pressed="${(agentFilter ?? "") === key}">${esc(label)}</button>`;
+      const tab = (key, label) => {
+        const cls = key ? (AGENT_CLASS[key] || "") : "";
+        const dot = key ? `<i class="dot"></i>` : "";
+        return `<button type="button" class="tab ${cls}" data-agent="${key}" aria-pressed="${(agentFilter ?? "") === key}">${dot}${esc(label)}</button>`;
+      };
       el.innerHTML = tab("", "全部") + agents.map(a => tab(a, AGENT_LABELS[a] || a)).join("");
       el.querySelectorAll(".tab").forEach(btn => btn.addEventListener("click", () => {
         agentFilter = btn.dataset.agent || null;
@@ -996,12 +1056,30 @@
     function paintSessions() {
       const visible = agentFilter ? sessions.filter(session => session.agent === agentFilter) : sessions;
       document.getElementById("sessList").innerHTML = visible.map(session => `
-        <button class="item" type="button" data-sid="${session.id}" aria-current="${session.id === current.id}">
+        <button class="item ${AGENT_CLASS[session.agent] || ""}" type="button" data-sid="${session.id}" aria-current="${session.id === current.id}">
           <span class="t">${esc(session.title)}</span>
-          <small>${esc(AGENT_LABELS[session.agent] || session.agent)}</small>
+          <small class="agent">${esc(AGENT_LABELS[session.agent] || session.agent)}</small>
           <small>${session.turns ?? session.rows.filter(row => row.start).length} turns</small>
         </button>`).join("");
       document.querySelectorAll(".item").forEach(btn => btn.addEventListener("click", () => openSession(btn.dataset.sid)));
+    }
+
+    function showHome() {
+      current = { id:"", agent:"", title:"", crumb:"", rows:[], older:false, cursor:0, toolsIndex:{} };
+      selected = null;
+      range = null;
+      draft = null;
+      viewport = null;
+      agentFilter = null;
+      searchQuery = "";
+      document.getElementById("q").value = "";
+      const empty = sessions.length ? "选择一条会话" : "no sessions";
+      document.getElementById("crumb").textContent = empty;
+      document.getElementById("homeEmpty").textContent = empty;
+      app.dataset.home = "true";
+      app.dataset.inspect = "";
+      paintTabs();
+      paintSessions();
     }
 
     function paintOverview() {
@@ -1028,7 +1106,7 @@
         const inRange = !sel || (span.start <= sel.end && span.end >= sel.start);
         const search = !matches || matches.has(span.id);
         const ttft = span.ttftMs && span.durationMs ? `${(span.ttftMs / span.durationMs) * 100}%` : "";
-        const currentSel = selected.type === "record" && span.id === selected.id;
+        const currentSel = selected && selected.type === "record" && span.id === selected.id;
         return `<span class="span ${span.kind}"
           data-id="${span.id}" data-current="${currentSel}" data-in-range="${inRange}"
           data-search="${search}" data-error="${span.error === true}" data-equal="${equal}"
@@ -1469,6 +1547,7 @@
       searchQuery = "";
       document.getElementById("q").value = "";
       document.getElementById("crumb").innerHTML = next.crumb;
+      app.dataset.home = "";
       paintSessions();
       paint();
       requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
@@ -1661,6 +1740,7 @@
       searchQuery = event.currentTarget.value;
       paint();
     });
+    document.getElementById("homeBtn").addEventListener("click", showHome);
     document.getElementById("close").addEventListener("click", () => { app.dataset.inspect = ""; selected = null; });
     document.getElementById("followBtn").addEventListener("click", (e) => {
       follow = !follow;
