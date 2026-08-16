@@ -146,15 +146,18 @@ Pi 出错或中止时 usage 可能全是 0。Pi 自己的 compaction 代码已�
 
 已核实的 JSONL `type`：`session_start`、`message`、`todo_state`、`agent_turn_outcome`、`compaction_state`。
 
+**形状注记（2026-08-16 审计 `~/.factory/sessions`）**：v2 形状与早期 marketplace 样本不同——session id 在 `session_start.id`（`message` 行的 `id` 是消息 id），`session_start` 带 `title`（可作会话标题），消息嵌套在 `message` 字段（`{role, content, visibility}`），`timestamp` 是 ISO 字符串，content 块含 `text` / `tool_use` / `tool_result` / `thinking` / `image`。适配器兼容 v1 顶层形状与 v2 嵌套形状。
+
 | 规范面 | 本机样本能对上的东西 |
 | --- | --- |
-| Turn | `message` 的 `role=user/assistant`，加上 `agent_turn_outcome`（`resultKind` / `reason`） |
-| Tool | `message.content[]` 的 `tool_use` / `tool_result` |
+| Turn | `message` 的 `role=user/assistant`，加上 `agent_turn_outcome`（`resultKind` / `reason` / `turnId`） |
+| Tool | `message.content[]` 的 `tool_use` / `tool_result`（注意这是厂商块类型名，不是 ATA 事件名） |
 | Spawn | 部分 `session_start` 带 `callingSessionId` + `callingToolUseId`，或 `parent` + `forkedAtMessageId` |
 | Compaction | `compaction_state`（见过 `summaryKind=llm_summary` / `provider_switch_serialization`） |
 | 每轮 usage | 未在 JSONL 中核实到 |
+| 标题 | `session_start.title` |
 
-适配器按文件偏移增量 tail，显式配置本机第一方路径。这不是 AVA 那种对第三方 transcript 的隐式扫描。
+适配器按文件偏移增量 tail（目录递归 / 单文件统一），默认只处理最近 `--tail-max-age-days` 天内修改的文件（本机该目录有 3870 个历史会话，全量灌入会让账本超过 1 GB）；显式配置本机第一方路径。这不是 AVA 那种对第三方 transcript 的隐式扫描。
 
 ### 6.3 Claude Code（第一方账本适配器）
 

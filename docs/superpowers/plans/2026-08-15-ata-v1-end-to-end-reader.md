@@ -1226,7 +1226,9 @@ Expected: `ModuleNotFoundError`。
 
 配对：`tool_use.id` == `tool_result.tool_use_id`。start/end 拆成两个 event id（`{session_id}:tool:{cid}:start` 与 `{session_id}:tool:{cid}:end`）：幂等账本对重复 id 只认第一条并返回原 seq，同一 id 会让 tool_result 的完成态被吞、工具行永远 pending（Pi 插件 2026-08-15 修过同款 bug，Droid 于 2026-08-16 对齐，见提交 `e025e05`）。投影层按 `tool_call_id` 合并，后写覆盖前写，行顺序由第一次出现的 seq 定。只有 result 没有 use：仍写 `tool.upserted`，`status` 保持 `completed`，`parent_message_id` 为 `null`（缺口留给检查器空态，不补猜助手）。
 
-增量 tail：`translate_file(path, offset=0) -> (events, new_offset)`。按字节偏移读，半行留到下次。`serve --droid-path FILE` 时在后台线程每秒 tail；**默认不传，内核不会碰 `~/.factory`**。
+增量 tail：`translate_file(path, offset=0) -> (events, new_offset)` 走公共 `plugins/jsonl.py`（按字节偏移读、半行留到下次、坏行跳过）。`serve --droid-path FILE|DIR` 时后台线程每秒 tail，目录递归/单文件统一（`tail_path`）；默认只处理最近 `--tail-max-age-days`（默认 7）天内修改的文件，目录语义同样适用于 `--claude-path` / `--codex-path`。**默认不传，内核不会碰 `~/.factory`**。
+
+形状（2026-08-16 审计）：`session_start` 带 `id` 与 `title`，`message` 行消息嵌套在 `message` 字段，`timestamp` 为 ISO 字符串，content 块含 `text` / `tool_use` / `tool_result` / `thinking` / `image`；同时兼容早期样本的顶层 `sessionId` / `role` / `content` 形状。
 
 - [ ] **Step 4: 再跑测试**
 
