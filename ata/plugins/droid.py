@@ -5,16 +5,27 @@ from pathlib import Path
 
 def translate_line(raw: dict, state: dict) -> list[dict]:
     typ = raw.get("type")
-    session_id = raw.get("sessionId") or state.get("session_id") or "droid-session"
+    # v2 形状（2026-08-16 审计 ~/.factory/sessions）：session_id 在 session_start 的
+    # `id` 字段，且带 `title`；v1 形状（marketplace 描述）用顶层 `sessionId`。
+    # 注意 `id` 只从 session_start 取——message 行的 `id` 是消息 id，会污染 session_id。
+    if typ == "session_start":
+        session_id = raw.get("sessionId") or raw.get("id") or state.get("session_id") or "droid-session"
+    else:
+        session_id = raw.get("sessionId") or state.get("session_id") or "droid-session"
     state["session_id"] = session_id
     agent_id = "droid"
+    # droid v2 的 timestamp 是 ISO 字符串（如 2026-07-21T04:33:47.111Z），统一转毫秒。
+    from ata.plugins.jsonl import iso_to_ms
+    ts = iso_to_ms(raw.get("ts") or raw.get("timestamp"), int(state.get("ts") or 1))
+    state["ts"] = ts
     out = []
     if typ == "session_start":
         if not state.get("opened"):
             state["opened"] = True
+            title = str(raw.get("title") or session_id).strip()[:80] or session_id
             out.append(_ev(
-                f"{session_id}:opened", agent_id, session_id, raw.get("ts") or 1,
-                "session.opened", None, {"title": session_id},
+                f"{session_id}:opened", agent_id, session_id, ts,
+                "session.opened", None, {"title": title},
             ))
         return out
     if typ in {"todo_state", "compaction_state"} or typ not in {"message", "agent_turn_outcome"}:
@@ -22,19 +33,24 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
     if not state.get("opened"):
         state["opened"] = True
         out.append(_ev(
-            f"{session_id}:opened", agent_id, session_id, raw.get("ts") or 1,
+            f"{session_id}:opened", agent_id, session_id, ts,
             "session.opened", None, {"title": session_id},
         ))
     if typ == "agent_turn_outcome":
         turn = state.get("turn") or 1
         out.append(_ev(
-            f"{session_id}:turn:{turn}:end", agent_id, session_id, raw.get("ts") or 1,
+            f"{session_id}:turn:{turn}:end", agent_id, session_id, ts,
             "turn.ended", turn, {"usage": None},
         ))
         return out
-    role = raw.get("role")
-    content = raw.get("content")
-    ts = int(raw.get("ts") or raw.get("timestamp") or 1)
+    # v2：消息嵌套在 `message` 字段（{role, content, visibility}）；v1 顶层 role/content 兼容。
+    msg = raw.get("message")
+    if isinstance(msg, dict):
+        role = msg.get("role") or raw.get("role")
+        content = msg.get("content")
+    else:
+        role = raw.get("role")
+        content = raw.get("content")
     if role in {"user", "assistant"}:
         texts = _texts(content)
         is_tool_only = role == "user" and texts == "" and _has_tool_result(content)
@@ -156,6 +172,8 @@ def _texts(content):
     for block in _blocks(content):
         if block.get("type") == "text" and block.get("text"):
             parts.append(str(block["text"]))
+        elif block.get("type") == "thinking" and block.get("thinking"):
+            parts.append(str(block["thinking"]))
     return "\n".join(parts)
 
 

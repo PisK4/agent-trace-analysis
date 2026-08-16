@@ -1,6 +1,6 @@
 import unittest
 from pathlib import Path
-from ata.plugins.droid import translate_file
+from ata.plugins.droid import translate_file, translate_line
 from ata.project import project_session
 
 class DroidTest(unittest.TestCase):
@@ -12,6 +12,9 @@ class DroidTest(unittest.TestCase):
         self.assertIn("tool.upserted", types)
         self.assertIn("turn.ended", types)
         self.assertNotIn("compaction.boundary", types)
+        # 标题来自 session_start.title（v2 形状）
+        titles = [e["payload"]["title"] for e in evs if e["type"] == "session.opened"]
+        self.assertEqual(titles[0], "open first-party jsonl")
         recs = [{"seq": i+1, "event": e} for i, e in enumerate(evs)]
         sess = project_session("droid-missing", "droid", recs)
         asst = next(r for r in sess["rows"] if r["kind"] == "assistant")
@@ -47,6 +50,25 @@ class DroidTest(unittest.TestCase):
         self.assertEqual(tool["status"], "completed")
         self.assertEqual(tool["result"], "type=message")
         self.assertIsNotNone(tool["parentId"])
+
+    def test_v1_top_level_shape_compat(self):
+        # 2026-08-16 审计：~/.factory/sessions 的 v2 形状把消息嵌套在 `message` 字段；
+        # 更早的 marketplace 样本把 role/content 放顶层。两层都要翻译。
+        raw = {"type": "message", "id": "x1", "role": "user",
+               "content": [{"type": "text", "text": "hi"}]}
+        evs = translate_line(raw, {})
+        hit = [e for e in evs if e["type"] == "message.upserted" and e["payload"]["text"] == "hi"]
+        self.assertTrue(hit)
+
+    def test_thinking_merged_into_text(self):
+        raw = {"type": "message", "id": "x2",
+               "message": {"role": "assistant", "content": [
+                   {"type": "thinking", "thinking": "planning..."},
+                   {"type": "text", "text": "answer"},
+               ]}}
+        evs = translate_line(raw, {})
+        msg = [e for e in evs if e["type"] == "message.upserted"][-1]
+        self.assertEqual(msg["payload"]["text"], "planning...\nanswer")
 
 if __name__ == "__main__":
     unittest.main()
