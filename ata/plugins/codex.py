@@ -28,11 +28,29 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 {"prompt_text": str(instructions), "previous_prompt": None, "tools_catalog": []},
             ))
         return out
+    if typ == "turn_context":
+        model = payload.get("model")
+        effort = payload.get("effort")
+        if isinstance(model, str) and model:
+            state["model"] = model
+        if isinstance(effort, str) and effort:
+            state["effort"] = effort
+        return out
+    if typ == "compacted":
+        turn = state.get("turn") or 1
+        window = payload.get("window_number")
+        summary = f"Context compacted · window {window}" if window is not None else "Context compacted"
+        out.append(_ev(
+            f"{session_id}:compact:{payload.get('window_id') or ts}", agent_id, session_id, ts,
+            "compaction.boundary", turn,
+            {"summary": summary, "trigger": "compacted"},
+        ))
+        return out
     if typ == "event_msg":
         return _event_msg(payload, state, ts, out)
     if typ == "response_item":
         return _response_item(payload, state, ts, out)
-    # turn_context / compacted / world_state / inter_agent_communication_metadata：跳过
+    # world_state / inter_agent_communication_metadata：跳过
     return out
 
 
@@ -86,6 +104,27 @@ def _event_msg(payload, state, ts, out):
             "turn.ended", turn, {"usage": usage},
         ))
         return out
+    if etype == "turn_aborted":
+        turn_id = payload.get("turn_id")
+        turn = _turn_for(state, turn_id, ts, out) if turn_id is not None else (state.get("turn") or 1)
+        out.append(_ev(
+            f"{session_id}:turn:{turn}:end:cancelled", "codex", session_id, ts,
+            "turn.ended", turn,
+            {
+                "usage": None,
+                "status": "cancelled",
+                "note": str(payload.get("reason") or "interrupted"),
+            },
+        ))
+        return out
+    if etype == "context_compacted":
+        turn = state.get("turn") or 1
+        out.append(_ev(
+            f"{session_id}:compact:ctx:{ts}", "codex", session_id, ts,
+            "compaction.boundary", turn,
+            {"summary": "Context compacted", "trigger": "context_compacted"},
+        ))
+        return out
     if etype == "token_count":
         info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
         last = info.get("last_token_usage")
@@ -130,6 +169,8 @@ def _response_item(payload, state, ts, out):
                 "started_at": ts,
                 "duration_ms": 1,
                 "output_text": text if role == "assistant" else None,
+                "model": state.get("model") if role == "assistant" else None,
+                "effort": state.get("effort") if role == "assistant" else None,
             },
         ))
         return out

@@ -6,6 +6,7 @@ ALLOWED_TYPES = {
     "turn.ended",
     "session.closed",
     "system.upserted",
+    "compaction.boundary",
 }
 ALLOWED_AGENTS = {"pi", "droid", "claude", "codex"}
 USAGE_KEYS = ("status", "input", "output", "cache_read", "cache_write", "total_tokens", "cost")
@@ -68,6 +69,8 @@ def _check_payload(typ, p):
             _check_usage(p["usage"])
     if typ == "tool.upserted" and not p.get("tool_call_id"):
         raise ValidationError("tool_call_id required")
+    if typ == "compaction.boundary" and not p.get("summary"):
+        raise ValidationError("summary required")
     if typ == "turn.ended" and p.get("usage") is not None:
         _check_usage(p["usage"])
 

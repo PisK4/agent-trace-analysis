@@ -49,6 +49,13 @@ class SchemaTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             parse_event(bad)
 
+    def test_compaction_requires_summary(self):
+        bad = dict(MIN, type="compaction.boundary", turn=1, payload={})
+        with self.assertRaises(ValidationError):
+            parse_event(bad)
+        ok = dict(MIN, type="compaction.boundary", turn=1, payload={"summary": "Context compacted"})
+        self.assertEqual(parse_event(ok)["type"], "compaction.boundary")
+
 
 if __name__ == "__main__":
     unittest.main()

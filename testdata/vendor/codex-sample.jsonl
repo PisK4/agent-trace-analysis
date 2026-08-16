@@ -1,5 +1,5 @@
 {"timestamp":"2026-08-16T09:00:00Z","type":"session_meta","payload":{"session_id":"codex-verify","id":"codex-verify","cwd":"/tmp/fixture","originator":"implement the codex adapter","base_instructions":"You are Codex, the command line tool for OpenAI."}}
-{"timestamp":"2026-08-16T09:00:01Z","type":"turn_context","payload":{"turn_id":"t1","model":"gpt-5","cwd":"/tmp/fixture"}}
+{"timestamp":"2026-08-16T09:00:01Z","type":"turn_context","payload":{"turn_id":"t1","model":"gpt-5","effort":"high","cwd":"/tmp/fixture"}}
 {"timestamp":"2026-08-16T09:00:02Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1","started_at":1786870801}}
 {"timestamp":"2026-08-16T09:00:03Z","type":"response_item","payload":{"type":"message","role":"user","id":"m1","content":[{"type":"input_text","text":"implement the codex adapter"}]}}
 {"timestamp":"2026-08-16T09:00:09Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"m2","content":[{"type":"output_text","text":"here is the plan"}]}}

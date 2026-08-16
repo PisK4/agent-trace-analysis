@@ -30,7 +30,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 "session.opened", None, {"title": title},
             ))
         return out
-    if typ in {"todo_state", "compaction_state"} or typ not in {"message", "agent_turn_outcome"}:
+    if typ == "todo_state" or typ not in {"message", "agent_turn_outcome", "compaction_state"}:
         return out
     if not state.get("opened"):
         state["opened"] = True
@@ -38,11 +38,36 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
             f"{session_id}:opened", agent_id, session_id, ts,
             "session.opened", None, {"title": session_id},
         ))
+    if typ == "compaction_state":
+        turn = state.get("turn") or 1
+        kind = raw.get("summaryKind") or "compaction"
+        summary = str(raw.get("summaryText") or "").strip()
+        if not summary:
+            summary = "Provider switch serialization" if kind == "provider_switch_serialization" else "Context compacted"
+        out.append(_ev(
+            f"{session_id}:compact:{raw.get('id') or ts}", agent_id, session_id, ts,
+            "compaction.boundary", turn,
+            {
+                "summary": summary[:200],
+                "trigger": kind,
+                "removed_count": raw.get("removedCount"),
+                "raw": summary[:2000] if raw.get("summaryText") else None,
+            },
+        ))
+        return out
     if typ == "agent_turn_outcome":
         turn = state.get("turn") or 1
+        reason = str(raw.get("reason") or "")
+        status = "cancelled" if reason == "cancelled" else "failed" if reason == "error" else None
+        payload = {"usage": None}
+        if status:
+            payload["status"] = status
+        eid = f"{session_id}:turn:{turn}:end"
+        if status:
+            eid = f"{eid}:{status}"
         out.append(_ev(
-            f"{session_id}:turn:{turn}:end", agent_id, session_id, ts,
-            "turn.ended", turn, {"usage": None},
+            eid, agent_id, session_id, ts,
+            "turn.ended", turn, payload,
         ))
         return out
     # v2：消息嵌套在 `message` 字段（{role, content, visibility}）；v1 顶层 role/content 兼容。

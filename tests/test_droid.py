@@ -11,7 +11,10 @@ class DroidTest(unittest.TestCase):
         self.assertIn("message.upserted", types)
         self.assertIn("tool.upserted", types)
         self.assertIn("turn.ended", types)
-        self.assertNotIn("compaction.boundary", types)
+        self.assertIn("compaction.boundary", types)
+        compact = next(e for e in evs if e["type"] == "compaction.boundary")
+        self.assertEqual(compact["payload"]["trigger"], "llm_summary")
+        self.assertEqual(compact["payload"]["removed_count"], 3)
         # 标题来自 session_start.title（v2 形状）
         titles = [e["payload"]["title"] for e in evs if e["type"] == "session.opened"]
         self.assertEqual(titles[0], "open first-party jsonl")
@@ -21,6 +24,9 @@ class DroidTest(unittest.TestCase):
         self.assertEqual(asst["usage"]["status"], "missing")
         tool = next(r for r in sess["rows"] if r["kind"] == "tool")
         self.assertEqual(tool["name"], "Read")
+        compacted = next(r for r in sess["rows"] if r["kind"] == "compacted")
+        self.assertEqual(compacted["tag"], "COMPACTED")
+        self.assertIn("removed 3", compacted["note"])
 
     def test_tool_start_end_ids_differ(self):
         # 回归：tool_use 与 tool_result 曾共用 event id，幂等账本吞掉完成态
@@ -84,6 +90,22 @@ class DroidTest(unittest.TestCase):
         msg = [e for e in evs if e["type"] == "message.upserted"][-1]
         self.assertEqual(msg["payload"]["text"], "answer")
         self.assertEqual(msg["payload"]["thinking"], "planning...")
+
+    def test_cancelled_outcome_marks_assistant(self):
+        state = {}
+        evs = []
+        evs += translate_line({"type": "message", "id": "u1", "role": "user",
+                               "content": [{"type": "text", "text": "hello"}]}, state)
+        evs += translate_line({"type": "message", "id": "a1",
+                               "message": {"role": "assistant", "content": [
+                                   {"type": "text", "text": "working"},
+                               ]}}, state)
+        evs += translate_line({"type": "agent_turn_outcome", "turnId": "t1",
+                               "reason": "cancelled", "resultKind": "null"}, state)
+        recs = [{"seq": i + 1, "event": e} for i, e in enumerate(evs)]
+        sess = project_session("droid-session", "droid", recs)
+        asst = next(r for r in sess["rows"] if r["kind"] == "assistant")
+        self.assertEqual(asst["status"], "cancelled")
 
 if __name__ == "__main__":
     unittest.main()

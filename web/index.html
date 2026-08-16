@@ -837,7 +837,8 @@
     };
     const searchBlob = (row) => [
       row.tag, row.kind, row.text, row.extra, row.name, row.result, row.outputText,
-      row.payloadText, row.promptText, row.note, row.thinking, row.schema && row.schema.name,
+      row.payloadText, row.promptText, row.note, row.thinking, row.model, row.effort,
+      row.schema && row.schema.name,
       row.schema && row.schema.description, JSON.stringify(row.payload || "")
     ].join(" ").toLowerCase();
     const searchTerms = () => searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -846,6 +847,11 @@
       if (!terms.length) return true;
       const blob = searchBlob(row);
       return terms.every(term => blob.includes(term));
+    };
+    const statusLabel = (status) => status === "failed" ? "Failed" : status === "cancelled" ? "Cancelled" : status === "pending" ? "Pending" : "Completed";
+    const modelLabel = (row) => {
+      if (!row || !row.model) return "Not present";
+      return row.effort ? `${row.model} · ${row.effort}` : row.model;
     };
     const compactPreview = (text) => String(text || "").replace(/\s+/g, " ").trim();
     const rowContent = (row) => {
@@ -1196,13 +1202,13 @@
         const idx = String(row.index + 1).padStart(2, "0");
         const reqActive = selected.type === "request" && selected.id === row.id;
         const req = row.requestNo
-          ? `<button class="req-dot" data-req="${row.id}" data-error="${row.status === "failed"}" data-active="${reqActive}" title="Request #${row.requestNo}"><span>Request #${row.requestNo}</span></button>`
+          ? `<button class="req-dot" data-req="${row.id}" data-error="${row.status === "failed" || row.status === "cancelled"}" data-active="${reqActive}" title="Request #${row.requestNo}"><span>Request #${row.requestNo}</span></button>`
           : "";
         const turn = row.start && row.turn && row.kind !== "context"
           ? `<span class="turn-chip">${row.turn < 0 ? "T…" : `T${row.turn}`}</span>`
           : "";
         const content = rowContent(row);
-        parts.push(`<tr data-id="${row.id}" data-selected="${selectedRow}" data-focus="${out ? "out" : "in"}" data-error="${row.status === "failed"}" data-pending="${row.status === "pending"}" ${row.start ? 'data-turn-start="true"' : ""} class="${row.kind === "subtool" ? "subtool" : ""}">
+        parts.push(`<tr data-id="${row.id}" data-selected="${selectedRow}" data-focus="${out ? "out" : "in"}" data-error="${row.status === "failed" || row.status === "cancelled"}" data-pending="${row.status === "pending"}" ${row.start ? 'data-turn-start="true"' : ""} class="${row.kind === "subtool" ? "subtool" : ""}">
           <td class="idx">${idx}${turn}</td>
           <td class="evt">${req}<span class="kind ${row.kind}">${esc(row.tag)}</span></td>
           <td class="content ${row.kind === "tool" || row.kind === "subtool" ? "mono" : ""}">${esc(content)}</td>
@@ -1387,9 +1393,9 @@
         const subs = siblings.filter(item => item.kind === "subtool").length;
         if (tab === "summary") {
           body.innerHTML = `<dl class="kv">
-            <div><dt>Status</dt><dd>${row.status === "failed" ? "Failed" : row.status === "pending" ? "Pending" : "Completed"}</dd></div>
+            <div><dt>Status</dt><dd>${statusLabel(row.status)}</dd></div>
             <div><dt>Provider</dt><dd>${esc(current.agent || "Not present")}</dd></div>
-            <div><dt>Model</dt><dd>Not present</dd></div>
+            <div><dt>Model</dt><dd>${esc(modelLabel(row))}</dd></div>
             <div><dt>Tool calls</dt><dd>${tools}</dd></div>
             <div><dt>Subtool calls</dt><dd>${subs}</dd></div>
             <div><dt>Result</dt><dd><button class="jump" type="button" data-jump="${row.id}">Assistant Message <i>›</i></button></dd></div>
@@ -1425,13 +1431,24 @@
             `<details class="tool-card"><summary>${esc(tool.name)}</summary><div class="inner"><p class="miss">${esc(tool.description)}</p><div class="tree">${jsonTree(tool.parameters)}</div></div></details>`
           ).join("");
           else body.innerHTML = `<div class="sec">${unifiedDiff(row.previousPrompt || "", row.promptText || "")}</div>`;
+        } else if (row.kind === "compacted") {
+          if (tab === "raw") {
+            body.innerHTML = `<div class="sec"><pre class="blob">${esc(row.outputText || row.text || "No output")}</pre></div>`;
+          } else {
+            body.innerHTML = `<dl class="kv">
+              <div><dt>Status</dt><dd>${statusLabel(row.status)}</dd></div>
+              ${row.note ? `<div><dt>Note</dt><dd>${esc(row.note)}</dd></div>` : ""}
+              <div><dt>Summary</dt><dd>${esc(row.text || "Context compacted")}</dd></div>
+            </dl>`;
+          }
         } else if (tab === "summary") {
           const toolSchema = row.schema || (current.toolsIndex && current.toolsIndex[row.name]);
           const isMarkdown = row.kind === "assistant" || row.kind === "user" || row.kind === "context";
           body.innerHTML = `
             <dl class="kv">
               ${parent ? `<div><dt>Hierarchy</dt><dd><button class="jump" type="button" data-jump="${parent.id}">${parent.kind === "assistant" ? "Assistant Message" : parent.tag} <i>›</i></button>${grand ? ` · <button class="jump" type="button" data-jump="${grand.id}">${grand.tag} <i>›</i></button>` : ""}</dd></div>` : ""}
-              <div><dt>Status</dt><dd>${row.status === "failed" ? "Failed" : row.status === "pending" ? "Pending" : "Completed"}</dd></div>
+              <div><dt>Status</dt><dd>${statusLabel(row.status)}</dd></div>
+              ${row.kind === "assistant" && row.model ? `<div><dt>Model</dt><dd>${esc(modelLabel(row))}</dd></div>` : ""}
               ${row.kind === "assistant" ? tokenRows(row) : ""}
               ${(row.kind === "user" || row.kind === "context") ? `<div><dt>Duration</dt><dd>${durLabel(row.durationMs || 0)}</dd></div>` : ""}
               ${row.note ? `<div><dt>Note</dt><dd>${esc(row.note)}</dd></div>` : ""}

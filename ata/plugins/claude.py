@@ -28,6 +28,8 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 "session.opened", None, {"title": title[:80]},
             ))
         return out
+    if typ == "system":
+        return _system_line(raw, state, ts, out)
     if typ not in {"user", "assistant"}:
         return out
     msg = raw.get("message")
@@ -64,6 +66,9 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         # 消息行 id：assistant 用 API message id（msg_…），user 行 message 无 id 用行级 uuid。
         mid = str(msg.get("id") or raw.get("uuid") or f"{session_id}:{role}:{ts}")
         usage = _usage(msg) if role == "assistant" else None
+        model = msg.get("model") if isinstance(msg, dict) else None
+        if isinstance(model, str) and (not model or model.startswith("<")):
+            model = None
         out.append(_ev(
             f"{session_id}:msg:{mid}", agent_id, session_id, ts,
             "message.upserted", state.get("turn") or 1,
@@ -78,6 +83,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 "duration_ms": 1,
                 "output_text": texts if role == "assistant" else None,
                 "thinking": thinking or None,
+                "model": model,
             },
         ))
     for block in _blocks(content):
@@ -131,6 +137,54 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
 
 def translate_file(path, offset: int = 0):
     return _jfile(path, translate_line, offset)
+
+
+def _system_line(raw, state, ts, out):
+    sub = raw.get("subtype")
+    session_id = state["session_id"]
+    turn = state.get("turn") or 1
+    state["turn"] = turn
+    if sub == "compact_boundary":
+        meta = raw.get("compactMetadata") if isinstance(raw.get("compactMetadata"), dict) else {}
+        cid = str(raw.get("uuid") or ts)
+        out.append(_ev(
+            f"{session_id}:compact:{cid}", "claude", session_id, ts,
+            "compaction.boundary", turn,
+            {
+                "summary": "Context compacted",
+                "trigger": meta.get("trigger"),
+                "pre_tokens": meta.get("preTokens"),
+                "post_tokens": meta.get("postTokens"),
+                "duration_ms": meta.get("durationMs"),
+            },
+        ))
+        return out
+    if sub == "api_error":
+        err = raw.get("error") if isinstance(raw.get("error"), dict) else {}
+        bits = ["api_error"]
+        if err.get("status") is not None:
+            bits.append(str(err["status"]))
+        attempt, max_r = raw.get("retryAttempt"), raw.get("maxRetries")
+        if attempt is not None and max_r is not None:
+            bits.append(f"retry {attempt}/{max_r}")
+        mid = str(raw.get("uuid") or f"{session_id}:api-error:{turn}:{ts}")
+        out.append(_ev(
+            f"{session_id}:msg:{mid}", "claude", session_id, ts,
+            "message.upserted", turn,
+            {
+                "message_id": mid,
+                "role": "assistant",
+                "text": " · ".join(bits),
+                "status": "failed",
+                "request_no": None,
+                "usage": None,
+                "started_at": ts,
+                "duration_ms": 1,
+                "output_text": " · ".join(bits),
+                "thinking": None,
+            },
+        ))
+    return out
 
 
 def _ev(eid, agent_id, session_id, ts, typ, turn, payload):

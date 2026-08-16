@@ -100,6 +100,29 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(row["usage"]["status"], "missing")
         self.assertIsNone(row["usage"]["input"])
 
+    def test_compaction_and_failed_status(self):
+        recs = [
+            rec(1, {"v":1,"id":"o","agent_id":"claude","session_id":"s","ts":1,"type":"session.opened","turn":None,"payload":{"title":"t"}}),
+            rec(2, {"v":1,"id":"u","agent_id":"claude","session_id":"s","ts":2,"type":"message.upserted","turn":1,"payload":{
+                "message_id":"u1","role":"user","text":"hi","status":"completed","request_no":None,
+                "usage":None,"started_at":2,"duration_ms":1,"output_text":None}}),
+            rec(3, {"v":1,"id":"a","agent_id":"claude","session_id":"s","ts":3,"type":"message.upserted","turn":1,"payload":{
+                "message_id":"a1","role":"assistant","text":"ok","status":"completed","request_no":1,
+                "usage":None,"started_at":3,"duration_ms":1,"output_text":"ok","model":"claude-opus-4"}}),
+            rec(4, {"v":1,"id":"c","agent_id":"claude","session_id":"s","ts":4,"type":"compaction.boundary","turn":1,"payload":{
+                "summary":"Context compacted","trigger":"auto","pre_tokens":8000,"post_tokens":1200}}),
+            rec(5, {"v":1,"id":"te","agent_id":"claude","session_id":"s","ts":5,"type":"turn.ended","turn":1,"payload":{
+                "usage":None,"status":"cancelled"}}),
+        ]
+        sess = project_session("s", "claude", recs)
+        kinds = [r["kind"] for r in sess["rows"]]
+        self.assertEqual(kinds, ["user", "assistant", "compacted"])
+        self.assertEqual(sess["rows"][1]["model"], "claude-opus-4")
+        self.assertEqual(sess["rows"][1]["status"], "cancelled")
+        self.assertEqual(sess["rows"][2]["tag"], "COMPACTED")
+        self.assertIn("8000 → 1200", sess["rows"][2]["note"])
+        self.assertFalse(sess["rows"][2]["start"])
+
     def test_tail_sets_has_older(self):
         recs = [
             rec(i, {

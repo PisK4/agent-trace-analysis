@@ -77,6 +77,8 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
     entities = {}
     order = []
     turn_usage = {}
+    turn_status = {}
+    turn_model = {}
     for rec in recs:
         ev = rec["event"]
         seq = rec["seq"]
@@ -84,13 +86,20 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
         if ev["type"] == "session.opened":
             title = p.get("title") or title
             continue
-        if ev["type"] == "turn.ended" and p.get("usage"):
-            turn_usage[ev["turn"]] = _usage(p["usage"])
+        if ev["type"] == "turn.ended":
+            if p.get("usage"):
+                turn_usage[ev["turn"]] = _usage(p["usage"])
+            if p.get("status") in {"failed", "cancelled"}:
+                turn_status[ev["turn"]] = p["status"]
             continue
         if ev["type"] == "message.upserted":
             key = ("m", p["message_id"])
             row = entities.get(key) or {"_first": seq, "_seq": seq}
             kind, tag = _message_kind(p)
+            model = p.get("model")
+            effort = p.get("effort")
+            if kind == "assistant" and model and ev.get("turn") is not None:
+                turn_model[ev["turn"]] = {"model": model, "effort": effort}
             row.update({
                 "id": p["message_id"],
                 "_seq": seq,
@@ -105,6 +114,8 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
                 "outputText": p.get("output_text"),
                 "payloadText": p["text"] if p["role"] == "user" else None,
                 "thinking": p.get("thinking"),
+                "model": model,
+                "effort": effort,
                 "usage": _usage(p.get("usage")) if p["role"] == "assistant" else dict(NA),
             })
             entities[key] = row
@@ -127,6 +138,36 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
                 "parentId": p.get("parent_message_id"),
                 "payload": p.get("payload"),
                 "result": p.get("result"),
+                "usage": dict(NA),
+            })
+            entities[key] = row
+            if key not in order:
+                order.append(key)
+        elif ev["type"] == "compaction.boundary":
+            key = ("c", ev["id"])
+            pre = p.get("pre_tokens")
+            post = p.get("post_tokens")
+            trigger = p.get("trigger")
+            note_bits = []
+            if trigger:
+                note_bits.append(str(trigger))
+            if pre is not None and post is not None:
+                note_bits.append(f"{pre} → {post} tokens")
+            elif p.get("removed_count") is not None:
+                note_bits.append(f"removed {p['removed_count']}")
+            row = entities.get(key) or {"_first": seq, "_seq": seq}
+            row.update({
+                "id": ev["id"],
+                "_seq": seq,
+                "turn": ev.get("turn"),
+                "kind": "compacted",
+                "tag": "COMPACTED",
+                "text": p.get("summary") or "Context compacted",
+                "startedAt": ev["ts"],
+                "durationMs": p.get("duration_ms") or 0,
+                "status": "completed",
+                "note": " · ".join(note_bits) or None,
+                "outputText": p.get("raw") or p.get("summary"),
                 "usage": dict(NA),
             })
             entities[key] = row
@@ -179,7 +220,15 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
 
     seen_turn = set()
     for row in rows:
-        if row["kind"] in {"context", "system"} or row["turn"] is None:
+        if row["kind"] == "assistant":
+            meta = turn_model.get(row.get("turn")) or {}
+            if not row.get("model") and meta.get("model"):
+                row["model"] = meta["model"]
+                row["effort"] = meta.get("effort")
+            ended = turn_status.get(row.get("turn"))
+            if ended and row.get("status") == "completed":
+                row["status"] = ended
+        if row["kind"] in {"context", "system", "compacted"} or row["turn"] is None:
             row["start"] = False
             continue
         if row["turn"] not in seen_turn:

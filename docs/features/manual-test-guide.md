@@ -42,6 +42,8 @@ make serve                      # 端口 8787，账本 ~/.ata/dev.sqlite，近 7
 | 工具 | 全部 completed（有结果），无 pending |
 | usage | 助手行 Usage 格子写 `Missing`——**预期行为**（JSONL 无 token 字段），不是 bug |
 | 轮次 | 用户消息到达时递增；纯 tool_result 消息不新增轮次 |
+| COMPACTED 行 | 有过 `compaction_state` 的会话会出现；`llm_summary` 与 `provider_switch_serialization` 都画，后者 Note 写明切模型序列化 |
+| 取消 / 失败 | `agent_turn_outcome.reason=cancelled/error` 时该轮助手行标 Cancelled / Failed |
 
 ### Claude Code
 
@@ -54,6 +56,9 @@ make serve                      # 端口 8787，账本 ~/.ata/dev.sqlite，近 7
 | 工具 | completed（`tool_use_id` 与 `tool_use` 配对） |
 | usage | Usage 格子有数字（官方 API usage 驼峰键已映射）；个别旧会话无 usage 显示 `Missing` |
 | 轮次 | 与用户消息数一致 |
+| Model | 点 Request 圆点：Model 为 `message.model`；`<synthetic>` 不当模型名 |
+| COMPACTED 行 | 有 `compact_boundary` 的会话会出现，Note 写 `auto · pre → post tokens` |
+| 失败 | `api_error` 画一条 Failed 助手行，正文含 HTTP 状态和 `retry n/m` |
 
 ### Codex
 
@@ -66,6 +71,9 @@ make serve                      # 端口 8787，账本 ~/.ata/dev.sqlite，近 7
 | 工具 | completed（`function_call` / `custom_tool_call` 与 `_output` 配对） |
 | usage | Usage 格子有数字（`token_count.last_token_usage` 对齐最近一轮） |
 | 轮次 | 与 `task_started` / `task_complete` 对齐 |
+| Model | 点 Request 圆点：Model 为 `turn_context.model`，有 `effort` 时写在后面 |
+| COMPACTED 行 | 有 `compacted` / `context_compacted` 的会话会出现 |
+| 取消 | `turn_aborted` 时该轮助手行标 Cancelled |
 
 ## 异常速查
 
@@ -79,7 +87,8 @@ make serve                      # 端口 8787，账本 ~/.ata/dev.sqlite，近 7
 
 ## 已知边界（不是 bug）
 
-- Droid 每轮 usage 恒 `Missing`（契约上限）
+- Droid 每轮 usage 恒 `Missing`（契约上限）；Droid 模型名在 `*.settings.json`，不摊到每一轮，Request 的 Model 保持 Not present
 - Claude Code 无 SYSTEM 行（transcript 不落盘系统提示）
 - 工具行参数区为空对象：Pi 的 `toolSnippets` 只有名字到单行描述的映射，无 JSON schema（契约上限）
 - `--tail-max-age-days` 之外的旧会话不显示
+- 已入库的助手行不会改写（账本按 id 幂等）。重启服务后，新的 COMPACTED / api_error 行会补上；旧助手行的 Model 要等新会话才有

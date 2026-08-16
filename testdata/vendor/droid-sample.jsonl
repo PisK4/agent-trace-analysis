@@ -4,4 +4,4 @@
 {"type":"message","id":"m3","timestamp":1786870806000,"message":{"role":"user","visibility":"normal","content":[{"type":"tool_result","tool_use_id":"tu1","content":[{"type":"text","text":"type=message"}]}]}}
 {"type":"agent_turn_outcome","turnId":"t1","resultKind":"success","reason":"completed"}
 {"type":"todo_state","id":"td1","timestamp":1786870807000,"todos":[]}
-{"type":"compaction_state","id":"c1","summaryKind":"llm_summary","summaryTokens":120}
+{"type":"compaction_state","id":"c1","summaryKind":"llm_summary","summaryTokens":120,"summaryText":"earlier turns folded","removedCount":3}
