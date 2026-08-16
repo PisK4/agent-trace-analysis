@@ -59,6 +59,41 @@ class LedgerTest(unittest.TestCase):
             ids = [s["id"] for s in led.sessions()]
             self.assertEqual(ids, ["s1", "s2"])
             self.assertEqual([s["last_ts"] for s in led.sessions()], [40, 30])
+            self.assertEqual(led.session("s1")["agent"], "pi")
+            self.assertIsNone(led.session("nope"))
+
+    def test_backfills_last_ts_on_old_schema(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "old.sqlite"
+            import sqlite3
+            conn = sqlite3.connect(path)
+            conn.executescript(
+                """
+                CREATE TABLE sessions (
+                    session_id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    turns INTEGER NOT NULL DEFAULT 0,
+                    last_seq INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE events (
+                    session_id TEXT NOT NULL,
+                    event_id TEXT NOT NULL,
+                    seq INTEGER NOT NULL,
+                    ts INTEGER NOT NULL,
+                    type TEXT NOT NULL,
+                    turn INTEGER,
+                    event_json TEXT NOT NULL,
+                    PRIMARY KEY (session_id, event_id)
+                );
+                INSERT INTO sessions VALUES ('s1','pi','old',0,1);
+                INSERT INTO events VALUES ('s1','e1',1,77,'session.opened',NULL,'{}');
+                """
+            )
+            conn.commit()
+            conn.close()
+            led = Ledger(path)
+            self.assertEqual(led.session("s1")["last_ts"], 77)
 
 
 if __name__ == "__main__":

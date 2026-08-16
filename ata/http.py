@@ -54,11 +54,11 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 limit = int(qs.get("limit", ["80"])[0])
                 before = qs.get("before", [None])[0]
                 before = int(before) if before not in (None, "") else None
-                recs = ledger.read(sid)
-                if not recs and not any(s["id"] == sid for s in ledger.sessions()):
+                meta = ledger.session(sid)
+                if meta is None:
                     return self._json(404, {"ok": False, "error": "unknown session"})
-                agent = next((s["agent"] for s in ledger.sessions() if s["id"] == sid), "pi")
-                page = project_session(sid, agent, recs, tail=limit, before=before)
+                recs = ledger.read(sid)
+                page = project_session(sid, meta["agent"], recs, tail=limit, before=before)
                 return self._json(200, page)
             if path in ("/", "/index.html"):
                 target = webroot / "index.html"

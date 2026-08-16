@@ -41,6 +41,16 @@ class HttpTest(unittest.TestCase):
         data = self.get("/api/sessions/droid-missing")
         self.assertEqual(data["rows"][0]["usage"]["status"], "missing")
 
+    def test_unknown_session_is_404(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.get("/api/sessions/nope")
+        self.assertEqual(ctx.exception.code, 404)
+
+    def test_list_includes_last_ts(self):
+        data = self.get("/api/sessions")
+        self.assertEqual(data[0]["id"], "droid-missing")
+        self.assertEqual(data[0]["last_ts"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

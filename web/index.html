@@ -1853,7 +1853,17 @@
       const fresh = list.filter(s => !have.has(s.id));
       if (!fresh.length) return;
       // 服务端按最近活动倒序返回，新会话在列表前面：unshift 保持顶部。
-      for (const item of fresh.reverse()) sessions.unshift(await loadSession(item.id));
+      for (const item of fresh.reverse()) sessions.unshift({
+        id: item.id,
+        agent: item.agent,
+        title: item.title,
+        crumb: `${item.agent} · <b>${item.title}</b>`,
+        rows: [],
+        older: false,
+        cursor: 0,
+        turns: item.turns,
+        toolsIndex: {}
+      });
       paintTabs();
       paintSessions();
     }, 5000);
