@@ -60,7 +60,9 @@ class DroidTest(unittest.TestCase):
         hit = [e for e in evs if e["type"] == "message.upserted" and e["payload"]["text"] == "hi"]
         self.assertTrue(hit)
 
-    def test_thinking_merged_into_text(self):
+    def test_thinking_split_from_text(self):
+        # 对标 dsh 的 thinking 折叠：thinking 块不再并入正文本，
+        # 单独进 payload["thinking"]，text 只保留正文，前端折叠展示。
         raw = {"type": "message", "id": "x2",
                "message": {"role": "assistant", "content": [
                    {"type": "thinking", "thinking": "planning..."},
@@ -68,7 +70,8 @@ class DroidTest(unittest.TestCase):
                ]}}
         evs = translate_line(raw, {})
         msg = [e for e in evs if e["type"] == "message.upserted"][-1]
-        self.assertEqual(msg["payload"]["text"], "planning...\nanswer")
+        self.assertEqual(msg["payload"]["text"], "answer")
+        self.assertEqual(msg["payload"]["thinking"], "planning...")
 
 if __name__ == "__main__":
     unittest.main()

@@ -345,8 +345,8 @@
       font-size: 12px;
       vertical-align: middle;
     }
-    .idx { width: 56px; color: var(--ink-3); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; }
-    .evt { width: 188px; }
+    .idx { width: 92px; color: var(--ink-3); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; }
+    .evt { width: 152px; text-align: right; }
     tbody tr { cursor: default; }
     tbody tr:hover { background: var(--hover); }
     tbody tr[data-selected="true"] { background: var(--accent-tint); }
@@ -364,7 +364,7 @@
     tr.spacer td { padding: 0; border: 0; height: var(--h); }
     .turn-chip, .req-chip {
       display: inline-flex; align-items: center;
-      height: 16px; margin-right: 6px; padding: 0 4px;
+      height: 16px; margin-left: 6px; padding: 0 4px;
       border-radius: 4px; background: var(--field); color: var(--ink-3);
       font: 10px/12px "JetBrains Mono", ui-monospace, monospace;
       vertical-align: middle;
@@ -471,9 +471,48 @@
       white-space: pre-wrap;
       overflow: auto;
     }
-    .md { font: 12.5px/19px Inter, sans-serif; white-space: normal; }
+    .md {
+      font: 12.5px/19px Inter, sans-serif;
+      white-space: normal;
+      overflow-wrap: break-word;
+    }
+    .md > :first-child { margin-top: 0; }
     .md p { margin: 0 0 8px; }
-    .md code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; }
+    .md h1, .md h2, .md h3, .md h4 { margin: 10px 0 6px; font-weight: 600; line-height: 1.3; }
+    .md h1 { font-size: 16px; } .md h2 { font-size: 15px; }
+    .md h3 { font-size: 14px; } .md h4 { font-size: 13px; }
+    .md ul, .md ol { margin: 0 0 8px; padding-left: 20px; }
+    .md li { margin: 2px 0; }
+    .md a { color: var(--accent-ink); text-decoration: none; }
+    .md a:hover { text-decoration: underline; }
+    .md blockquote {
+      margin: 0 0 8px; padding: 2px 10px;
+      border-left: 3px solid var(--line-strong); color: var(--ink-2);
+    }
+    .md code {
+      font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px;
+      background: var(--field); padding: 1px 4px; border-radius: 4px;
+    }
+    .md pre { margin: 0 0 8px; padding: 8px 10px; border-radius: 8px; background: var(--inset); overflow: auto; }
+    .md pre code { background: none; padding: 0; display: block; }
+    .md table { margin: 0 0 8px; border-collapse: collapse; font-size: 12px; width: 100%; }
+    .md th, .md td { padding: 4px 8px; border: 1px solid var(--line-strong); text-align: left; }
+    .md th { background: var(--field); font-weight: 500; }
+    .md hr { border: 0; border-top: 1px solid var(--line-strong); margin: 10px 0; }
+    .md img { max-width: 100%; border-radius: 6px; }
+    /* highlight.js 的 token 色走主题变量，明暗主题同一份规则 */
+    .hljs-keyword, .hljs-selector-tag { color: var(--json-key); font-weight: 500; }
+    .hljs-string, .hljs-regexp, .hljs-addition { color: var(--json-str); }
+    .hljs-number, .hljs-literal { color: var(--json-num); }
+    .hljs-comment, .hljs-quote { color: var(--ink-3); font-style: italic; }
+    .hljs-title, .hljs-title.function_, .hljs-section, .hljs-selector-id { color: var(--accent-ink); }
+    .hljs-attr, .hljs-attribute, .hljs-property, .hljs-params, .hljs-selector-attr { color: var(--orange); }
+    .hljs-built_in, .hljs-type, .hljs-title.class_ { color: var(--green); }
+    .hljs-variable, .hljs-name, .hljs-selector-class { color: var(--assistant); }
+    .hljs-meta, .hljs-meta .hljs-keyword { color: var(--ink-3); }
+    .hljs-emphasis { font-style: italic; }
+    .hljs-strong { font-weight: 600; }
+    .hljs-deletion { color: var(--red); }
     .tree { font: 12px/18px "JetBrains Mono", ui-monospace, monospace; }
     .tree details { margin-left: 12px; }
     .tree > details { margin-left: 0; }
@@ -580,6 +619,9 @@
     </main>
   </div>
   <div class="tip" id="tip"></div>
+    <!-- vendored 本地库（web/vendor/README.md 记录来源与许可证），无构建、无运行期下载 -->
+    <script src="vendor/marked.umd.js"></script>
+    <script src="vendor/highlight.min.js"></script>
     <script>
     const MINIMUM_DRAG_PX = 3;
     const MINIMUM_ZOOM_OPERATIONS = 4;
@@ -624,7 +666,8 @@
         rows: page.rows,
         older: page.has_older,
         cursor: page.cursor,
-        turns: page.turns
+        turns: page.turns,
+        toolsIndex: page.tools_index || {}
       };
     }
 
@@ -638,7 +681,8 @@
         rows: [],
         older: false,
         cursor: 0,
-        turns: item.turns
+        turns: item.turns,
+        toolsIndex: {}
       }));
       if (!sessions.length) {
         document.getElementById("crumb").textContent = "no sessions";
@@ -665,7 +709,7 @@
     const details = document.getElementById("details");
     const resize = document.getElementById("resize");
 
-    let current = { id:"", agent:"", title:"", crumb:"", rows:[], older:false, cursor:0 };
+    let current = { id:"", agent:"", title:"", crumb:"", rows:[], older:false, cursor:0, toolsIndex:{} };
     let agentFilter = null;
     const AGENT_LABELS = { pi: "Pi", droid: "Droid", claude: "Claude Code", codex: "Codex" };
     let selected = null;
@@ -716,7 +760,7 @@
     };
     const searchBlob = (row) => [
       row.tag, row.kind, row.text, row.extra, row.name, row.result, row.outputText,
-      row.payloadText, row.promptText, row.note, row.schema && row.schema.name,
+      row.payloadText, row.promptText, row.note, row.thinking, row.schema && row.schema.name,
       row.schema && row.schema.description, JSON.stringify(row.payload || "")
     ].join(" ").toLowerCase();
     const searchTerms = () => searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -725,6 +769,19 @@
       if (!terms.length) return true;
       const blob = searchBlob(row);
       return terms.every(term => blob.includes(term));
+    };
+    const rowContent = (row) => {
+      if (row.kind === "tool" || row.kind === "subtool") {
+        return `${row.name || row.tag}  ${row.text}${row.result ? `  →  ${row.result.split("\n")[0]}` : ""}`;
+      }
+      if (row.text) return row.text;
+      if (row.kind !== "assistant") return row.text || "";
+      const names = [];
+      for (const item of current.rows) {
+        if (item.parentId !== row.id || (item.kind !== "tool" && item.kind !== "subtool")) continue;
+        if (item.name && !names.includes(item.name)) names.push(item.name);
+      }
+      return names.join(" · ");
     };
 
     function tabsOf(target) {
@@ -1041,12 +1098,10 @@
           ? `<button class="req-dot" data-req="${row.id}" data-error="${row.status === "failed"}" title="Request #${row.requestNo}"><span>Request #${row.requestNo}</span></button>`
           : "";
         const turn = row.start && row.turn ? `<span class="turn-chip">${row.turn < 0 ? "T…" : `T${row.turn}`}</span>` : "";
-        const content = row.kind === "tool" || row.kind === "subtool"
-          ? `${row.name || row.tag}  ${row.text}${row.result ? `  →  ${row.result.split("\n")[0]}` : ""}`
-          : row.text;
+        const content = rowContent(row);
         parts.push(`<tr data-id="${row.id}" data-selected="${selectedRow}" data-focus="${out ? "out" : "in"}" data-error="${row.status === "failed"}" data-pending="${row.status === "pending"}" ${row.start ? 'data-turn-start="true"' : ""} class="${row.kind === "subtool" ? "subtool" : ""}">
-          <td class="idx">${idx}</td>
-          <td class="evt">${req}${turn}<span class="kind ${row.kind}">${esc(row.tag)}</span></td>
+          <td class="idx">${idx}${turn}</td>
+          <td class="evt">${req}<span class="kind ${row.kind}">${esc(row.tag)}</span></td>
           <td class="content ${row.kind === "tool" || row.kind === "subtool" ? "mono" : ""}">${esc(content)}</td>
         </tr>`);
       }
@@ -1106,26 +1161,72 @@
       const cls = typeof value === "string" ? "s" : "n";
       return `<div>${key != null ? `<span class="k">${esc(key)}</span>: ` : ""}<span class="${cls}">${shown}</span></div>`;
     }
-    function markdown(text) {
-      const html = esc(text)
-        .replace(/`([^`]+)`/g, "<code>$1</code>")
-        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-        .replace(/\n\n/g, "</p><p>")
-        .replace(/\n/g, "<br>");
-      return `<div class="md"><p>${html}</p></div>`;
+    if (window.marked) {
+      // 语料是本地会话文本，不构成高信任边界：原始 HTML 一律转义成文本，
+      // 链接只放行 http(s) 协议。表格/换行走 GFM（marked 默认 gfm 开启）。
+      marked.use({
+        gfm: true,
+        breaks: true,
+        renderer: {
+          html(token) { return esc(token.raw); },
+          link(token) {
+            const href = token.href || "";
+            if (!/^(https?:)?\/\//i.test(href) && !/^mailto:/i.test(href)) return esc(token.text);
+            return `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(token.text)}</a>`;
+          }
+        }
+      });
     }
+    function markdown(text) {
+      const source = text ?? "";
+      let html;
+      try {
+        html = window.marked ? marked.parse(source) : esc(source).replace(/\n/g, "<br>");
+      } catch (err) {
+        html = esc(source).replace(/\n/g, "<br>");
+      }
+      return `<div class="md">${html}</div>`;
+    }
+    function highlightMd() {
+      if (!window.hljs) return;
+      document.querySelectorAll(".md pre code").forEach(el => {
+        if (el.dataset.highlighted) return;
+        try { hljs.highlightElement(el); } catch (err) { /* 保留纯文本 */ }
+        el.dataset.highlighted = "1";
+      });
+    }
+    const fmtCost = (value) => value == null ? null : (Math.abs(value) < 0.01 ? Number(value).toPrecision(3) : fmtNum(value));
     function usageCells(usage) {
       const cell = (label, value, status) => {
         const miss = status === "n/a" || status === "missing" || value == null;
-        return `<div class="u-cell"><span>${label}</span>${miss ? `<b class="miss">${status === "n/a" ? "—" : "Missing"}</b>` : `<b>${fmtNum(value)}</b>`}</div>`;
+        return `<div class="u-cell"><span>${label}</span>${miss ? `<b class="miss">${status === "n/a" ? "—" : "Missing"}</b>` : `<b>${value}</b>`}</div>`;
       };
       const status = usage.status;
+      const st = (value) => status === "n/a" ? "n/a" : value == null ? "missing" : status;
       return `<div class="usage-grid">
-        ${cell("Input", usage.input, status === "n/a" ? "n/a" : usage.input == null ? "missing" : status)}
-        ${cell("Output", usage.output, status === "n/a" ? "n/a" : usage.output == null ? "missing" : status)}
-        ${cell("Cache read", usage.cacheRead, status === "n/a" ? "n/a" : usage.cacheRead == null ? "missing" : status)}
-        ${cell("Cache write", usage.cacheWrite, status === "n/a" ? "n/a" : usage.cacheWrite == null ? "missing" : status)}
+        ${cell("Input", fmtNum(usage.input), st(usage.input))}
+        ${cell("Output", fmtNum(usage.output), st(usage.output))}
+        ${cell("Cache read", fmtNum(usage.cacheRead), st(usage.cacheRead))}
+        ${cell("Cache write", fmtNum(usage.cacheWrite), st(usage.cacheWrite))}
+        ${cell("Total tokens", fmtNum(usage.totalTokens), st(usage.totalTokens))}
+        ${cell("Cost", fmtCost(usage.cost), st(usage.cost))}
       </div>`;
+    }
+    function sessionUsage() {
+      // Session cumulative：按已加载窗口内所有 reported 的 assistant 行累计
+      // （与 dsh 的窗口投影同思路：只统计前端已到手的数据）。
+      const total = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: 0 };
+      let count = 0;
+      for (const row of current.rows) {
+        const u = row.usage;
+        if (row.kind !== "assistant" || !u || u.status !== "reported") continue;
+        count += 1;
+        for (const key of ["input", "output", "cacheRead", "cacheWrite", "totalTokens", "cost"]) {
+          if (typeof u[key] === "number") total[key] += u[key];
+        }
+      }
+      if (!count) return null;
+      return { usage: { ...total, status: "reported" }, count };
     }
     function section(label, tabId, inner) {
       return `<div class="sec"><button class="sec-h" type="button" data-open="${tabId}">${label} <span>›</span></button>${inner}</div>`;
@@ -1171,8 +1272,9 @@
             <div><dt>Result</dt><dd><button class="jump" type="button" data-jump="${row.id}">Assistant Message <i>›</i></button></dd></div>
           </dl>`;
         } else if (tab === "usage") {
+          const cum = sessionUsage();
           body.innerHTML = `<div class="sec"><div class="sec-h">This request</div>${usageCells(row.usage)}</div>
-            <div class="sec"><div class="sec-h">Session cumulative</div><p class="miss">Not reconstructed in this sketch.</p></div>`;
+            <div class="sec"><div class="sec-h">Session cumulative${cum ? ` · ${cum.count} request${cum.count > 1 ? "s" : ""}` : ""}</div>${cum ? usageCells(cum.usage) : `<p class="miss">No reported usage in loaded window.</p>`}</div>`;
         } else {
           body.innerHTML = `<dl class="kv">
             <div><dt>Started</dt>${startedButton(row.startedAt)}</div>
@@ -1201,6 +1303,7 @@
           ).join("");
           else body.innerHTML = `<div class="sec">${unifiedDiff(row.previousPrompt || "", row.promptText || "")}</div>`;
         } else if (tab === "summary") {
+          const toolSchema = row.schema || (current.toolsIndex && current.toolsIndex[row.name]);
           body.innerHTML = `
             <dl class="kv">
               ${parent ? `<div><dt>Hierarchy</dt><dd><button class="jump" type="button" data-jump="${parent.id}">${parent.kind === "assistant" ? "Assistant Message" : parent.tag} <i>›</i></button>${grand ? ` · <button class="jump" type="button" data-jump="${grand.id}">${grand.tag} <i>›</i></button>` : ""}</dd></div>` : ""}
@@ -1211,7 +1314,7 @@
             </dl>
             ${row.payload ? section("Payload", "payload", `<div class="tree">${jsonTree(row.payload)}</div>`) : row.payloadText ? section("Preview", "preview", markdown(row.payloadText)) : ""}
             ${row.result ? section("Result", "result", `<pre class="blob">${esc(row.result)}</pre>`) : row.outputText ? section("Preview", "preview", markdown(row.outputText)) : ""}
-            ${row.schema ? section("Schema", "schema", `<div class="schema-box"><h3>${esc(row.schema.name)}</h3><p>${esc(row.schema.description)}</p></div>`) : ""}
+            ${toolSchema ? section("Schema", "schema", `<div class="schema-box"><h3>${esc(toolSchema.name)}</h3>${toolSchema.description ? `<p>${esc(toolSchema.description)}</p>` : ""}</div>`) : ""}
             ${row.kind === "assistant" ? section("Usage", "summary", usageCells(row.usage)) : ""}
             ${row.thinking ? `<details class="think"><summary>Thinking</summary><pre class="blob">${esc(row.thinking)}</pre></details>` : ""}
             ${section("Timing", "timing", `<dl class="kv">
@@ -1229,8 +1332,10 @@
             ? `<div class="sec"><pre class="blob">${esc(row.result)}</pre></div>`
             : `<div class="sec miss">No result captured</div>`;
         } else if (tab === "schema") {
-          body.innerHTML = row.schema
-            ? `<div class="sec"><div class="schema-box"><h3>${esc(row.schema.name)}</h3><p>${esc(row.schema.description)}</p></div>${row.schema.parameters ? `<div class="tree">${jsonTree(row.schema.parameters)}</div>` : ""}</div>`
+          const toolSchema = row.schema || (current.toolsIndex && current.toolsIndex[row.name]);
+          const params = toolSchema && toolSchema.parameters && typeof toolSchema.parameters === "object" && Object.keys(toolSchema.parameters).length ? toolSchema.parameters : null;
+          body.innerHTML = toolSchema
+            ? `<div class="sec"><div class="schema-box"><h3>${esc(toolSchema.name)}</h3>${toolSchema.description ? `<p>${esc(toolSchema.description)}</p>` : ""}</div>${params ? `<div class="tree">${jsonTree(params)}</div>` : `<p class="miss" style="margin-top:6px">Parameters not recorded in source log</p>`}</div>`
             : `<div class="sec miss">Schema unavailable</div>`;
         } else if (tab === "timing") {
           const throughput = row.outputTokens && row.decodingMs
@@ -1261,6 +1366,7 @@
         unixStarted = !unixStarted;
         paintInspector();
       });
+      highlightMd();
     }
 
     function paint() {

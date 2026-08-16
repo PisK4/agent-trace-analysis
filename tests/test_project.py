@@ -28,8 +28,30 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(kinds, ["user", "assistant", "tool"])
         self.assertTrue(sess["rows"][0]["start"])
         self.assertEqual(sess["rows"][1]["usage"]["cacheRead"], 1)
+        # 适配器带 total_tokens/cost，投影层必须透传（此前丢失）。
+        self.assertEqual(sess["rows"][1]["usage"]["totalTokens"], 13)
+        self.assertIsNone(sess["rows"][1]["usage"]["cost"])
         self.assertEqual(sess["rows"][2]["parentId"], "a1")
         self.assertEqual(sess["rows"][2]["usage"]["status"], "n/a")
+
+    def test_tools_index_merges_catalog(self):
+        # system.upserted 的 tools_catalog 按名字合并成 toolsIndex，后写覆盖前写，
+        # 前端按工具名查 Schema（dsh 的 Schema 页签同款取数）。
+        recs = [
+            rec(1, {"v":1,"id":"o","agent_id":"pi","session_id":"s","ts":1,"type":"session.opened","turn":None,"payload":{"title":"t"}}),
+            rec(2, {"v":1,"id":"sys1","agent_id":"pi","session_id":"s","ts":2,"type":"system.upserted","turn":None,"payload":{
+                "prompt_text":"p1","previous_prompt":None,
+                "tools_catalog":[{"name":"Read","description":"read files","parameters":{}}]}}),
+            rec(3, {"v":1,"id":"sys2","agent_id":"pi","session_id":"s","ts":3,"type":"system.upserted","turn":None,"payload":{
+                "prompt_text":"p2","previous_prompt":"p1",
+                "tools_catalog":[
+                    {"name":"Write","description":"write files","parameters":{}},
+                    {"name":"Read","description":"read files v2","parameters":{}},
+                ]}}),
+        ]
+        page = project_session("s", "pi", recs)
+        self.assertEqual(page["tools_index"]["Read"]["description"], "read files v2")
+        self.assertEqual(page["tools_index"]["Write"]["description"], "write files")
 
     def test_droid_missing(self):
         recs = [

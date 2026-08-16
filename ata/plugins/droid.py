@@ -52,7 +52,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         role = raw.get("role")
         content = raw.get("content")
     if role in {"user", "assistant"}:
-        texts = _texts(content)
+        texts, thinking = _split(content)
         is_tool_only = role == "user" and texts == "" and _has_tool_result(content)
         if not is_tool_only:
             if role == "user":
@@ -85,6 +85,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                     "started_at": ts,
                     "duration_ms": 1,
                     "output_text": text if role == "assistant" else None,
+                    "thinking": thinking or None,
                 },
             ))
         else:
@@ -163,6 +164,21 @@ def _blocks(content):
     if isinstance(content, list):
         return [b for b in content if isinstance(b, dict)]
     return []
+
+
+def _split(content):
+    """把 content 拆成 (正文, thinking)。text 只含文本块，thinking 单独出字段，
+    供前端折叠展示（dsh 的 thinking 折叠同款）。tool_result 等共用路径仍见 _texts。
+    """
+    if isinstance(content, str):
+        return content, ""
+    texts, thinking = [], []
+    for block in _blocks(content):
+        if block.get("type") == "text" and block.get("text"):
+            texts.append(str(block["text"]))
+        elif block.get("type") == "thinking" and block.get("thinking"):
+            thinking.append(str(block["thinking"]))
+    return "\n".join(texts), "\n".join(thinking)
 
 
 def _texts(content):

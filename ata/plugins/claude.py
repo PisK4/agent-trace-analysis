@@ -40,7 +40,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         return out
     if role not in {"user", "assistant"}:
         return out
-    texts = _texts(content)
+    texts, thinking = _split(content)
     is_tool_only = role == "user" and texts == "" and _has_tool_result(content)
     if not is_tool_only:
         if role == "user":
@@ -75,6 +75,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 "started_at": ts,
                 "duration_ms": 1,
                 "output_text": texts if role == "assistant" else None,
+                "thinking": thinking or None,
             },
         ))
     for block in _blocks(content):
@@ -160,6 +161,25 @@ def _blocks(content):
     if isinstance(content, list):
         return [b for b in content if isinstance(b, dict)]
     return []
+
+
+def _split(content):
+    """把 content 拆成 (正文, thinking)。text 只含文本块，thinking 单独出字段，
+    供前端折叠展示（dsh 的 thinking 折叠同款）。老格式的裸字符串文本块归正文。
+    """
+    if isinstance(content, str):
+        return content, ""
+    texts, thinking = [], []
+    for b in _blocks(content):
+        if b.get("type") == "text" and b.get("text"):
+            texts.append(str(b["text"]))
+        elif b.get("type") == "thinking" and b.get("thinking"):
+            thinking.append(str(b["thinking"]))
+    if isinstance(content, list):
+        for b in content:
+            if isinstance(b, str):
+                texts.append(b)
+    return "\n".join(texts), "\n".join(thinking)
 
 
 def _texts(content):

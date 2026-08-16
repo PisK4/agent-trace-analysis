@@ -1,5 +1,11 @@
-NA = {"status": "n/a", "input": None, "output": None, "cacheRead": None, "cacheWrite": None}
-MISS = {"status": "missing", "input": None, "output": None, "cacheRead": None, "cacheWrite": None}
+NA = {
+    "status": "n/a", "input": None, "output": None,
+    "cacheRead": None, "cacheWrite": None, "totalTokens": None, "cost": None,
+}
+MISS = {
+    "status": "missing", "input": None, "output": None,
+    "cacheRead": None, "cacheWrite": None, "totalTokens": None, "cost": None,
+}
 
 
 def _usage(raw):
@@ -13,6 +19,8 @@ def _usage(raw):
         "output": raw["output"],
         "cacheRead": raw["cache_read"],
         "cacheWrite": raw["cache_write"],
+        "totalTokens": raw.get("total_tokens"),
+        "cost": raw.get("cost"),
     }
 
 
@@ -57,6 +65,7 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
                 "requestNo": p.get("request_no"),
                 "outputText": p.get("output_text"),
                 "payloadText": p["text"] if p["role"] == "user" else None,
+                "thinking": p.get("thinking"),
                 "usage": _usage(p.get("usage")) if p["role"] == "assistant" else dict(NA),
             })
             entities[key] = row
@@ -108,6 +117,13 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
                 order.append(key)
 
     rows = [entities[k] for k in sorted(order, key=lambda k: entities[k]["_first"])]
+    # 工具目录索引：按名字合并会话里全部 system.upserted 的 tools_catalog，
+    # 后写覆盖前写，供前端按工具名查 Schema（dsh 的 Schema 页签同款取数）。
+    tools_index = {}
+    for row in rows:
+        for tool in row.get("toolsCatalog") or []:
+            if isinstance(tool, dict) and tool.get("name"):
+                tools_index[str(tool["name"])] = tool
     seen_turn = set()
     for row in rows:
         if row["turn"] not in seen_turn:
@@ -157,5 +173,6 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
         "has_older": has_older,
         "cursor": cursor,
         "turns": len({t for t in seen_turn if t is not None}),
+        "tools_index": tools_index,
         "rows": rows,
     }
