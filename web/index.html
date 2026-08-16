@@ -1588,6 +1588,17 @@
       if (follow) scroller.scrollTop = scroller.scrollHeight;
     }, 1000);
 
+    // 新会话出现时刷新左侧列表（只新增，不打断当前画布）。
+    setInterval(async () => {
+      if (document.hidden) return;
+      const list = await fetchJSON("/api/sessions");
+      const have = new Set(sessions.map(s => s.id));
+      const fresh = list.filter(s => !have.has(s.id));
+      if (!fresh.length) return;
+      for (const item of fresh) sessions.push(await loadSession(item.id));
+      paintSessions();
+    }, 5000);
+
     boot();
   </script>
 </body>
