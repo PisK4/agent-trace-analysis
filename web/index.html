@@ -178,20 +178,27 @@
     .agent-codex { --agent: var(--green); --agent-soft: var(--green-tint); }
     .agent-pi { --agent: var(--ink); --agent-soft: var(--hover); }
     .agent-droid { --agent: var(--cyan); --agent-soft: var(--cyan-tint); }
+    #sessList { display: flex; flex-direction: column; gap: 6px; padding: 4px 10px 12px; }
     .item {
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: minmax(0, 1fr) auto;
       gap: 2px 8px;
-      margin: 1px 8px;
-      padding: 8px 8px 8px 7px;
-      border-radius: 7px;
-      border-left: 2px solid var(--agent, transparent);
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: var(--agent-soft, var(--hover));
+      box-shadow: var(--shadow-card);
       color: var(--ink-2);
       text-align: left;
     }
-    .item:hover { background: var(--hover); }
-    .item[aria-current="true"] { background: var(--hover); color: var(--ink); font-weight: 500; }
-    .item .t { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+    .item:hover { box-shadow: var(--shadow-overlay); }
+    .item[aria-current="true"] {
+      color: var(--ink);
+      font-weight: 500;
+      box-shadow: var(--shadow-overlay);
+      transform: translateY(-1px);
+    }
+    .item .t { grid-column: 1 / -1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
     .item small { color: var(--ink-3); font-size: 11px; font-family: "JetBrains Mono", ui-monospace, monospace; }
     .item small.agent { color: var(--agent, var(--ink-3)); }
     .home-empty {
