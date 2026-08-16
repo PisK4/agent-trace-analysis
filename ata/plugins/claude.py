@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from ata.plugins.jsonl import translate_file as _jfile
+from ata.project import is_context_text
 
 
 def translate_line(raw: dict, state: dict) -> list[dict]:
@@ -43,8 +44,9 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
     texts, thinking = _split(content)
     is_tool_only = role == "user" and texts == "" and _has_tool_result(content)
     if not is_tool_only:
-        if role == "user":
-            # Claude transcript 没有显式 turn 事件：轮次按用户消息到达递增（同 droid）。
+        if role == "user" and not is_context_text(texts):
+            # Claude transcript 没有显式 turn 事件：轮次按真实用户消息递增（同 droid）。
+            # CONTEXT 注入（system-reminder / Skill）不另开一轮。
             state["turn"] = int(state.get("turn") or 0) + 1
             turn = state["turn"]
             if turn not in state.setdefault("started_turns", set()):

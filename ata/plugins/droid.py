@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ata.project import is_context_text
+
 
 def translate_line(raw: dict, state: dict) -> list[dict]:
     typ = raw.get("type")
@@ -55,7 +57,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         texts, thinking = _split(content)
         is_tool_only = role == "user" and texts == "" and _has_tool_result(content)
         if not is_tool_only:
-            if role == "user":
+            if role == "user" and not is_context_text(texts):
                 state["turn"] = int(state.get("turn") or 0) + 1
                 turn = state["turn"]
                 if turn not in state.setdefault("started_turns", set()):

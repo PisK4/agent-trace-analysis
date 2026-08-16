@@ -33,6 +33,42 @@ class ProjectTest(unittest.TestCase):
         self.assertIsNone(sess["rows"][1]["usage"]["cost"])
         self.assertEqual(sess["rows"][2]["parentId"], "a1")
         self.assertEqual(sess["rows"][2]["usage"]["status"], "n/a")
+        self.assertEqual(sess["rows"][2]["text"], 'Read {"path":"f"}')
+
+    def test_system_reminder_is_context(self):
+        recs = [
+            rec(1, {"v":1,"id":"o","agent_id":"droid","session_id":"d","ts":1,"type":"session.opened","turn":None,"payload":{"title":"d"}}),
+            rec(2, {"v":1,"id":"u","agent_id":"droid","session_id":"d","ts":2,"type":"message.upserted","turn":1,"payload":{
+                "message_id":"u1","role":"user","text":"<system-reminder>The tools listed below are available",
+                "status":"completed","request_no":None,"usage":None,"started_at":2,"duration_ms":1,"output_text":None}}),
+        ]
+        row = project_session("d", "droid", recs)["rows"][0]
+        self.assertEqual(row["kind"], "context")
+        self.assertEqual(row["tag"], "CONTEXT")
+        self.assertFalse(row["start"])
+
+    def test_context_does_not_open_turn(self):
+        recs = [
+            rec(1, {"v":1,"id":"o","agent_id":"droid","session_id":"d","ts":1,"type":"session.opened","turn":None,"payload":{"title":"d"}}),
+            rec(2, {"v":1,"id":"u","agent_id":"droid","session_id":"d","ts":2,"type":"message.upserted","turn":1,"payload":{
+                "message_id":"u1","role":"user","text":"hello","status":"completed","request_no":None,
+                "usage":None,"started_at":2,"duration_ms":1,"output_text":None}}),
+            rec(3, {"v":1,"id":"c","agent_id":"droid","session_id":"d","ts":3,"type":"message.upserted","turn":2,"payload":{
+                "message_id":"c1","role":"user","text":"<system-reminder>The tools listed below are available",
+                "status":"completed","request_no":None,"usage":None,"started_at":3,"duration_ms":1,"output_text":None}}),
+            rec(4, {"v":1,"id":"a","agent_id":"droid","session_id":"d","ts":4,"type":"message.upserted","turn":2,"payload":{
+                "message_id":"a1","role":"assistant","text":"ok","status":"completed","request_no":1,
+                "usage":None,"started_at":4,"duration_ms":1,"output_text":"ok"}}),
+        ]
+        rows = project_session("d", "droid", recs)["rows"]
+        self.assertEqual([r["kind"] for r in rows], ["user", "context", "assistant"])
+        self.assertEqual(rows[0]["turn"], 1)
+        self.assertTrue(rows[0]["start"])
+        self.assertEqual(rows[1]["turn"], 1)
+        self.assertFalse(rows[1]["start"])
+        self.assertEqual(rows[2]["turn"], 1)
+        self.assertFalse(rows[2]["start"])
+        self.assertEqual(project_session("d", "droid", recs)["turns"], 1)
 
     def test_tools_index_merges_catalog(self):
         # system.upserted 的 tools_catalog 按名字合并成 toolsIndex，后写覆盖前写，

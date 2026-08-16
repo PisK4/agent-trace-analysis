@@ -60,6 +60,18 @@ class DroidTest(unittest.TestCase):
         hit = [e for e in evs if e["type"] == "message.upserted" and e["payload"]["text"] == "hi"]
         self.assertTrue(hit)
 
+    def test_context_does_not_start_turn(self):
+        state = {}
+        evs = []
+        evs += translate_line({"type": "message", "id": "u1", "role": "user",
+                               "content": [{"type": "text", "text": "hello"}]}, state)
+        evs += translate_line({"type": "message", "id": "c1", "role": "user",
+                               "content": [{"type": "text", "text": "<system-reminder>tools"}]}, state)
+        turns = [e for e in evs if e["type"] == "turn.started"]
+        self.assertEqual(len(turns), 1)
+        ctx = [e for e in evs if e["type"] == "message.upserted" and e["payload"]["message_id"] == "c1"][0]
+        self.assertEqual(ctx["turn"], 1)
+
     def test_thinking_split_from_text(self):
         # 对标 dsh 的 thinking 折叠：thinking 块不再并入正文本，
         # 单独进 payload["thinking"]，text 只保留正文，前端折叠展示。

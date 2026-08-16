@@ -346,7 +346,7 @@
       vertical-align: middle;
     }
     .idx { width: 92px; color: var(--ink-3); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; }
-    .evt { width: 152px; text-align: right; }
+    .evt { width: 132px; text-align: left; position: relative; overflow: visible; padding-left: 28px; }
     tbody tr { cursor: default; }
     tbody tr:hover { background: var(--hover); }
     tbody tr[data-selected="true"] { background: var(--accent-tint); }
@@ -370,16 +370,25 @@
       vertical-align: middle;
     }
     .req-dot {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 16px; height: 16px; margin-right: 6px;
-      border-radius: 99px; background: var(--accent);
-      vertical-align: middle; position: relative;
+      position: absolute; z-index: 4; left: 8px; top: 50%;
+      width: 16px; height: 16px; margin: -8px 0 0;
+      border: 0; background: transparent; cursor: pointer;
     }
-    .req-dot[data-error="true"] { background: var(--red); }
+    .req-dot::before {
+      content: "";
+      position: absolute; top: 5.5px; left: 5.5px;
+      width: 5px; height: 5px; border-radius: 50%;
+      background: var(--ink-3);
+      box-shadow: 0 0 0 2px var(--surface);
+    }
+    .req-dot:hover::before, .req-dot:focus-visible::before,
+    .req-dot[data-active="true"]::before { background: var(--accent); }
+    .req-dot[data-error="true"]::before { background: var(--red); }
     .req-dot span {
-      display: none; position: absolute; left: 18px; top: -2px;
-      padding: 1px 5px; border-radius: 4px; background: var(--tooltip); color: #fff;
-      font: 10px/14px "JetBrains Mono", ui-monospace, monospace; white-space: nowrap; z-index: 3;
+      display: none; position: absolute; left: 16px; top: -1px;
+      padding: 1px 5px; border-radius: 2px; background: var(--surface);
+      border: 1px solid var(--line-strong); color: var(--ink-2);
+      font: 9px/12px "JetBrains Mono", ui-monospace, monospace; white-space: nowrap; z-index: 5;
     }
     .req-dot:hover span, .req-dot:focus-visible span { display: block; }
     .kind {
@@ -393,6 +402,10 @@
     .kind.tool, .kind.subtool { color: var(--orange); background: var(--orange-tint); }
     .kind.compacted, .kind.system { color: var(--ink-2); background: var(--field); }
     .kind.request { color: var(--accent-ink); background: var(--accent-tint); }
+    .req-chip-dot {
+      display: inline-block; width: 6px; height: 6px; margin-right: 6px;
+      border-radius: 50%; background: var(--accent); vertical-align: middle;
+    }
     .mono { font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--ink-2); }
     .subtool .content { padding-left: 26px; }
 
@@ -531,12 +544,13 @@
     .u-cell span { display: block; color: var(--ink-3); font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; }
     .u-cell b { display: block; margin-top: 4px; font: 500 14px/18px "JetBrains Mono", ui-monospace, monospace; }
     .think {
-      margin: 8px 14px;
+      margin: 0 0 8px;
       border-radius: 8px;
       background: var(--inset);
     }
     .think summary { padding: 6px 10px; cursor: pointer; color: var(--ink-2); }
     .think pre { margin: 0; padding: 0 10px 8px; }
+    .think-body { margin: 0 0 8px; }
     details.tool-card {
       margin: 8px 14px;
       border-radius: 8px;
@@ -770,12 +784,13 @@
       const blob = searchBlob(row);
       return terms.every(term => blob.includes(term));
     };
+    const compactPreview = (text) => String(text || "").replace(/\s+/g, " ").trim();
     const rowContent = (row) => {
       if (row.kind === "tool" || row.kind === "subtool") {
-        return `${row.name || row.tag}  ${row.text}${row.result ? `  →  ${row.result.split("\n")[0]}` : ""}`;
+        return compactPreview(row.text || row.name || row.tag);
       }
-      if (row.text) return row.text;
-      if (row.kind !== "assistant") return row.text || "";
+      if (row.text) return compactPreview(row.text);
+      if (row.kind !== "assistant") return compactPreview(row.text);
       const names = [];
       for (const item of current.rows) {
         if (item.parentId !== row.id || (item.kind !== "tool" && item.kind !== "subtool")) continue;
@@ -1094,10 +1109,13 @@
         const out = focus && !focus.has(row.id);
         const selectedRow = selected.type === "record" && selected.id === row.id;
         const idx = String(row.index + 1).padStart(2, "0");
+        const reqActive = selected.type === "request" && selected.id === row.id;
         const req = row.requestNo
-          ? `<button class="req-dot" data-req="${row.id}" data-error="${row.status === "failed"}" title="Request #${row.requestNo}"><span>Request #${row.requestNo}</span></button>`
+          ? `<button class="req-dot" data-req="${row.id}" data-error="${row.status === "failed"}" data-active="${reqActive}" title="Request #${row.requestNo}"><span>Request #${row.requestNo}</span></button>`
           : "";
-        const turn = row.start && row.turn ? `<span class="turn-chip">${row.turn < 0 ? "T…" : `T${row.turn}`}</span>` : "";
+        const turn = row.start && row.turn && row.kind !== "context"
+          ? `<span class="turn-chip">${row.turn < 0 ? "T…" : `T${row.turn}`}</span>`
+          : "";
         const content = rowContent(row);
         parts.push(`<tr data-id="${row.id}" data-selected="${selectedRow}" data-focus="${out ? "out" : "in"}" data-error="${row.status === "failed"}" data-pending="${row.status === "pending"}" ${row.start ? 'data-turn-start="true"' : ""} class="${row.kind === "subtool" ? "subtool" : ""}">
           <td class="idx">${idx}${turn}</td>
@@ -1231,6 +1249,26 @@
     function section(label, tabId, inner) {
       return `<div class="sec"><button class="sec-h" type="button" data-open="${tabId}">${label} <span>›</span></button>${inner}</div>`;
     }
+    function thinkingBlock(text) {
+      if (!text) return "";
+      return `<details class="think"><summary>Thinking</summary><div class="think-body">${markdown(text)}</div></details>`;
+    }
+    function previewBody(row) {
+      const output = row.kind === "assistant"
+        ? (row.outputText || "")
+        : (row.payloadText || row.outputText || row.text || "");
+      const html = thinkingBlock(row.thinking) + (output ? markdown(output) : "");
+      return html || `<p class="miss">No content</p>`;
+    }
+    function tokenRows(row) {
+      const usage = row.usage || {};
+      const output = usage.output;
+      const think = usage.reasoning;
+      const content = output != null && think != null ? Math.max(0, output - think) : null;
+      return `<div><dt>Tokens</dt><dd>${output == null ? "—" : `${fmtNum(output)} tok`}</dd></div>`
+        + (think != null ? `<div><dt>Reasoning</dt><dd>${fmtNum(think)} tok</dd></div>` : "")
+        + (content != null ? `<div><dt>Content</dt><dd>${fmtNum(content)} tok</dd></div>` : "");
+    }
     function startedButton(ms) {
       if (!Number.isFinite(ms)) return `<dd>Not available</dd>`;
       const label = unixStarted ? (ms / 1000).toFixed(3) : dayClock(ms);
@@ -1254,8 +1292,8 @@
       if (selected.type === "request") {
         const row = byId(selected.id);
         tag.className = "kind request";
-        tag.textContent = "REQUEST";
-        loc.textContent = `Request #${row.requestNo} · Turn ${row.turn} · ${row.group || "Step"}`;
+        tag.innerHTML = `<span class="req-chip-dot"></span>Request #${row.requestNo}`;
+        loc.textContent = row.turn == null ? "SYSTEM" : `Turn ${row.turn} · ${row.group || "Step"}`;
         document.getElementById("tabs").innerHTML = tabs.map(id =>
           `<button class="tab" type="button" data-tab="${id}" aria-selected="${id === tab}">${id[0].toUpperCase() + id.slice(1)}</button>`
         ).join("");
@@ -1304,20 +1342,20 @@
           else body.innerHTML = `<div class="sec">${unifiedDiff(row.previousPrompt || "", row.promptText || "")}</div>`;
         } else if (tab === "summary") {
           const toolSchema = row.schema || (current.toolsIndex && current.toolsIndex[row.name]);
+          const isMarkdown = row.kind === "assistant" || row.kind === "user" || row.kind === "context";
           body.innerHTML = `
             <dl class="kv">
               ${parent ? `<div><dt>Hierarchy</dt><dd><button class="jump" type="button" data-jump="${parent.id}">${parent.kind === "assistant" ? "Assistant Message" : parent.tag} <i>›</i></button>${grand ? ` · <button class="jump" type="button" data-jump="${grand.id}">${grand.tag} <i>›</i></button>` : ""}</dd></div>` : ""}
               <div><dt>Status</dt><dd>${row.status === "failed" ? "Failed" : row.status === "pending" ? "Pending" : "Completed"}</dd></div>
-              ${row.kind === "assistant" ? `<div><dt>Usage</dt><dd>${row.usage.status === "reported" ? "reported" : row.usage.status === "missing" ? "Missing" : "n/a"}</dd></div>` : ""}
-              ${row.requestNo ? `<div><dt>Request</dt><dd><button class="jump" type="button" data-open-req="${row.id}">Request #${row.requestNo} <i>›</i></button></dd></div>` : ""}
+              ${row.kind === "assistant" ? tokenRows(row) : ""}
+              ${(row.kind === "user" || row.kind === "context") ? `<div><dt>Duration</dt><dd>${durLabel(row.durationMs || 0)}</dd></div>` : ""}
               ${row.note ? `<div><dt>Note</dt><dd>${esc(row.note)}</dd></div>` : ""}
             </dl>
-            ${row.payload ? section("Payload", "payload", `<div class="tree">${jsonTree(row.payload)}</div>`) : row.payloadText ? section("Preview", "preview", markdown(row.payloadText)) : ""}
-            ${row.result ? section("Result", "result", `<pre class="blob">${esc(row.result)}</pre>`) : row.outputText ? section("Preview", "preview", markdown(row.outputText)) : ""}
-            ${toolSchema ? section("Schema", "schema", `<div class="schema-box"><h3>${esc(toolSchema.name)}</h3>${toolSchema.description ? `<p>${esc(toolSchema.description)}</p>` : ""}</div>`) : ""}
-            ${row.kind === "assistant" ? section("Usage", "summary", usageCells(row.usage)) : ""}
-            ${row.thinking ? `<details class="think"><summary>Thinking</summary><pre class="blob">${esc(row.thinking)}</pre></details>` : ""}
-            ${section("Timing", "timing", `<dl class="kv">
+            ${isMarkdown ? section("Preview", "preview", previewBody(row)) : ""}
+            ${!isMarkdown && row.payload ? section("Payload", "payload", `<div class="tree">${jsonTree(row.payload)}</div>`) : ""}
+            ${!isMarkdown && row.result ? section("Result", "result", `<pre class="blob">${esc(row.result)}</pre>`) : ""}
+            ${!isMarkdown && toolSchema ? section("Schema", "schema", `<div class="schema-box"><h3>${esc(toolSchema.name)}</h3>${toolSchema.description ? `<p>${esc(toolSchema.description)}</p>` : ""}</div>`) : ""}
+            ${section(row.kind === "assistant" ? "Request Timing" : "Timing", "timing", `<dl class="kv">
               <div><dt>Started</dt>${startedButton(row.startedAt)}</div>
               <div><dt>Duration</dt><dd>${durLabel(row.durationMs || 0)}</dd></div>
               <div><dt>Timing source</dt><dd>Session timestamps</dd></div>
@@ -1350,9 +1388,10 @@
             <div><dt>Timing source</dt><dd>Session timestamps</dd></div>
           </dl>`;
         } else if (tab === "preview") {
-          body.innerHTML = `<div class="sec">${markdown(row.outputText || row.payloadText || row.text || "")}</div>`;
+          body.innerHTML = `<div class="sec">${previewBody(row)}</div>`;
         } else if (tab === "raw" || tab === "source") {
-          body.innerHTML = `<div class="sec"><pre class="blob">${esc(row.outputText || row.payloadText || row.text || "No content")}</pre></div>`;
+          const raw = [row.thinking, row.outputText || row.payloadText || row.text].filter(Boolean).join("\n\n");
+          body.innerHTML = `<div class="sec"><pre class="blob">${esc(raw || "No content")}</pre></div>`;
         }
       }
       document.querySelectorAll("#tabs .tab").forEach(btn => btn.addEventListener("click", () => { rememberTab(btn.dataset.tab); paintInspector(); }));
