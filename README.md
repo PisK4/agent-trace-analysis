@@ -10,9 +10,11 @@
 
 ```bash
 cd repos/ata
-./scripts/serve-dev.sh          # 检测已装的 agent 并 tail 它们的会话目录
+make serve                      # 等同于 ./scripts/serve-dev.sh，检测已装 agent 并 tail
 # 打开 http://127.0.0.1:8787
 ```
+
+其它常用命令：`make test`（全量测试）、`make seed`（灌入演示会话语料）、`make help`（命令列表）。
 
 `serve-dev.sh` 自动挂载本机存在的会话目录（Claude Code：`~/.claude/projects`；Codex：`~/.codex/sessions`；Droid：`~/.factory/sessions`），账本固定存在 `~/.ata/dev.sqlite`，只读取最近 7 天修改的会话文件（`--tail-max-age-days` 可调，`0` 表示全部历史）。
 

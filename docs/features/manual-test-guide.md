@@ -6,7 +6,7 @@
 
 ```bash
 cd repos/ata
-./scripts/serve-dev.sh          # 端口 8787，账本 ~/.ata/dev.sqlite，近 7 天会话
+make serve                      # 端口 8787，账本 ~/.ata/dev.sqlite，近 7 天会话
 # 浏览器打开 http://127.0.0.1:8787
 ```
 
