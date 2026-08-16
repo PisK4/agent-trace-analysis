@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ata.http import make_server
 from ata.ledger import Ledger
-from ata.plugins.droid import tail_forever, translate_file
+from ata.plugins.droid import translate_file
 from ata.schema import parse_event
 
 
@@ -50,23 +50,6 @@ def seed_demo(ledger: Ledger):
     seed_long(ledger)
 
 
-def ingest_vendor(ledger, path, translate_file_fn):
-    """一次性灌入：目录递归扫全部 JSONL，单文件直接翻。显式传入才打开，默认不碰厂商目录。"""
-    if not path:
-        return
-    path = Path(path)
-    files = sorted(path.rglob("*.jsonl")) if path.is_dir() else [path]
-    for f in files:
-        events, _ = translate_file_fn(f, offset=0)
-        for ev in events:
-            ledger.append(parse_event(ev))
-
-
-def spawn_tail(path, translate_file_fn, led):
-    from ata.plugins.jsonl import tail_forever as jtail
-    threading.Thread(target=jtail, args=(path, translate_file_fn, led), daemon=True).start()
-
-
 def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("cmd", choices=["serve", "seed"])
@@ -82,23 +65,21 @@ def main(argv=None):
         seed_demo(led)
         print(f"seeded {led.path}")
         return
-    if args.droid_path:
-        # droid 路径语义保持原样：单文件灌入 + tail
-        p = Path(args.droid_path)
-        ingest_vendor(led, p, translate_file)
-        threading.Thread(target=tail_forever, args=(p, led), daemon=True).start()
+    # 目录/单文件统一走 tail_path：首轮灌入已有文件（账本按 id 幂等），
+    # 之后 1s 轮询发现新文件与活动会话的追加行。显式传入才打开，默认不碰厂商目录。
+    def start_tail(path_arg, tf):
+        if not path_arg:
+            return
+        from ata.plugins.jsonl import tail_path
+        threading.Thread(target=tail_path, args=(Path(path_arg), tf, led), daemon=True).start()
+
+    start_tail(args.droid_path, translate_file)
     if args.claude_path:
         from ata.plugins.claude import translate_file as claude_tf
-        p = Path(args.claude_path)
-        ingest_vendor(led, p, claude_tf)
-        if p.is_file():
-            spawn_tail(p, claude_tf, led)
+        start_tail(args.claude_path, claude_tf)
     if args.codex_path:
         from ata.plugins.codex import translate_file as codex_tf
-        p = Path(args.codex_path)
-        ingest_vendor(led, p, codex_tf)
-        if p.is_file():
-            spawn_tail(p, codex_tf, led)
+        start_tail(args.codex_path, codex_tf)
     httpd = make_server(led, Path(args.web), "127.0.0.1", args.port)
     print(f"atatrace http://127.0.0.1:{args.port}")
     httpd.serve_forever()

@@ -25,8 +25,10 @@ def translate_file(path: Path, translate_line, offset: int = 0):
     translate_line(raw: dict, state: dict) -> list[dict] 由各插件提供。
     droid.py 内还有一份更早的同形实现；第三个插件落地后统一迁到这里。
     """
-    data = Path(path).read_bytes()
-    chunk = data[offset:]
+    # seek 到 offset 只读剩余字节，目录 tail 每轮全扫时不会反复读整个大文件。
+    with open(path, "rb") as fh:
+        fh.seek(offset)
+        chunk = fh.read()
     text = chunk.decode("utf-8", errors="replace")
     if not text.endswith("\n") and b"\n" in chunk:
         keep = text.rfind("\n") + 1
@@ -49,12 +51,42 @@ def translate_file(path: Path, translate_line, offset: int = 0):
     return events, new_offset
 
 
-def tail_forever(path: Path, translate_file_fn, ledger):
-    """1s 轮询追加：translate_file_fn(path, offset) -> (events, new_offset)。"""
+def step_tail(root: Path, translate_file_fn, ledger, state: dict) -> list:
+    """扫 root（目录递归或单文件），对 size 增长的 JSONL 增量翻译并追加账本。
+
+    state: {str(path): offset}，调用方持久持有。返回本批事件（测试用）。
+    """
     from ata.schema import parse_event
-    offset = 0
-    while True:
-        events, offset = translate_file_fn(path, offset)
+    root = Path(root)
+    if root.is_dir():
+        files = sorted(root.rglob("*.jsonl"))
+    elif root.is_file():
+        files = [root]
+    else:
+        return []
+    batch = []
+    for f in files:
+        try:
+            size = f.stat().st_size
+        except OSError:
+            continue
+        if size <= state.get(str(f), 0):
+            continue
+        events, new_offset = translate_file_fn(f, state.get(str(f), 0))
         for ev in events:
             ledger.append(parse_event(ev))
+            batch.append(ev)
+        state[str(f)] = new_offset
+    return batch
+
+
+def tail_path(path: Path, translate_file_fn, ledger):
+    """1s 轮询：目录递归 / 单文件都支持，首轮即灌入已有文件（账本按 id 幂等）。"""
+    state = {}
+    while True:
+        try:
+            step_tail(path, translate_file_fn, ledger, state)
+        except Exception:
+            # 目录被删/权限抖动：下一轮再试，不拖死整个服务。
+            pass
         time.sleep(1)
