@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -51,9 +51,11 @@ def translate_file(path: Path, translate_line, offset: int = 0):
     return events, new_offset
 
 
-def step_tail(root: Path, translate_file_fn, ledger, state: dict) -> list:
+def step_tail(root: Path, translate_file_fn, ledger, state: dict, max_age_days: int | None = None) -> list:
     """扫 root（目录递归或单文件），对 size 增长的 JSONL 增量翻译并追加账本。
 
+    max_age_days：目录模式下跳过 mtime 早于该天数的历史文件（手动测试只关心近期
+    会话；全历史灌入会让厂商目录动辄几 GB）。None 表示不做限制。
     state: {str(path): offset}，调用方持久持有。返回本批事件（测试用）。
     """
     from ata.schema import parse_event
@@ -64,28 +66,35 @@ def step_tail(root: Path, translate_file_fn, ledger, state: dict) -> list:
         files = [root]
     else:
         return []
+    cutoff = None
+    if max_age_days is not None:
+        cutoff = time.time() - max_age_days * 86400
     batch = []
     for f in files:
         try:
-            size = f.stat().st_size
+            st = f.stat()
+            size = st.st_size
+            if cutoff is not None and st.st_mtime < cutoff:
+                continue
         except OSError:
             continue
         if size <= state.get(str(f), 0):
             continue
         events, new_offset = translate_file_fn(f, state.get(str(f), 0))
-        for ev in events:
-            ledger.append(parse_event(ev))
-            batch.append(ev)
+        if events:
+            parsed = [parse_event(ev) for ev in events]
+            ledger.append_many(parsed)  # 一批一次 commit，减 WAL 抖动
+        batch.extend(events)
         state[str(f)] = new_offset
     return batch
 
 
-def tail_path(path: Path, translate_file_fn, ledger):
-    """1s 轮询：目录递归 / 单文件都支持，首轮即灌入已有文件（账本按 id 幂等）。"""
+def tail_path(path: Path, translate_file_fn, ledger, max_age_days: int | None = None):
+    """1s 轮询：目录递归 / 单文件都支持，首轮即灌入近期文件（账本按 id 幂等）。"""
     state = {}
     while True:
         try:
-            step_tail(path, translate_file_fn, ledger, state)
+            step_tail(path, translate_file_fn, ledger, state, max_age_days)
         except Exception:
             # 目录被删/权限抖动：下一轮再试，不拖死整个服务。
             pass

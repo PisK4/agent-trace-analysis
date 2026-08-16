@@ -50,63 +50,82 @@ class Ledger:
         self._conn.commit()
 
     def append(self, event: dict) -> int:
-        sid = event["session_id"]
         with self._lock:
-            found = self._conn.execute(
-                "SELECT seq FROM events WHERE session_id=? AND event_id=?",
-                (sid, event["id"]),
-            ).fetchone()
-            if found:
-                return int(found["seq"])
-            row = self._conn.execute(
-                "SELECT last_seq, title, turns FROM sessions WHERE session_id=?",
-                (sid,),
-            ).fetchone()
-            seq = (int(row["last_seq"]) if row else 0) + 1
-            title = (row["title"] if row else sid)
-            turns = int(row["turns"]) if row else 0
-            if event["type"] == "session.opened":
-                title = event["payload"].get("title") or title
-            turn = event.get("turn")
-            if isinstance(turn, int) and turn > turns:
-                turns = turn
-            if row:
-                self._conn.execute(
-                    "UPDATE sessions SET agent_id=?, title=?, turns=?, last_seq=? WHERE session_id=?",
-                    (event["agent_id"], title, turns, seq, sid),
-                )
-            else:
-                self._conn.execute(
-                    "INSERT INTO sessions(session_id, agent_id, title, turns, last_seq) VALUES (?,?,?,?,?)",
-                    (sid, event["agent_id"], title, turns, seq),
-                )
-            self._conn.execute(
-                "INSERT INTO events(session_id, event_id, seq, ts, type, turn, event_json) VALUES (?,?,?,?,?,?,?)",
-                (sid, event["id"], seq, event["ts"], event["type"], turn, json.dumps(event, ensure_ascii=False)),
-            )
+            seq = self._append_locked(event)
             self._conn.commit()
             return seq
 
+    def _append_locked(self, event: dict) -> int:
+        """调用方必须已持有 _lock。返回 seq（重复 id 返回原 seq）。"""
+        sid = event["session_id"]
+        found = self._conn.execute(
+            "SELECT seq FROM events WHERE session_id=? AND event_id=?",
+            (sid, event["id"]),
+        ).fetchone()
+        if found:
+            return int(found["seq"])
+        row = self._conn.execute(
+            "SELECT last_seq, title, turns FROM sessions WHERE session_id=?",
+            (sid,),
+        ).fetchone()
+        seq = (int(row["last_seq"]) if row else 0) + 1
+        title = (row["title"] if row else sid)
+        turns = int(row["turns"]) if row else 0
+        if event["type"] == "session.opened":
+            title = event["payload"].get("title") or title
+        turn = event.get("turn")
+        if isinstance(turn, int) and turn > turns:
+            turns = turn
+        if row:
+            self._conn.execute(
+                "UPDATE sessions SET agent_id=?, title=?, turns=?, last_seq=? WHERE session_id=?",
+                (event["agent_id"], title, turns, seq, sid),
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO sessions(session_id, agent_id, title, turns, last_seq) VALUES (?,?,?,?,?)",
+                (sid, event["agent_id"], title, turns, seq),
+            )
+        self._conn.execute(
+            "INSERT INTO events(session_id, event_id, seq, ts, type, turn, event_json) VALUES (?,?,?,?,?,?,?)",
+            (sid, event["id"], seq, event["ts"], event["type"], turn, json.dumps(event, ensure_ascii=False)),
+        )
+        return seq
+
     def read(self, session_id: str) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT seq, event_json FROM events WHERE session_id=? ORDER BY seq",
-            (session_id,),
-        ).fetchall()
-        return [{"seq": int(r["seq"]), "event": json.loads(r["event_json"])} for r in rows]
+        # 与 append 共用同一把锁：tail 线程持续写、HTTP 线程读，同一连接并发
+        # execute 在 WAL 大写入时会段错误（本机复现过）。
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT seq, event_json FROM events WHERE session_id=? ORDER BY seq",
+                (session_id,),
+            ).fetchall()
+            return [{"seq": int(r["seq"]), "event": json.loads(r["event_json"])} for r in rows]
 
     def sessions(self) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT session_id, agent_id, title, turns FROM sessions ORDER BY title, session_id"
-        ).fetchall()
-        return [
-            {
-                "id": r["session_id"],
-                "agent": r["agent_id"],
-                "title": r["title"],
-                "turns": int(r["turns"]),
-            }
-            for r in rows
-        ]
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, agent_id, title, turns FROM sessions ORDER BY title, session_id"
+            ).fetchall()
+            return [
+                {
+                    "id": r["session_id"],
+                    "agent": r["agent_id"],
+                    "title": r["title"],
+                    "turns": int(r["turns"]),
+                }
+                for r in rows
+            ]
+
+    def append_many(self, events: list[dict]) -> None:
+        """一批事件一次事务提交；等价的重复 id 仍然返回，不重复写。"""
+        self._lock.acquire()
+        try:
+            for event in events:
+                self._append_locked(event)
+            self._conn.commit()
+        finally:
+            self._lock.release()
 
     def close(self):
         self._conn.close()
