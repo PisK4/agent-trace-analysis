@@ -104,8 +104,14 @@ class Ledger:
 
     def sessions(self) -> list[dict]:
         with self._lock:
+            # last_ts = 该会话最新事件的毫秒时间戳，列表按最近活动倒序（新会话置顶）。
             rows = self._conn.execute(
-                "SELECT session_id, agent_id, title, turns FROM sessions ORDER BY title, session_id"
+                """
+                SELECT s.session_id, s.agent_id, s.title, s.turns,
+                       COALESCE((SELECT MAX(ts) FROM events e WHERE e.session_id = s.session_id), 0) AS last_ts
+                FROM sessions s
+                ORDER BY last_ts DESC, s.title
+                """
             ).fetchall()
             return [
                 {
@@ -113,6 +119,7 @@ class Ledger:
                     "agent": r["agent_id"],
                     "title": r["title"],
                     "turns": int(r["turns"]),
+                    "last_ts": int(r["last_ts"]),
                 }
                 for r in rows
             ]
