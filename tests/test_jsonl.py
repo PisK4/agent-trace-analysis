@@ -1,4 +1,5 @@
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -39,6 +40,23 @@ class JsonlTailTest(unittest.TestCase):
             self.assertEqual(len(events), 5)
             mids = {r["event"]["payload"]["message_id"] for r in events if r["event"]["type"] == "message.upserted"}
             self.assertEqual(mids, {"u1", "a1", "u2"})
+
+    def test_max_age_days_skips_historical_files(self):
+        import os
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            led = Ledger(root / "ledger")
+            state = {}
+            new = root / "new.jsonl"
+            new.write_text(_line("user", "u-new", "recent"))
+            old = root / "old.jsonl"
+            old.write_text(_line("user", "u-old", "ancient"))
+            past = time.time() - 30 * 86400
+            os.utime(old, (past, past))
+            step_tail(root, translate_file, led, state, max_age_days=7)
+            mids = {r["event"]["payload"]["message_id"] for r in led.read("tail-sess")
+                    if r["event"]["type"] == "message.upserted"}
+            self.assertEqual(mids, {"u-new"})
 
 
 if __name__ == "__main__":

@@ -59,19 +59,23 @@ def main(argv=None):
     p.add_argument("--droid-path")
     p.add_argument("--claude-path")
     p.add_argument("--codex-path")
+    # 目录 tail 只处理最近 N 天修改的文件；厂商历史会话动辄几千个，全量灌入
+    # 会让账本涨到数 GB。None/0 表示不做限制。
+    p.add_argument("--tail-max-age-days", type=int, default=7)
     args = p.parse_args(argv)
     led = Ledger(Path(args.ledger))
     if args.cmd == "seed":
         seed_demo(led)
         print(f"seeded {led.path}")
         return
-    # 目录/单文件统一走 tail_path：首轮灌入已有文件（账本按 id 幂等），
+    # 目录/单文件统一走 tail_path：首轮灌入近期文件（账本按 id 幂等），
     # 之后 1s 轮询发现新文件与活动会话的追加行。显式传入才打开，默认不碰厂商目录。
     def start_tail(path_arg, tf):
         if not path_arg:
             return
         from ata.plugins.jsonl import tail_path
-        threading.Thread(target=tail_path, args=(Path(path_arg), tf, led), daemon=True).start()
+        threading.Thread(target=tail_path, args=(Path(path_arg), tf, led),
+                         kwargs={"max_age_days": args.tail_max_age_days}, daemon=True).start()
 
     start_tail(args.droid_path, translate_file)
     if args.claude_path:
