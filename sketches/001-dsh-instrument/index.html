@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atatrace · dsh 仪器</title>
+  <style>
+    :root {
+      --bg: #141518;
+      --layer: #1a1c1f;
+      --layer-2: #202328;
+      --sidebar: #17191c;
+      --line-1: #2a2d32;
+      --line-2: #3a3e45;
+      --text: #e8eaed;
+      --text-2: #9aa1ab;
+      --text-3: #6d7480;
+      --user: #3d8bfd;
+      --user-bg: rgba(61, 139, 253, .16);
+      --assistant: #b48cff;
+      --assistant-bg: rgba(180, 140, 255, .16);
+      --tool: #e2a54a;
+      --tool-bg: rgba(226, 165, 74, .16);
+      --compact: #7d8694;
+      --compact-bg: #26292e;
+      --error: #e36a6a;
+      --accent: #3d8bfd;
+      --turn-rule: #3a3e45;
+      --row-h: 30px;
+      --inspector: 360px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: #0e0f11;
+      color: var(--text);
+      font: 12px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { font: inherit; color: inherit; }
+    button { border: 0; background: none; cursor: pointer; }
+    button:focus-visible, tr:focus-visible, .span:focus-visible {
+      outline: 1px solid var(--accent);
+      outline-offset: -1px;
+    }
+    .app {
+      display: grid;
+      grid-template-columns: 228px minmax(0, 1fr);
+      height: 100%;
+      background: var(--bg);
+    }
+    .sessions {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--line-2);
+      background: var(--sidebar);
+    }
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      height: 40px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line-2);
+    }
+    .brand b { font-size: 13px; font-weight: 650; letter-spacing: .02em; }
+    .brand span { color: var(--text-3); font-size: 10px; }
+    .sess-head {
+      padding: 10px 12px 6px;
+      color: var(--text-3);
+      font-size: 10px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .sess {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 2px 8px;
+      margin: 0 6px 2px;
+      padding: 7px 8px;
+      border-radius: 3px;
+      color: var(--text-2);
+      text-align: left;
+    }
+    .sess:hover { background: #22252b; color: var(--text); }
+    .sess[aria-current="true"] { background: #243044; color: var(--text); }
+    .sess .title { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sess small { color: var(--text-3); font-size: 10px; }
+    .main { display: flex; min-width: 0; min-height: 0; }
+    .ledger {
+      display: flex;
+      flex: 1;
+      min-width: 0;
+      flex-direction: column;
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      height: 32px;
+      padding: 0 8px;
+      gap: 6px;
+      border-bottom: 1px solid var(--line-2);
+      background: var(--layer);
+    }
+    .toggle, .search {
+      height: 20px;
+      border-radius: 3px;
+      color: var(--text-3);
+    }
+    .toggle { padding: 0 7px; }
+    .toggle[aria-pressed="true"], .toggle:hover { background: #2a2e35; color: var(--text); }
+    .search {
+      width: 180px;
+      margin-left: auto;
+      padding: 0 8px;
+      border: 1px solid var(--line-1);
+      background: var(--layer-2);
+    }
+    .live {
+      color: var(--text-3);
+      font-size: 11px;
+    }
+    .live[data-on="true"] { color: #7dbaff; }
+    .overview {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      height: 50px;
+      border-bottom: 1px solid var(--line-2);
+      background: var(--layer-2);
+    }
+    .lanes-label {
+      position: relative;
+      border-right: 1px solid var(--line-1);
+      color: var(--text-3);
+      font-size: 10px;
+    }
+    .lanes-label span { position: absolute; right: 4px; }
+    .lanes-label span:nth-child(1) { top: 7px; }
+    .lanes-label span:nth-child(2) { top: 21px; }
+    .lanes-label span:nth-child(3) { top: 35px; }
+    .track { position: relative; overflow: hidden; }
+    .span {
+      position: absolute;
+      height: 8px;
+      border-radius: 1px;
+      min-width: 3px;
+    }
+    .span.user { background: var(--user); top: 7px; }
+    .span.assistant { background: var(--assistant); top: 21px; }
+    .span.tool { background: var(--tool); top: 35px; }
+    .span.missing { outline: 1px dashed var(--text-3); background: transparent; }
+    .span[data-active="true"] { box-shadow: 0 0 0 1px #000, 0 0 0 2px var(--accent); }
+    .older {
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 28px;
+      color: var(--text-3);
+      background: linear-gradient(to right, var(--layer-2), transparent);
+    }
+    .table-wrap { flex: 1; overflow: auto; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th {
+      position: sticky; top: 0; z-index: 2;
+      height: var(--row-h);
+      padding: 0 8px;
+      background: #1e2126;
+      border-bottom: 1px solid var(--line-2);
+      color: var(--text-3);
+      font-weight: 500;
+      text-align: left;
+    }
+    td {
+      height: var(--row-h);
+      padding: 0 8px;
+      border-bottom: 1px solid var(--line-1);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .idx { width: 44px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+    .evt { width: 148px; }
+    tbody tr { cursor: default; }
+    tbody tr:hover { background: #22262c; }
+    tbody tr[data-selected="true"] { background: #243044; }
+    tbody tr[data-turn-start="true"] td { position: relative; }
+    tbody tr[data-turn-start="true"]:not(:first-child) td::before {
+      content: "";
+      position: absolute;
+      left: 0; right: 0; top: 0;
+      height: 2px;
+      background: var(--turn-rule);
+      transform: translateY(-50%);
+    }
+    .rail {
+      position: absolute;
+      left: 0; top: -1px; bottom: -1px;
+      width: 2px;
+      background: color-mix(in srgb, var(--user) 28%, var(--layer));
+    }
+    .turn-chip {
+      display: inline-flex;
+      align-items: center;
+      height: 14px;
+      margin-right: 4px;
+      padding: 0 4px;
+      background: #26292e;
+      color: var(--text-3);
+      font: 8px/10px ui-monospace, SFMono-Regular, Menlo, monospace;
+      vertical-align: middle;
+    }
+    .kind {
+      display: inline-flex;
+      align-items: center;
+      height: 19px;
+      margin-left: 8px;
+      padding: 0 5px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: .03em;
+    }
+    .kind.user { color: var(--user); background: var(--user-bg); }
+    .kind.assistant { color: var(--assistant); background: var(--assistant-bg); }
+    .kind.tool { color: var(--tool); background: var(--tool-bg); }
+    .kind.compact { color: var(--compact); background: var(--compact-bg); }
+    .kind.spawn { color: #8fd0a8; background: rgba(143, 208, 168, .14); }
+    .content { color: var(--text); }
+    .muted { color: var(--text-2); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .inspector {
+      display: none;
+      width: var(--inspector);
+      flex-direction: column;
+      border-left: 1px solid var(--line-2);
+      background: var(--layer);
+    }
+    .app[data-inspect="open"] .inspector { display: flex; }
+    .ins-h {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 42px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line-2);
+    }
+    .tabs { display: flex; height: 34px; padding: 0 8px; border-bottom: 1px solid var(--line-2); }
+    .tab { padding: 0 9px; color: var(--text-3); }
+    .tab[aria-selected="true"] { color: var(--user); box-shadow: inset 0 -2px 0 var(--user); }
+    .ins-body { padding: 10px 0; overflow: auto; }
+    .kv { display: grid; grid-template-columns: 94px 1fr; min-height: 22px; padding: 0 14px; align-items: center; }
+    .kv dt { color: var(--text-3); }
+    .kv dd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .missing { color: var(--text-3); }
+    .reported { color: #7dbaff; }
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sessions">
+      <div class="brand"><b>Atatrace</b><span>sketch · dsh</span></div>
+      <div class="sess-head">Sessions</div>
+      <button class="sess" aria-current="true">
+        <span class="title">把 compaction 边界从 token 变少里拆出来</span>
+        <small>pi</small><small>3 turns</small>
+      </button>
+      <button class="sess">
+        <span class="title">Droid JSONL tail · usage Missing</span>
+        <small>droid</small><small>1 turn</small>
+      </button>
+    </aside>
+    <div class="main">
+      <section class="ledger">
+        <div class="toolbar" role="toolbar">
+          <button class="toggle" aria-pressed="true">时长</button>
+          <button class="toggle" id="followBtn" aria-pressed="true">跟随尾部</button>
+          <span class="live" id="live" data-on="true">live · 停在尾部</span>
+          <input class="search" id="q" placeholder="搜索已加载窗口" />
+        </div>
+        <div class="overview" aria-label="Overview 时间轴">
+          <div class="lanes-label"><span>User</span><span>Asst</span><span>Tool</span></div>
+          <div class="track" id="track">
+            <button class="older" title="更早前缀未加载">…</button>
+            <button class="span user" data-id="2" style="left:8%;width:7%" title="User"></button>
+            <button class="span assistant" data-id="3" style="left:16%;width:18%" title="Assistant"></button>
+            <button class="span tool" data-id="4" style="left:24%;width:10%" title="Read"></button>
+            <button class="span tool" data-id="5" style="left:35%;width:8%" title="Grep"></button>
+            <button class="span user" data-id="8" style="left:48%;width:6%" title="User"></button>
+            <button class="span assistant" data-id="9" style="left:55%;width:22%" title="Assistant"></button>
+            <button class="span tool" data-id="10" style="left:62%;width:12%" title="Edit"></button>
+            <button class="span assistant missing" data-id="13" style="left:86%;width:8%" title="Usage missing"></button>
+          </div>
+        </div>
+        <div class="table-wrap" id="scroller">
+          <table>
+            <thead>
+              <tr>
+                <th class="idx">#</th>
+                <th class="evt">Event</th>
+                <th>Content</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </section>
+      <aside class="inspector" id="inspector">
+        <div class="ins-h">
+          <strong id="insTitle">Turn</strong>
+          <button id="close">×</button>
+        </div>
+        <div class="tabs">
+          <button class="tab" aria-selected="true">Summary</button>
+          <button class="tab">Input</button>
+          <button class="tab">Output</button>
+        </div>
+        <dl class="ins-body" id="insBody"></dl>
+      </aside>
+    </div>
+  </div>
+  <script>
+    const rows = [
+      { id:1, turn:1, start:true, kind:"compact", label:"Compact", content:"厂商写出的压缩边界 · trigger=auto", usage:"n/a", status:"boundary" },
+      { id:2, turn:1, kind:"user", label:"User", content:"把 compaction 只认显式边界，不要从 token 变少反推", usage:"—", status:"—" },
+      { id:3, turn:1, kind:"assistant", label:"Assistant", content:"先对四家账本，再回填公约数", usage:"in 1840 / out 612", status:"reported" },
+      { id:4, turn:1, kind:"tool", label:"Read", content:"ui-trajectory/README.md  →  turn-aware event ledger", usage:"tool 不计", status:"—" },
+      { id:5, turn:1, kind:"tool", label:"Grep", content:"HOOK_EVENTS  →  27 names @ 2.1.88", usage:"tool 不计", status:"—" },
+      { id:6, turn:1, kind:"assistant", label:"Assistant", content:"hook 是闸门，公共输入没有每轮 usage", usage:"in 2104 / out 388", status:"reported" },
+      { id:7, turn:2, start:true, kind:"user", label:"User", content:"Droid 第一期怎么标 usage？", usage:"—", status:"—" },
+      { id:8, turn:2, kind:"user", label:"User", content:"不要用会话合计除以轮数", usage:"—", status:"—" },
+      { id:9, turn:2, kind:"assistant", label:"Assistant", content:"JSONL 样本没有 token 字段，第一期标 Missing", usage:"Missing", status:"missing" },
+      { id:10, turn:2, kind:"tool", label:"Edit", content:"2026-08-15-ata-v1-canonical-event-kernel-design.md", usage:"tool 不计", status:"—" },
+      { id:11, turn:2, kind:"spawn", label:"Spawn", content:"sidechain 已落盘 · skipTranscript 才跳过", usage:"—", status:"persisted" },
+      { id:12, turn:3, start:true, kind:"user", label:"User", content:"先做一个前端样式看一下", usage:"—", status:"—" },
+      { id:13, turn:3, kind:"assistant", label:"Assistant", content:"两套稿：dsh 仪器 / Beautiful UI 工作台", usage:"Missing", status:"missing" }
+    ];
+
+    const tbody = document.getElementById("rows");
+    const app = document.getElementById("app");
+    const insTitle = document.getElementById("insTitle");
+    const insBody = document.getElementById("insBody");
+    let selected = 13;
+    let follow = true;
+
+    function paint(filter="") {
+      tbody.innerHTML = rows.filter(r => !filter || (r.label + r.content).toLowerCase().includes(filter.toLowerCase())).map(r => `
+        <tr data-id="${r.id}" data-selected="${r.id===selected}" ${r.start ? 'data-turn-start="true"' : ""} tabindex="0">
+          <td class="idx">${r.start ? '<i class="rail"></i>' : ""}${String(r.id).padStart(2,"0")}</td>
+          <td class="evt">${r.start ? `<span class="turn-chip">T${r.turn}</span>` : ""}<span class="kind ${r.kind}">${r.label}</span></td>
+          <td class="content ${r.kind==="tool" ? "mono muted" : ""}">${r.content}</td>
+        </tr>`).join("");
+      tbody.querySelectorAll("tr").forEach(tr => {
+        tr.addEventListener("click", () => select(+tr.dataset.id));
+        tr.addEventListener("keydown", e => { if (e.key === "Enter") select(+tr.dataset.id); });
+      });
+    }
+
+    function select(id) {
+      selected = id;
+      const r = rows.find(x => x.id === id);
+      app.dataset.inspect = "open";
+      insTitle.textContent = `${r.label} · #${String(id).padStart(2,"0")}`;
+      const usageClass = r.status === "missing" ? "missing" : r.status === "reported" ? "reported" : "";
+      insBody.innerHTML = `
+        <div class="kv"><dt>Turn</dt><dd>T${r.turn}</dd></div>
+        <div class="kv"><dt>Event</dt><dd>${r.label}</dd></div>
+        <div class="kv"><dt>Usage</dt><dd class="${usageClass}">${r.usage}</dd></div>
+        <div class="kv"><dt>Status</dt><dd>${r.status}</dd></div>
+        <div class="kv"><dt>Window</dt><dd>只覆盖已加载记录</dd></div>
+        <div class="kv"><dt>Content</dt><dd>${r.content}</dd></div>`;
+      paint(document.getElementById("q").value);
+      document.querySelectorAll(".span").forEach(s => s.dataset.active = s.dataset.id == id);
+    }
+
+    document.getElementById("q").addEventListener("input", e => paint(e.target.value));
+    document.getElementById("close").addEventListener("click", () => { app.dataset.inspect = ""; });
+    document.getElementById("followBtn").addEventListener("click", e => {
+      follow = !follow;
+      e.currentTarget.setAttribute("aria-pressed", follow);
+      document.getElementById("live").dataset.on = follow;
+      document.getElementById("live").textContent = follow ? "live · 停在尾部" : "已暂停跟随";
+    });
+    document.getElementById("scroller").addEventListener("scroll", () => {
+      if (document.getElementById("scroller").scrollTop < document.getElementById("scroller").scrollHeight - document.getElementById("scroller").clientHeight - 24) {
+        follow = false;
+        document.getElementById("followBtn").setAttribute("aria-pressed", "false");
+        document.getElementById("live").dataset.on = "false";
+        document.getElementById("live").textContent = "已暂停跟随";
+      }
+    });
+    document.getElementById("track").addEventListener("click", e => {
+      const id = e.target.dataset.id;
+      if (id) select(+id);
+    });
+    paint();
+    select(13);
+    const scroller = document.getElementById("scroller");
+    scroller.scrollTop = scroller.scrollHeight;
+  </script>
+</body>
+</html>
