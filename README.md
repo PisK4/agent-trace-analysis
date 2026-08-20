@@ -33,6 +33,7 @@ Pi 不需要路径参数：它的 extension 经 `POST /api/pi-hooks` 实时推�
 | Agent | 数据通道 | 会话标题 | SYSTEM 快照 | 每轮 usage |
 | --- | --- | --- | --- | --- |
 | Pi | 官方 extension（live hook，需安装见下） | 首条用户消息 | 有（`before_agent_start`） | reported |
+| Cue | Pi 官方 extension（live hook，显式安装见下） | 首条用户消息 | 有（`before_agent_start`） | reported |
 | Claude Code | 第一方 transcript（文件 tail） | `ai-title` 行 | 无（transcript 不落盘系统提示） | reported（缺失或全 0 → Missing） |
 | Codex | 第一方 rollout（文件 tail） | `originator`（首条 prompt） | 有（`base_instructions`） | reported（`token_count.last_token_usage`） |
 | Droid | 第一方 sessions（文件 tail） | `session_start.title` | 无 | 恒 Missing（JSONL 无 token 字段） |
@@ -44,6 +45,22 @@ ln -s "$PWD/extensions/pi-atatrace" ~/.pi/agent/extensions/pi-atatrace
 ```
 
 Pi 启动时自动加载，把 hook 事件推到 `ATA_URL`（默认 `http://127.0.0.1:8787`）。
+
+## 安装 Cue Pi Trace extension（可选）
+
+Cue 是 Screenpipe 品牌升级后的名称。该命令只写入 Cue 的隔离 Pi 配置目录，不修改 Cue 仓库或其原生功能：
+
+```bash
+make attach-cue
+```
+
+安装器将 ATA extension 复制到 `~/.screenpipe/pi-config/extensions/ata-cue-trace/`。Cue 的下一次 Pi 会话会自动加载它，并以 Cue 的粉色产品身份写入 ATA；事件仍保留 `host=cue`、`runtime=pi` 作为会话元数据。
+
+若 Cue 使用了非默认的 Pi 配置目录，可显式指定：
+
+```bash
+CUE_PI_AGENT_DIR=/path/to/pi-config make attach-cue
+```
 
 ## 手动测试
 

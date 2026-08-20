@@ -39,7 +39,13 @@ def usage_from_assistant(message: dict):
 def translate_hook(name, event, ctx, state) -> list[dict]:
     session_id = ctx.get("session_id") or state.get("session_id") or "pi-session"
     state["session_id"] = session_id
-    agent_id = "pi"
+    agent_id = ctx.get("agent_id") or state.get("agent_id") or "pi"
+    state["agent_id"] = agent_id
+    identity = {
+        key: ctx[key]
+        for key in ("host", "runtime")
+        if isinstance(ctx.get(key), str) and ctx[key]
+    }
     ts = int(event.get("timestamp") or state.get("ts") or 1)
     state["ts"] = ts
     out = []
@@ -75,7 +81,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
             state["title_set"] = title != session_id
             out.append(_ev(
                 f"{session_id}:opened", agent_id, session_id, ts,
-                "session.opened", None, {"title": title},
+                "session.opened", None, {"title": title, **identity},
             ))
         return out
     if name == "turn_start":

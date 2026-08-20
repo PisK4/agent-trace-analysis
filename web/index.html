@@ -34,6 +34,8 @@
       --assistant-tint: #F1E9FF;
       --cyan: #0E8AA8;
       --cyan-tint: #E6F6FA;
+      --pink: #DB2777;
+      --pink-tint: #FCE7F3;
       --stripe: #49494913;
       --tooltip: #1A1B1E;
       --json-key: #7A3E9D;
@@ -73,6 +75,8 @@
       --assistant-tint: #8B8DFF24;
       --cyan: #22D3EE;
       --cyan-tint: #22D3EE24;
+      --pink: #F472B6;
+      --pink-tint: #F472B624;
       --stripe: #FFFFFF0E;
       --tooltip: #111214;
       --json-key: #C792EA;
@@ -178,6 +182,7 @@
     .agent-codex { --agent: var(--green); --agent-soft: var(--green-tint); }
     .agent-pi { --agent: var(--ink); --agent-soft: var(--hover); }
     .agent-droid { --agent: var(--cyan); --agent-soft: var(--cyan-tint); }
+    .agent-cue { --agent: var(--pink); --agent-soft: var(--pink-tint); }
     #sessList { display: flex; flex-direction: column; gap: 6px; padding: 4px 10px 12px; }
     .item {
       display: grid;
@@ -787,8 +792,8 @@
 
     let current = { id:"", agent:"", title:"", crumb:"", rows:[], older:false, cursor:0, toolsIndex:{} };
     let agentFilter = null;
-    const AGENT_LABELS = { pi: "Pi", droid: "Droid", claude: "Claude Code", codex: "Codex" };
-    const AGENT_CLASS = { pi: "agent-pi", droid: "agent-droid", claude: "agent-claude", codex: "agent-codex" };
+    const AGENT_LABELS = { pi: "Pi", cue: "Cue", droid: "Droid", claude: "Claude Code", codex: "Codex" };
+    const AGENT_CLASS = { pi: "agent-pi", cue: "agent-cue", droid: "agent-droid", claude: "agent-claude", codex: "agent-codex" };
     let selected = null;
     let follow = true;
     let actualDuration = false;

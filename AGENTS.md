@@ -2,7 +2,7 @@
 
 ## 1. 编码工作流
 
-在 `repos/ata/` 内创建、修改、重构或删除生产代码前，必须先执行：
+在 `repos/ata/` 内创建、修改、重构或删除生产代码前，优先使用以下 skill：
 
 ```text
 /ponytail full <your coding prompt>

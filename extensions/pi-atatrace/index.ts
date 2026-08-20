@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { ATA_CONFIG } from "./config";
 
-const ATA_URL = process.env.ATA_URL || "http://127.0.0.1:8787";
+const ATA_URL = process.env.ATA_URL || ATA_CONFIG.endpoint;
 const HOOKS = [
   "before_agent_start",
   "agent_start",
@@ -42,6 +43,9 @@ export default function (pi: ExtensionAPI) {
         name,
         session_id,
         title,
+        agent_id: ATA_CONFIG.agentId,
+        host: ATA_CONFIG.host,
+        runtime: ATA_CONFIG.runtime,
         event: jsonSafe(event),
       });
     });

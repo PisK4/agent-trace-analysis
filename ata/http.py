@@ -110,7 +110,13 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 ledger._pi_states = {}
                 state = ledger._pi_states
             bucket = state.setdefault(sid, {"session_id": sid})
-            ctx = {"session_id": sid, "title": raw.get("title") or sid}
+            ctx = {
+                "session_id": sid,
+                "title": raw.get("title") or sid,
+                "agent_id": raw.get("agent_id"),
+                "host": raw.get("host"),
+                "runtime": raw.get("runtime"),
+            }
             try:
                 events = translate_hook(raw["name"], raw.get("event") or {}, ctx, bucket)
                 seqs = []

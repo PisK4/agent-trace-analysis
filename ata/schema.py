@@ -8,7 +8,7 @@ ALLOWED_TYPES = {
     "system.upserted",
     "compaction.boundary",
 }
-ALLOWED_AGENTS = {"pi", "droid", "claude", "codex"}
+ALLOWED_AGENTS = {"pi", "cue", "droid", "claude", "codex"}
 USAGE_KEYS = ("status", "input", "output", "cache_read", "cache_write", "total_tokens", "cost")
 
 
