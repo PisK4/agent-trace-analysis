@@ -1,8 +1,39 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from ata.project import is_context_text
+
+
+def refresh_titles(root: Path, ledger) -> None:
+    # Droid 会话开始时 title 是字面 "New Session"，首条消息后才自动生成并原地重写
+    # 第一行；按字节偏移 tail 不会再读到第一行，账本里的旧标题永远得不到纠正。
+    # 定期扫各文件首行，把账本里仍是占位标题的会话改成最新 title（覆盖历史积压）。
+    root = Path(root)
+    files = sorted(root.rglob("*.jsonl")) if root.is_dir() else [root] if root.is_file() else []
+    for f in files:
+        # 文件名即 session_id：标题已不是占位值的会话整轮跳过、不读文件，
+        # 稳态下每轮只剩少数未命名会话，开销趋近于零。线程因此不需要退出：
+        # 新会话仍会以 "New Session" 出生，退出就没人接住后续改名。
+        # ponytail: 只追「离开 New Session」这一次改名，之后的二次手动改名不跟。
+        try:
+            cur = ledger.session(f.stem)
+        except Exception:
+            continue
+        if cur is not None and cur["title"] != "New Session":
+            continue
+        try:
+            with open(f, "rb") as fh:
+                raw = json.loads(fh.readline())
+        except (OSError, ValueError):
+            continue
+        if raw.get("type") != "session_start":
+            continue
+        title = str(raw.get("title") or "").strip()
+        if not title or title == "New Session":
+            continue
+        ledger.set_title(f.stem, title)
 
 
 def translate_line(raw: dict, state: dict) -> list[dict]:

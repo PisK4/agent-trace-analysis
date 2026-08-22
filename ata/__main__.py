@@ -1,5 +1,6 @@
 import argparse
 import threading
+import time
 from pathlib import Path
 
 from ata.http import make_server
@@ -78,6 +79,18 @@ def main(argv=None):
                          kwargs={"max_age_days": args.tail_max_age_days}, daemon=True).start()
 
     start_tail(args.droid_path, translate_file)
+    # Droid 的真实标题在首条消息后才生成并原地重写 session_start 行，tail 读不到；
+    # 单独起线程定期按文件首行纠正账本标题。
+    if args.droid_path:
+        from ata.plugins.droid import refresh_titles
+        def refresh_loop():
+            while True:
+                time.sleep(15)
+                try:
+                    refresh_titles(Path(args.droid_path), led)
+                except Exception:
+                    pass  # 目录抖动下一轮再试，不拖死服务
+        threading.Thread(target=refresh_loop, daemon=True).start()
     if args.claude_path:
         from ata.plugins.claude import translate_file as claude_tf
         start_tail(args.claude_path, claude_tf)

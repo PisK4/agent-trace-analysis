@@ -1,6 +1,8 @@
+import json
+import tempfile
 import unittest
 from pathlib import Path
-from ata.plugins.droid import translate_file, translate_line
+from ata.plugins.droid import translate_file, translate_line, refresh_titles
 from ata.project import project_session
 
 class DroidTest(unittest.TestCase):
@@ -90,6 +92,28 @@ class DroidTest(unittest.TestCase):
         msg = [e for e in evs if e["type"] == "message.upserted"][-1]
         self.assertEqual(msg["payload"]["text"], "answer")
         self.assertEqual(msg["payload"]["thinking"], "planning...")
+
+    def test_refresh_titles_fixes_placeholder_and_skips_titled(self):
+        # 回归：Droid 首条消息后才生成真实标题并原地重写 session_start 行，
+        # tail 按偏移读不到，账本里永远留着 "New Session"。refresh_titles 按
+        # 文件首行纠正占位标题；已命名的会话整轮跳过。
+        from ata.ledger import Ledger
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            renamed, still_new = root / "sid-1.jsonl", root / "sid-2.jsonl"
+            renamed.write_text(json.dumps(
+                {"type": "session_start", "id": "sid-1", "title": "真实标题"}) + "\n")
+            still_new.write_text(json.dumps(
+                {"type": "session_start", "id": "sid-2", "title": "New Session"}) + "\n")
+            led = Ledger(root / "ledger.sqlite")
+            for sid in ("sid-1", "sid-2"):
+                led.append({"v": 1, "id": "o", "agent_id": "droid", "session_id": sid,
+                            "ts": 1, "type": "session.opened", "turn": None,
+                            "payload": {"title": "New Session"}})
+            refresh_titles(root, led)
+            self.assertEqual(led.session("sid-1")["title"], "真实标题")
+            # 占位标题没被换成别的值；文件仍是 New Session 就保持原样
+            self.assertEqual(led.session("sid-2")["title"], "New Session")
 
     def test_cancelled_outcome_marks_assistant(self):
         state = {}
