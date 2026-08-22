@@ -3,7 +3,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-AGENT_DIR="${CUE_PI_AGENT_DIR:-$HOME/.screenpipe/pi-config}"
+# Cue 数据目录：上游 screenpipe 的 default_screenpipe_data_dir() 默认 ~/.cue（SCREENPIPE_DATA_DIR 可覆盖），
+# Pi 隔离配置目录为 ~/.cue/pi-config；CUE_PI_AGENT_DIR 仍可显式指定非默认位置。
+AGENT_DIR="${CUE_PI_AGENT_DIR:-$HOME/.cue/pi-config}"
 TARGET="$AGENT_DIR/extensions/ata-cue-trace"
 ATA_ENDPOINT="${ATA_URL:-http://127.0.0.1:8787}"
 

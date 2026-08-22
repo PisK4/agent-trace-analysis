@@ -54,7 +54,7 @@ Cue 是 Screenpipe 品牌升级后的名称。该命令只写入 Cue 的隔离 P
 make attach-cue
 ```
 
-安装器将 ATA extension 复制到 `~/.screenpipe/pi-config/extensions/ata-cue-trace/`。Cue 的下一次 Pi 会话会自动加载它，并以 Cue 的粉色产品身份写入 ATA；事件仍保留 `host=cue`、`runtime=pi` 作为会话元数据。
+安装器将 ATA extension 复制到 `~/.cue/pi-config/extensions/ata-cue-trace/`（Cue 数据目录默认 `~/.cue`，与上游 `default_screenpipe_data_dir()` 一致）。Cue 的下一次 Pi 会话会自动加载它，并以 Cue 的粉色产品身份写入 ATA；事件仍保留 `host=cue`、`runtime=pi` 作为会话元数据。
 
 若 Cue 使用了非默认的 Pi 配置目录，可显式指定：
 
