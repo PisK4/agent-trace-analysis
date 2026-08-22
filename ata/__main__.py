@@ -83,11 +83,12 @@ def main(argv=None):
     # 单独起线程定期按文件首行纠正账本标题。
     if args.droid_path:
         from ata.plugins.droid import refresh_titles
+        title_state = {}  # {session_id: (mtime_ns, size)}，跨轮次持久持有
         def refresh_loop():
             while True:
                 time.sleep(15)
                 try:
-                    refresh_titles(Path(args.droid_path), led)
+                    refresh_titles(Path(args.droid_path), led, title_state)
                 except Exception:
                     pass  # 目录抖动下一轮再试，不拖死服务
         threading.Thread(target=refresh_loop, daemon=True).start()

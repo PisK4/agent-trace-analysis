@@ -114,6 +114,46 @@ class DroidTest(unittest.TestCase):
             self.assertEqual(led.session("sid-1")["title"], "真实标题")
             # 占位标题没被换成别的值；文件仍是 New Session 就保持原样
             self.assertEqual(led.session("sid-2")["title"], "New Session")
+            # 详情页标题从事件流投影（后写覆盖），修正必须以 opened 事件落进事件流，
+            # 否则列表已纠正、点开又打回 New Session。
+            recs = led.read("sid-1")
+            proj = project_session("sid-1", "droid", recs)
+            self.assertEqual(proj["title"], "真实标题")
+            # 幂等：同签名重复刷新不重复追加
+            refresh_titles(root, led)
+            self.assertEqual(len([r for r in led.read("sid-1")
+                                  if r["event"]["type"] == "session.opened"]), 2)
+
+    def test_refresh_fixes_stale_stream_even_if_table_corrected(self):
+        # 回归：sessions 表标题曾被单独修正过（非占位值），但事件流里只有旧的
+        # New Session。跳过判断不能拿表标题当代理，否则点开详情又打回原形。
+        from ata.ledger import Ledger
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "sid-9.jsonl").write_text(json.dumps(
+                {"type": "session_start", "id": "sid-9", "title": "新标题"}) + "\n")
+            led = Ledger(root / "ledger.sqlite")
+            led.append({"v": 1, "id": "o", "agent_id": "droid", "session_id": "sid-9",
+                        "ts": 1, "type": "session.opened", "turn": None,
+                        "payload": {"title": "New Session"}})
+            led._lock.acquire()
+            led._conn.execute("UPDATE sessions SET title='手工修正过' WHERE session_id='sid-9'")
+            led._conn.commit()
+            led._lock.release()
+            refresh_titles(root, led)
+            proj = project_session("sid-9", "droid", led.read("sid-9"))
+            self.assertEqual(proj["title"], "新标题")
+
+    def test_refresh_skips_sessions_not_in_ledger(self):
+        # 账本里不存在的会话不凭空建行，否则 tail 窗口外的历史文件会以空壳涌进列表。
+        from ata.ledger import Ledger
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "ghost.jsonl").write_text(json.dumps(
+                {"type": "session_start", "id": "ghost", "title": "幽灵"}) + "\n")
+            led = Ledger(root / "ledger.sqlite")
+            refresh_titles(root, led)
+            self.assertIsNone(led.session("ghost"))
 
     def test_cancelled_outcome_marks_assistant(self):
         state = {}

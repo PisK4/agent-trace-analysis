@@ -156,13 +156,5 @@ class Ledger:
         finally:
             self._lock.release()
 
-    def set_title(self, session_id: str, title: str) -> None:
-        """标题修正（如 Droid 自动生成标题晚于 session_start 落盘）。"""
-        with self._lock:
-            self._conn.execute(
-                "UPDATE sessions SET title=? WHERE session_id=?", (title, session_id)
-            )
-            self._conn.commit()
-
     def close(self):
         self._conn.close()
