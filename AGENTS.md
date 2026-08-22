@@ -10,7 +10,7 @@
 
 ## 1.1 常驻服务维护
 
-本机的 ATA trace 服务以 launchd 常驻（label `com.ata.atatrace`，plist 在 `~/Library/LaunchAgents/com.ata.atatrace.plist`），随登录自启，崩溃自动拉起（KeepAlive，已验证）。端口默认 8787（`ATA_PORT` 可改），账本 `~/.ata/dev.sqlite`，日志 `~/.ata/atatrace.log` / `~/.ata/atatrace.err.log`。
+本机的 ATA trace 服务以 launchd 常驻（label `com.ata.atatrace`，plist 在 `~/Library/LaunchAgents/com.ata.atatrace.plist`），随登录自启，崩溃自动拉起（KeepAlive，已验证）。本机实际部署配置：端口 **17877**，账本 **`~/.ata/ata.sqlite`**（两者已固化在 plist 的 `ATA_PORT` / `ATA_LEDGER` 环境变量中，重新 install 时需继续显式传入这两个变量）。日志 `~/.ata/atatrace.log` / `~/.ata/atatrace.err.log`。Web UI：http://127.0.0.1:17877 。Pi extension 已通过符号链接安装在 `~/.pi/agent/extensions/pi-atatrace`，推送端点由 `~/.zshrc` 中的 `ATA_URL=http://127.0.0.1:17877` 提供（extension 默认指向 8787，换端口后必须显式设置）。
 
 **改完任何生产代码（`ata/`、`web/`、`extensions/`）后**：
 

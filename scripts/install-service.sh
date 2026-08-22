@@ -20,6 +20,10 @@ usage() {
 
 write_plist() {
   mkdir -p "$HOME/.ata"
+  # 把调用方显式传入的 ATA_PORT / ATA_LEDGER 固化进 plist，避免 restart 后丢失
+  local extra_env=""
+  [ -n "${ATA_PORT:-}" ] && extra_env+="    <key>ATA_PORT</key><string>$ATA_PORT</string>"$'\n'
+  [ -n "${ATA_LEDGER:-}" ] && extra_env+="    <key>ATA_LEDGER</key><string>$ATA_LEDGER</string>"$'\n'
   cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -39,7 +43,7 @@ write_plist() {
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin</string>
-  </dict>
+$extra_env  </dict>
 </dict>
 </plist>
 EOF
