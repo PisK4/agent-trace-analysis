@@ -85,8 +85,15 @@ def _remote(base, what, sid, args):
 
 
 def apply_client_filters(data, args):
-    if args.what == "sessions" and args.agent and "sessions" in data:
-        data["sessions"] = [r for r in data["sessions"] if r["agent"] == args.agent]
+    # 远端 /api/sessions 返回裸数组，归一化成与 --ledger 模式一致的形状
+    if args.what == "sessions" and isinstance(data, list):
+        data = {"ok": True, "sessions": data}
+    if args.what == "sessions" and "sessions" in data:
+        # /api/sessions 服务端不支持过滤参数，limit/agent 由客户端裁剪
+        if args.agent:
+            data["sessions"] = [r for r in data["sessions"] if r["agent"] == args.agent]
+        if args.limit:
+            data["sessions"] = data["sessions"][: args.limit]
     return data
 
 
@@ -114,6 +121,8 @@ def _rate_main(argv):
     meta = _remote(a.url, "sessions", None, argparse.Namespace(
         what="sessions", sid=None, after_seq=None, limit=None,
         status=None, name=None, full=False))
+    if isinstance(meta, list):  # 远端 /api/sessions 返回裸数组
+        meta = {"ok": True, "sessions": meta}
     mine = next((r for r in meta.get("sessions", []) if r["id"] == a.sid), None)
     agent = mine["agent"] if mine else "pi"
     ev = build_score_event(agent, a.sid, a.value, a.note)
