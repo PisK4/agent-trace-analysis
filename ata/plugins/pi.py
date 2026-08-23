@@ -148,7 +148,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
             {
                 "message_id": mid,
                 "role": role,
-                "text": (text or "")[:200],
+                "text": text or "",
                 "status": status,
                 "request_no": req,
                 "usage": usage,
@@ -227,7 +227,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                     {
                         "message_id": mid,
                         "role": "assistant",
-                        "text": (text or "")[:200],
+                        "text": text or "",
                         "status": "completed",
                         "request_no": state.get("request_no") or 1,
                         "usage": usage,
