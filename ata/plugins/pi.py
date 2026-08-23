@@ -127,6 +127,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                     state["asst_no"] = int(state.get("asst_no") or 0) + 1
                 state["last_assistant_id"] = mid
                 state["request_no"] = int(state.get("request_no") or 0) + 1
+                state.setdefault("msg_start_ts", {})[mid] = ts
             else:
                 # 流式开始时可能还没有 responseId：message_start 定下的 id 就是
                 # 本条消息的规范 id，message_end / turn_end 复用，避免幽灵行。
@@ -142,6 +143,12 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
         text = _message_text(msg)
         status = "pending" if name == "message_start" else "completed"
         usage = usage_from_assistant(msg) if role == "assistant" and name == "message_end" else None
+        # assistant end 行用真实毫秒差；user 行 Pi 未提供耗时，维持占位。
+        duration = None if status == "pending" else 1
+        if role == "assistant" and name == "message_end":
+            m_start = state.get("msg_start_ts", {}).get(mid)
+            duration = max(int(ts) - int(m_start), 0) if m_start else 0
+            state.setdefault("msg_dur", {})[mid] = duration
         out.append(_ev(
             f"{session_id}:msg:{mid}:{name}", agent_id, session_id, ts,
             "message.upserted", turn,
@@ -153,7 +160,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 "request_no": req,
                 "usage": usage,
                 "started_at": int(msg.get("timestamp") or ts),
-                "duration_ms": None if status == "pending" else 1,
+                "duration_ms": duration,
                 "output_text": text if role == "assistant" else None,
             },
         ))
@@ -164,6 +171,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
             return out
         args = event.get("args") if isinstance(event.get("args"), dict) else {}
         state.setdefault("tool_args", {})[cid] = args
+        state.setdefault("tool_start_ts", {})[cid] = ts
         out.append(_ev(
             f"{session_id}:tool:{cid}:start", agent_id, session_id, ts,
             "tool.upserted", state.get("turn") or 1,
@@ -187,6 +195,8 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
         # ToolExecutionEndEvent 不带 args（锚定 845d6ff1），从 start 存的状态取回。
         args = state.get("tool_args", {}).get(cid) or {}
         result = _tool_result(event.get("result"))
+        start_ts = state.get("tool_start_ts", {}).pop(cid, None)
+        duration = max(int(ts) - int(start_ts), 0) if start_ts else 0
         out.append(_ev(
             f"{session_id}:tool:{cid}:end", agent_id, session_id, ts,
             "tool.upserted", state.get("turn") or 1,
@@ -199,7 +209,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 "payload": args,
                 "result": result,
                 "started_at": ts,
-                "duration_ms": 1,
+                "duration_ms": duration,
             },
         ))
         return out
@@ -232,7 +242,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                         "request_no": state.get("request_no") or 1,
                         "usage": usage,
                         "started_at": int(msg.get("timestamp") or ts),
-                        "duration_ms": 1,
+                        "duration_ms": state.get("msg_dur", {}).get(mid),
                         "output_text": text,
                     },
                 ))
