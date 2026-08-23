@@ -93,6 +93,9 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
                 turn_status[ev["turn"]] = p["status"]
             continue
         if ev["type"] == "message.upserted":
+            # hook 执行记录等空正文 user 行（droid 修复前的存量脏数据）不进投影。
+            if p["role"] == "user" and not p["text"]:
+                continue
             key = ("m", p["message_id"])
             row = entities.get(key) or {"_first": seq, "_seq": seq}
             kind, tag = _message_kind(p)

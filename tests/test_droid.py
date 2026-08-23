@@ -80,6 +80,37 @@ class DroidTest(unittest.TestCase):
         ctx = [e for e in evs if e["type"] == "message.upserted" and e["payload"]["message_id"] == "c1"][0]
         self.assertEqual(ctx["turn"], 1)
 
+    def test_hook_event_lines_are_skipped(self):
+        # Droid 把 hook 执行记录写成 role=user 的 message 行（content 空、带
+        # hookEventName），不是对话轮次；翻译器必须整体跳过，否则账本里
+        # 出现空白 USER 行。
+        raw = {"type": "message", "id": "h1",
+               "message": {"role": "user", "content": [],
+                           "hookEventName": "PostToolUse",
+                           "hookMatcher": "Grep",
+                           "hookStatus": "completed"}}
+        self.assertEqual(translate_line(raw, {"opened": True}), [])
+
+    def test_projection_hides_legacy_empty_user_rows(self):
+        # 修复前已入库的空正文 user 行（hook 记录）在投影层不再渲染。
+        def row(eid, text, seq):
+            return {"seq": seq, "event": {
+                "v": 1, "id": eid, "agent_id": "droid", "session_id": "s",
+                "ts": seq, "type": "message.upserted", "turn": 1,
+                "payload": {"message_id": eid, "role": "user", "text": text,
+                            "status": "completed", "started_at": seq,
+                            "duration_ms": 0}}}
+        recs = [{"seq": 1, "event": {
+            "v": 1, "id": "o", "agent_id": "droid", "session_id": "s",
+            "ts": 1, "type": "session.opened", "turn": None,
+            "payload": {"title": "t"}}},
+            row("junk", "", 2),
+            row("real", "real question", 3)]
+        sess = project_session("s", "droid", recs)
+        kinds = [(r["id"], r["kind"]) for r in sess["rows"]]
+        self.assertNotIn(("junk", "user"), kinds)
+        self.assertIn(("real", "user"), kinds)
+
     def test_thinking_split_from_text(self):
         # 对标 dsh 的 thinking 折叠：thinking 块不再并入正文本，
         # 单独进 payload["thinking"]，text 只保留正文，前端折叠展示。

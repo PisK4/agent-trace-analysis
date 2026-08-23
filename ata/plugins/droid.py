@@ -132,6 +132,10 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
     else:
         role = raw.get("role")
         content = raw.get("content")
+    # Droid 把 hook 执行记录也写成 role=user 的 message 行（content 为空、带
+    # hookEventName/hookResults 等字段），不是对话轮次；入库会变成空白 USER 行。
+    if isinstance(msg, dict) and msg.get("hookEventName"):
+        return out
     if role in {"user", "assistant"}:
         texts, thinking = _split(content)
         is_tool_only = role == "user" and texts == "" and _has_tool_result(content)
