@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atatrace 顶栏重排 · demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* 配色与 web/index.html 保持一致 */
+    :root {
+      --page: #FAFAFB; --canvas: #F1F2F3; --surface: #FFFFFF;
+      --field: #F2F2F3; --hover-2: #E7E9EB; --inset: #F7F8F9;
+      --line: #ECEDEF; --line-strong: #E0E2E5;
+      --ink: #1F2124; --ink-2: #62656B; --ink-3: #9A9DA3;
+      --accent: #0285FF; --accent-ink: #0170DD; --accent-tint: #E9F3FF;
+      --green: #189A4D; --green-tint: #E8F5ED;
+      --red: #E3474C; --red-tint: #FCECEC;
+      --orange: #EF720C; --orange-tint: #FDF1E5;
+      --stripe: #49494913;
+      --shadow-btn: 0 0 0 1px #E0E2E5, 0 1px 2px #1018280D;
+      --shadow-card: 0 0 0 1px #ECEDEF, 0 1px 2px #1018280A, 0 2px 6px #10182808;
+      --shadow-inset-field: inset 0 1px 2px #0000001F;
+    }
+    html.dark {
+      color-scheme: dark;
+      --page: #17181A; --canvas: #1C1D1F; --surface: #232427;
+      --field: #2B2C2F; --hover-2: #313236; --inset: #1F2022;
+      --line: #2E3033; --line-strong: #3A3C40;
+      --ink: #F2F3F4; --ink-2: #A5A8AD; --ink-3: #6C6F75;
+      --accent: #3D9AFF; --accent-ink: #7EC0FF; --accent-tint: #3D9AFF29;
+      --green: #3DBB72; --green-tint: #3DBB7224;
+      --red: #EE5C61; --red-tint: #EE5C6124;
+      --orange: #F68F3C; --orange-tint: #F68F3C24;
+      --stripe: #FFFFFF0E;
+      --shadow-btn: 0 0 0 1px #3A3C40, 0 1px 2px #0000004D;
+      --shadow-card: 0 0 0 1px #2E3033, 0 1px 2px #0003, 0 2px 6px #0003;
+      --shadow-inset-field: inset 0 1px 2px #0006;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--page);
+      background-image: repeating-linear-gradient(-45deg, transparent 0, transparent 7px, var(--stripe) 7px, var(--stripe) 8px);
+      color: var(--ink);
+      font: 13px/19.5px Inter, ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: -.01em;
+      -webkit-font-smoothing: antialiased;
+      padding: 24px;
+      min-height: 100vh;
+    }
+    button, input { font: inherit; color: inherit; }
+    button { border: 0; background: none; cursor: pointer; }
+    h1 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    .sub { color: var(--ink-2); font-size: 12px; margin-bottom: 20px; }
+    .demo-note {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 16px; color: var(--ink-2); font-size: 12px;
+    }
+
+    /* ---- 复用 index.html 的控件样式 ---- */
+    .ghost {
+      display: inline-flex; align-items: center; gap: 4px;
+      height: 24px; padding: 0 8px; border-radius: 6px;
+      color: var(--ink-3); font-size: 12px; white-space: nowrap;
+    }
+    .ghost:hover, .ghost[aria-pressed="true"] { background: var(--hover-2); color: var(--ink); }
+    .ghost .ico { font-size: 12px; line-height: 1; }
+    .seg {
+      display: inline-flex; height: 24px; padding: 2px;
+      border-radius: 999px; background: var(--field);
+    }
+    .seg button {
+      height: 20px; padding: 0 8px; border-radius: 999px;
+      color: var(--ink-3); font-size: 11px; white-space: nowrap;
+    }
+    .seg button[aria-pressed="true"] {
+      background: var(--surface); color: var(--ink); box-shadow: var(--shadow-btn);
+    }
+    .search {
+      width: 168px; height: 24px; padding: 0 8px;
+      border: 0; border-radius: 6px;
+      background: var(--field); box-shadow: var(--shadow-inset-field);
+      font-size: 12px;
+    }
+    .score-note {
+      width: 140px; height: 24px; padding: 0 8px;
+      background: var(--field); box-shadow: var(--shadow-inset-field);
+      border: 0; outline: none; border-radius: 6px; font-size: 12px;
+    }
+
+    /* ---- 顶栏骨架（与 .top 同规格）---- */
+    .top {
+      display: flex; align-items: center;
+      height: 36px; padding: 0 10px; gap: 6px;
+      background: var(--surface);
+      border-radius: 10px;
+      box-shadow: var(--shadow-card), inset 0 -1px 0 var(--line);
+    }
+    .crumb {
+      color: var(--ink-2); font-size: 12px;
+      max-width: 26vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      flex-shrink: 1; min-width: 60px;
+    }
+    .crumb b { color: var(--ink); font-weight: 500; }
+    .divider { width: 1px; height: 16px; background: var(--line-strong); flex: none; }
+
+    /* 跟随：状态与开关合一 */
+    .follow-toggle {
+      display: inline-flex; align-items: center; gap: 5px;
+      height: 24px; padding: 0 9px; border-radius: 999px;
+      font-size: 11.5px; color: var(--ink-3);
+      flex: none; white-space: nowrap;
+    }
+    .follow-toggle .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--ink-3); transition: background .15s;
+    }
+    .follow-toggle[aria-pressed="true"] {
+      color: var(--accent-ink); background: var(--accent-tint);
+    }
+    .follow-toggle[aria-pressed="true"] .dot { background: var(--accent); }
+
+    /* 标注组：带边框的动作区 */
+    .score-group {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 4px 2px 8px; border-radius: 8px;
+      box-shadow: 0 0 0 1px var(--line-strong);
+      flex: none;
+    }
+    .score-group .label { color: var(--ink-3); font-size: 11px; margin-right: 2px; }
+    .score-group .ghost[data-score][aria-pressed="true"][data-score="good"] { background: var(--green-tint); color: var(--green); }
+    .score-group .ghost[data-score][aria-pressed="true"][data-score="bad"] { background: var(--red-tint); color: var(--red); }
+    .score-group .ghost[data-score][aria-pressed="true"][data-score="partial"] { background: var(--orange-tint); color: var(--orange); }
+
+    .grow { flex: 1; min-width: 8px; }
+
+    /* ---- 变体 B：固定两行 ---- */
+    .top.rows { flex-direction: column; align-items: stretch; height: auto; padding: 0; gap: 0; }
+    .top.rows .trow { display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 10px; flex: none; }
+    .top.rows .trow + .trow { box-shadow: inset 0 1px 0 var(--line); }
+    .top.rows .trow.views { background: var(--inset); border-radius: 0 0 10px 10px; }
+
+    /* ---- 变体：自动折行（并入提案）---- */
+    .top.wrapbar { flex-wrap: wrap; height: auto; min-height: 36px; padding-top: 6px; padding-bottom: 6px; row-gap: 2px; }
+    .top.wrapbar .search { width: auto; flex: 1 1 140px; max-width: 168px; }
+    .top.wrapbar .score-note { width: auto; flex: 1 1 110px; max-width: 140px; }
+
+    /* 变体 C 的区块贴靠示意 */
+    .zone-mock {
+      background: var(--surface); border-radius: 10px;
+      box-shadow: var(--shadow-card); overflow: hidden; margin-bottom: 12px;
+    }
+    .zone-bar {
+      display: flex; align-items: center; gap: 6px;
+      height: 32px; padding: 0 10px;
+      box-shadow: inset 0 -1px 0 var(--line);
+      font-size: 11px; color: var(--ink-3);
+    }
+    .zone-body { height: 56px; position: relative; background: var(--inset); }
+
+    /* 主题图标按钮 */
+    .theme-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px; border-radius: 6px;
+      color: var(--ink-3); font-size: 13px;
+    }
+    .theme-btn:hover { background: var(--hover-2); color: var(--ink); }
+
+    /* ---- 组标注层（过稿用，落地时删除）---- */
+    .top.annotate .grp { position: relative; }
+    .top.annotate .grp::after {
+      content: attr(data-grp);
+      position: absolute; left: 0; right: 0; top: calc(100% + 3px);
+      text-align: center; font-size: 9.5px; line-height: 1;
+      color: var(--grp-c, var(--ink-3));
+      white-space: nowrap;
+    }
+    .top.annotate { height: auto; padding-bottom: 18px; overflow: visible; }
+    .c1 { --grp-c: #0285FF; } .c2 { --grp-c: #7A4FD3; } .c3 { --grp-c: #EF720C; }
+    .c4 { --grp-c: #0E8AA8; } .c5 { --grp-c: #DB2777; } .c6 { --grp-c: #189A4D; }
+
+    /* ---- 现状对比条 ---- */
+    .old-top {
+      display: flex; align-items: center; gap: 6px;
+      height: 36px; padding: 0 10px;
+      background: var(--surface); border-radius: 10px;
+      box-shadow: var(--shadow-card), inset 0 -1px 0 var(--line);
+      opacity: .85;
+    }
+    .old-tag, .new-tag {
+      font-family: "JetBrains Mono", monospace; font-size: 11px;
+      color: var(--ink-2); margin: 14px 0 6px;
+    }
+    .new-tag { color: var(--accent-ink); font-weight: 500; }
+    section { max-width: 1280px; margin: 0 auto 36px; }
+
+    /* 底部说明表 */
+    table { border-collapse: collapse; width: 100%; font-size: 12px; }
+    th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+    th { color: var(--ink-2); font-weight: 500; }
+    td:first-child { font-family: "JetBrains Mono", monospace; color: var(--ink-2); white-space: nowrap; }
+    code { font-family: "JetBrains Mono", monospace; font-size: 11.5px; background: var(--field); padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Atatrace 顶栏重排 demo</h1>
+  <p class="sub">左 → 右 = 会话上下文 → 实时状态 → 影响上图 → 影响下表 → 标注动作 → 全局。所有控件可点，仅演示视觉与分组，不接数据。窗口宽度 &lt; 约 1350px 时整组自动折行、输入框先收缩，不会截断控件（试试缩放窗口）。</p>
+
+  <div class="demo-note">
+    <button class="ghost" id="annoBtn" aria-pressed="false">显示分组标注</button>
+    <span>勾选后每个组下方会出现职责标签，用于过稿；落地代码里没有这一层。</span>
+  </div>
+
+  <section>
+    <div class="new-tag">提案 · PROPOSED</div>
+    <div class="top wrapbar" id="newTop">
+      <!-- ① 会话上下文 -->
+      <span class="crumb grp c1" data-grp="① 会话上下文"><b>Pi</b> · 使用一个本机工业上游模型把生成式 UI 工作流跑通</span>
+
+      <span class="divider"></span>
+
+      <!-- ② 实时状态：跟随合一 -->
+      <button class="follow-toggle grp c2" data-grp="② 跟随状态(合一)" id="followToggle" aria-pressed="true">
+        <span class="dot"></span><span class="txt">跟随尾部</span>
+      </button>
+
+      <span class="divider"></span>
+
+      <!-- ③ 影响上方 timeline -->
+      <span class="grp c3" data-grp="③ 时间轴视图(管上图)" style="display:inline-flex;gap:6px;">
+        <span class="seg" role="group" aria-label="时间轴模式">
+          <button type="button" data-mode="seq" aria-pressed="true">Sequence</button>
+          <button type="button" data-mode="time" aria-pressed="false">Actual time</button>
+        </span>
+        <button class="ghost" id="durBtn" aria-pressed="false" title="等宽操作 vs 真实时长">Duration</button>
+      </span>
+
+      <span class="divider"></span>
+
+      <!-- ④ 影响下方台账 -->
+      <span class="grp c4" data-grp="④ 台账折叠(管下表)" style="display:inline-flex;gap:2px;">
+        <button class="ghost" data-collapse aria-pressed="false"><span class="ico">⊟</span>Turns</button>
+        <button class="ghost" data-collapse aria-pressed="false"><span class="ico">⊟</span>Calls</button>
+      </span>
+
+      <span class="grow"></span>
+
+      <!-- ⑤ 标注动作区 -->
+      <span class="score-group grp c5" data-grp="⑤ 标注动作区" id="scoreGroup">
+        <span class="label">标注</span>
+        <button class="ghost" data-score="good" aria-pressed="false">Good</button>
+        <button class="ghost" data-score="bad" aria-pressed="false">Bad</button>
+        <button class="ghost" data-score="partial" aria-pressed="false">Partial</button>
+        <input class="score-note" type="text" placeholder="备注（可选）" maxlength="200" />
+      </span>
+
+      <span class="divider"></span>
+
+      <!-- ⑥ 全局 -->
+      <span class="grp c6" data-grp="⑥ 全局" style="display:inline-flex;gap:4px;align-items:center;">
+        <input class="search" type="search" placeholder="Search" aria-label="Search trajectory" />
+        <button class="theme-btn v-theme" title="切换主题">☾</button>
+      </span>
+    </div>
+  </section>
+
+  <section>
+    <div class="new-tag">变体 B · 固定两行</div>
+    <p class="sub" style="margin-bottom:8px;">第一行只留会话级的事：这是谁、跟不跟随、打没打分、全局工具。第二行是纯视图态控件，底色压暗一档，明确它俩是“看数据的方式”而不是“对会话做的事”。代价：常驻多占 36px 高度。</p>
+    <div class="top rows">
+      <div class="trow">
+        <span class="crumb"><b>Pi</b> · 使用一个本机工业上游模型把生成式 UI 工作流跑通</span>
+        <span class="divider"></span>
+        <button class="follow-toggle v-follow" aria-pressed="true"><span class="dot"></span><span class="txt">跟随尾部</span></button>
+        <span class="grow"></span>
+        <span class="score-group">
+          <span class="label">标注</span>
+          <button class="ghost v-score" data-score="good" aria-pressed="false">Good</button>
+          <button class="ghost v-score" data-score="bad" aria-pressed="false">Bad</button>
+          <button class="ghost v-score" data-score="partial" aria-pressed="false">Partial</button>
+          <input class="score-note" type="text" placeholder="备注（可选）" maxlength="200" />
+        </span>
+        <span class="divider"></span>
+        <input class="search" type="search" placeholder="Search" aria-label="Search trajectory" />
+        <button class="theme-btn v-theme" title="切换主题">☾</button>
+      </div>
+      <div class="trow views">
+        <span style="display:inline-flex;gap:6px;align-items:center;">
+          <span class="seg" role="group" aria-label="时间轴模式">
+            <button type="button" data-mode="seq" aria-pressed="true">Sequence</button>
+            <button type="button" data-mode="time" aria-pressed="false">Actual time</button>
+          </span>
+          <button class="ghost v-dur" aria-pressed="false" title="等宽操作 vs 真实时长">Duration</button>
+        </span>
+        <span class="divider"></span>
+        <span style="display:inline-flex;gap:2px;">
+          <button class="ghost v-collapse" aria-pressed="false"><span class="ico">⊟</span>Turns</button>
+          <button class="ghost v-collapse" aria-pressed="false"><span class="ico">⊟</span>Calls</button>
+        </span>
+        <span class="grow"></span>
+        <span style="font-size:11px;color:var(--ink-3);">视图态控件 · 只影响当前会话的展示</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="new-tag">变体 D · 控件贴靠所属区块（信息架构最彻底，改动最大）</div>
+    <p class="sub" style="margin-bottom:8px;">顶栏只留会话级与全局的事；“管上图的下沉到图上、管下表的下沉到表上”，控件和作用对象物理相邻，不需要任何分隔线来解释逻辑。</p>
+    <div class="top" style="margin-bottom:12px;">
+      <span class="crumb"><b>Pi</b> · 使用一个本机工业上游模型把生成式 UI 工作流跑通</span>
+      <span class="divider"></span>
+      <button class="follow-toggle v-follow" aria-pressed="true"><span class="dot"></span><span class="txt">跟随尾部</span></button>
+      <span class="grow"></span>
+      <span class="score-group">
+        <span class="label">标注</span>
+        <button class="ghost v-score" data-score="good" aria-pressed="false">Good</button>
+        <button class="ghost v-score" data-score="bad" aria-pressed="false">Bad</button>
+        <button class="ghost v-score" data-score="partial" aria-pressed="false">Partial</button>
+        <input class="score-note" type="text" placeholder="备注（可选）" maxlength="200" />
+      </span>
+      <span class="divider"></span>
+      <input class="search" type="search" placeholder="Search" aria-label="Search trajectory" />
+      <button class="theme-btn v-theme" title="切换主题">☾</button>
+    </div>
+    <div class="zone-mock">
+      <div class="zone-bar">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;">TIMELINE</span>
+        <span class="seg" role="group" aria-label="时间轴模式">
+          <button type="button" data-mode="seq" aria-pressed="true">Sequence</button>
+          <button type="button" data-mode="time" aria-pressed="false">Actual time</button>
+        </span>
+        <button class="ghost v-dur" aria-pressed="false">Duration</button>
+      </div>
+      <div class="zone-body"></div>
+    </div>
+    <div class="zone-mock" style="margin-bottom:0;">
+      <div class="zone-bar">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;">LEDGER</span>
+        <button class="ghost v-collapse" aria-pressed="false"><span class="ico">⊟</span>Turns</button>
+        <button class="ghost v-collapse" aria-pressed="false"><span class="ico">⊟</span>Calls</button>
+      </div>
+      <div class="zone-body"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="old-tag">现状 · CURRENT（对比用）</div>
+    <div class="old-top">
+      <span class="crumb" style="max-width:none;"><b>Pi</b> · 使用一个本机工业上游模型把生成式 UI 工作流跑通</span>
+      <span class="follow" style="color:var(--accent-ink);font-size:11px;">跟随尾部</span>
+      <span style="color:var(--ink-3);font:10.5px 'JetBrains Mono',monospace;">sequence</span>
+      <span class="score-group"><input class="score-note" style="width:150px;" type="text" placeholder="备注（可选）" /><button class="ghost">Good</button><button class="ghost">Bad</button><button class="ghost">Partial</button></span>
+      <span class="grow"></span>
+      <button class="ghost">Duration</button>
+      <button class="ghost">Actual time</button>
+      <button class="ghost"><span class="ico">⊟</span>Turns</button>
+      <button class="ghost"><span class="ico">⊟</span>Calls</button>
+      <button class="ghost" aria-pressed="true">跟随</button>
+      <span class="seg"><button type="button">Dark</button><button type="button" aria-pressed="true">Light</button></span>
+      <input class="search" type="search" placeholder="Search" />
+    </div>
+  </section>
+
+  <section>
+    <table>
+      <tr><th>改动</th><th>现状</th><th>提案</th></tr>
+      <tr><td>跟随</td><td><code>#live</code> 显示 + <code>#followBtn</code> 开关，同一状态两处表达</td><td>合并为一个胶囊开关 <code>.follow-toggle</code>，状态即控件</td></tr>
+      <tr><td>时间轴模式</td><td><code>#modeChip</code> 只读展示 + <code>#timeBtn</code> 切换</td><td>删除 chip，<code>Sequence | Actual time</code> 分段控件的选中态就是模式</td></tr>
+      <tr><td>上图/下表控件</td><td>Duration、Actual time、Turns、Calls 平铺混排</td><td>按作用对象分两组，中间加分隔线：③管上图、④管下表</td></tr>
+      <tr><td>标注</td><td>备注框 + 三按钮悬在左侧中部，隔断左右</td><td>收进右侧带边框的「标注」动作区，低频动作不再占据视线中心</td></tr>
+      <tr><td>主题</td><td>Dark/Light 分段占黄金位置</td><td>缩成右上角一个图标按钮</td></tr>
+      <tr><td>crumb</td><td>长标题无宽度上限，挤压后续控件</td><td>限宽截断（<code>max-width:26vw</code> + ellipsis）</td></tr>
+      <tr><td>首页态</td><td><code>data-home</code> 逐个隐藏控件</td><td>规则不变；隐藏列表随 ID 合并相应缩短</td></tr>
+    </table>
+  </section>
+
+  <script>
+    // 过稿交互：事件委托，全部变体共用一套逻辑，不接任何数据
+    document.addEventListener("click", (e) => {
+      const t = e.target;
+
+      if (t.closest("#annoBtn")) {
+        const btn = t.closest("#annoBtn");
+        const on = btn.getAttribute("aria-pressed") !== "true";
+        btn.setAttribute("aria-pressed", on);
+        document.getElementById("newTop").classList.toggle("annotate", on);
+        return;
+      }
+
+      const scope = t.closest(".top, .zone-mock");
+
+      // 跟随：状态与开关合一
+      const follow = t.closest(".follow-toggle");
+      if (follow) {
+        const on = follow.getAttribute("aria-pressed") !== "true";
+        follow.setAttribute("aria-pressed", on);
+        follow.querySelector(".txt").textContent = on ? "跟随尾部" : "已暂停";
+        return;
+      }
+
+      // 时间轴模式分段（作用域限定在同一个条内）
+      const modeBtn = t.closest(".seg [data-mode]");
+      if (modeBtn && scope) {
+        scope.querySelectorAll(".seg [data-mode]").forEach((b) =>
+          b.setAttribute("aria-pressed", b === modeBtn));
+        return;
+      }
+
+      // Duration 切换
+      const dur = t.closest(".v-dur, #durBtn");
+      if (dur) {
+        dur.setAttribute("aria-pressed", dur.getAttribute("aria-pressed") !== "true");
+        return;
+      }
+
+      // 折叠切换
+      const col = t.closest(".v-collapse, [data-collapse]");
+      if (col) {
+        const on = col.getAttribute("aria-pressed") !== "true";
+        col.setAttribute("aria-pressed", on);
+        col.querySelector(".ico").textContent = on ? "⊞" : "⊟";
+        return;
+      }
+
+      // 标注单选
+      const score = t.closest("[data-score]");
+      if (score) {
+        const group = t.closest(".score-group");
+        const on = score.getAttribute("aria-pressed") !== "true";
+        group.querySelectorAll("[data-score]").forEach((b) => b.setAttribute("aria-pressed", "false"));
+        score.setAttribute("aria-pressed", on);
+        return;
+      }
+
+      // 主题
+      const theme = t.closest(".v-theme");
+      if (theme) {
+        document.documentElement.classList.toggle("dark");
+        document.querySelectorAll(".v-theme").forEach((b) => {
+          b.textContent = document.documentElement.classList.contains("dark") ? "☀" : "☾";
+        });
+      }
+    });
+  </script>
+</body>
+</html>
