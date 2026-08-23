@@ -116,6 +116,8 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 "agent_id": raw.get("agent_id"),
                 "host": raw.get("host"),
                 "runtime": raw.get("runtime"),
+                "channel": raw.get("channel"),
+                "lineage": raw.get("lineage") or {},
             }
             try:
                 events = translate_hook(raw["name"], raw.get("event") or {}, ctx, bucket)

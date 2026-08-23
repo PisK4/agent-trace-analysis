@@ -22,6 +22,26 @@ function jsonSafe(value: unknown): unknown {
   }
 }
 
+const LINEAGE_ENV_KEYS = [
+  "PI_SUBAGENT_CHILD",
+  "PI_SUBAGENT_ORCHESTRATOR_SESSION_ID",
+  "PI_SUBAGENT_RUN_ID",
+  "PI_SUBAGENT_PARENT_ROOT_RUN_ID",
+  "PI_SUBAGENT_PARENT_RUN_ID",
+  "PI_SUBAGENT_CHILD_AGENT",
+  "PI_SUBAGENT_PARENT_DEPTH",
+  "PI_SUBAGENT_PARENT_PATH",
+] as const;
+
+function lineageFromEnv(): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const k of LINEAGE_ENV_KEYS) {
+    const v = process.env[k];
+    if (v) out[k] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 async function postHook(body: object): Promise<void> {
   try {
     await fetch(`${ATA_URL}/api/pi-hooks`, {
@@ -46,6 +66,8 @@ export default function (pi: ExtensionAPI) {
         agent_id: ATA_CONFIG.agentId,
         host: ATA_CONFIG.host,
         runtime: ATA_CONFIG.runtime,
+        channel: process.env.ATA_CHANNEL || undefined,
+        lineage: lineageFromEnv(),
         event: jsonSafe(event),
       });
     });

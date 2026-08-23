@@ -79,9 +79,23 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
             state["opened"] = True
             title = ctx.get("title") or session_id
             state["title_set"] = title != session_id
+            payload = {"title": title, **identity}
+            if ctx.get("channel"):
+                payload["channel"] = str(ctx["channel"])
+            lin = ctx.get("lineage") or {}
+            parent = lin.get("PI_SUBAGENT_ORCHESTRATOR_SESSION_ID")
+            if parent:
+                payload["parent_session"] = str(parent)
+            if lin:
+                payload["subagent"] = {
+                    "orchestrator_session": lin.get("PI_SUBAGENT_ORCHESTRATOR_SESSION_ID"),
+                    "run_id": lin.get("PI_SUBAGENT_RUN_ID"),
+                    "child_agent": lin.get("PI_SUBAGENT_CHILD_AGENT"),
+                    "depth": lin.get("PI_SUBAGENT_PARENT_DEPTH"),
+                }
             out.append(_ev(
                 f"{session_id}:opened", agent_id, session_id, ts,
-                "session.opened", None, {"title": title, **identity},
+                "session.opened", None, payload,
             ))
         return out
     if name == "turn_start":
