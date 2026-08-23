@@ -7,6 +7,7 @@ ALLOWED_TYPES = {
     "session.closed",
     "system.upserted",
     "compaction.boundary",
+    "session.scored",
 }
 ALLOWED_AGENTS = {"pi", "cue", "droid", "claude", "codex"}
 USAGE_KEYS = ("status", "input", "output", "cache_read", "cache_write", "total_tokens", "cost")
@@ -73,6 +74,11 @@ def _check_payload(typ, p):
         raise ValidationError("summary required")
     if typ == "turn.ended" and p.get("usage") is not None:
         _check_usage(p["usage"])
+    if typ == "session.scored":
+        if p.get("value") not in {"good", "bad", "partial"}:
+            raise ValidationError("bad score value")
+        if "note" in p and not isinstance(p["note"], str):
+            raise ValidationError("score note must be string")
 
 
 def _check_usage(u):
