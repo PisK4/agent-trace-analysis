@@ -66,6 +66,7 @@ python3 -m ata read sessions [--agent cue] [--limit N]
 echo "<首条用户消息原文>" | python3 -m ata tasks add --channel cue   # 出题，题面从此冻结
 python3 -m ata tasks list                                            # 查任务 id
 python3 -m ata run new --desc "这轮改了什么"                          # 干预后建轮次，自动记任务集指纹
+python3 -m ata run list                                              # 列出现有轮次（含归组计数）
 python3 -m ata compare RUN_A RUN_B                                   # 新旧差异表 + 双侧分数快照落盘
 ```
 
