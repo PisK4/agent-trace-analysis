@@ -6,6 +6,10 @@ import threading
 import time
 from pathlib import Path
 
+# 毫秒时间戳低于此值的视为脏数据（历史推送端写过 ts=1 的 opened 事件），
+# 不参与创建时间的判定。
+_REAL_TS_FLOOR = 10 ** 12
+
 
 class Ledger:
     def __init__(self, root: Path):
@@ -32,7 +36,8 @@ class Ledger:
                 title TEXT NOT NULL,
                 turns INTEGER NOT NULL DEFAULT 0,
                 last_seq INTEGER NOT NULL DEFAULT 0,
-                last_ts INTEGER NOT NULL DEFAULT 0
+                last_ts INTEGER NOT NULL DEFAULT 0,
+                first_ts INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_title ON sessions(title);
             CREATE TABLE IF NOT EXISTS events (
@@ -66,6 +71,20 @@ class Ledger:
                     (SELECT MAX(ts) FROM events e WHERE e.session_id = sessions.session_id), 0)
                 """
             )
+        if "first_ts" not in {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}:
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN first_ts INTEGER NOT NULL DEFAULT 0"
+            )
+            # 部分历史 session.opened 事件带异常小 ts，回填时忽略，
+            # 只信正常量级的 ts；全无则退回 last_ts，保证卡片有值可显。
+            self._conn.execute(
+                """
+                UPDATE sessions SET first_ts = COALESCE(
+                    (SELECT MIN(ts) FROM events e WHERE e.session_id = sessions.session_id
+                     AND e.ts > ?), last_ts)
+                """,
+                (_REAL_TS_FLOOR,),
+            )
         if "parent_session_id" not in {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)")
@@ -87,7 +106,7 @@ class Ledger:
         if found:
             return int(found["seq"])
         row = self._conn.execute(
-            "SELECT last_seq, title, turns, last_ts, parent_session_id FROM sessions WHERE session_id=?",
+            "SELECT last_seq, title, turns, last_ts, first_ts, parent_session_id FROM sessions WHERE session_id=?",
             (sid,),
         ).fetchone()
         seq = (int(row["last_seq"]) if row else 0) + 1
@@ -96,6 +115,13 @@ class Ledger:
         last_ts = int(event["ts"])
         if row:
             last_ts = max(int(row["last_ts"] or 0), last_ts)
+        # 创建时间取最早的真实事件 ts；异常小值（如 1）不参与，避免显示成 1970 年，
+        # 已存在的异常存量值也一并设防。
+        first_ts = int(event["ts"]) if int(event["ts"]) > _REAL_TS_FLOOR else 0
+        if row:
+            existing_first = int(row["first_ts"] or 0)
+            if existing_first > _REAL_TS_FLOOR:
+                first_ts = min(existing_first, first_ts) if first_ts else existing_first
         # 非 opened 事件必须保留已有父引用，否则后续 UPDATE 会把血缘抹成 NULL。
         parent = row["parent_session_id"] if row else None
         if event["type"] == "session.opened":
@@ -106,13 +132,13 @@ class Ledger:
             turns = turn
         if row:
             self._conn.execute(
-                "UPDATE sessions SET agent_id=?, title=?, turns=?, last_seq=?, last_ts=?, parent_session_id=? WHERE session_id=?",
-                (event["agent_id"], title, turns, seq, last_ts, parent, sid),
+                "UPDATE sessions SET agent_id=?, title=?, turns=?, last_seq=?, last_ts=?, first_ts=?, parent_session_id=? WHERE session_id=?",
+                (event["agent_id"], title, turns, seq, last_ts, first_ts, parent, sid),
             )
         else:
             self._conn.execute(
-                "INSERT INTO sessions(session_id, agent_id, title, turns, last_seq, last_ts, parent_session_id) VALUES (?,?,?,?,?,?,?)",
-                (sid, event["agent_id"], title, turns, seq, last_ts, parent),
+                "INSERT INTO sessions(session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id) VALUES (?,?,?,?,?,?,?,?)",
+                (sid, event["agent_id"], title, turns, seq, last_ts, first_ts, parent),
             )
         self._conn.execute(
             "INSERT INTO events(session_id, event_id, seq, ts, type, turn, event_json) VALUES (?,?,?,?,?,?,?)",
@@ -133,7 +159,7 @@ class Ledger:
     def session(self, session_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT session_id, agent_id, title, turns, last_ts, parent_session_id FROM sessions WHERE session_id=?",
+                "SELECT session_id, agent_id, title, turns, last_ts, first_ts, parent_session_id FROM sessions WHERE session_id=?",
                 (session_id,),
             ).fetchone()
         return None if row is None else self._session_row(row)
@@ -142,9 +168,9 @@ class Ledger:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT session_id, agent_id, title, turns, last_ts, parent_session_id
+                SELECT session_id, agent_id, title, turns, last_ts, first_ts, parent_session_id
                 FROM sessions
-                ORDER BY last_ts DESC, title
+                ORDER BY first_ts DESC, title
                 """
             ).fetchall()
         return [self._session_row(r) for r in rows]
@@ -157,13 +183,14 @@ class Ledger:
             "title": r["title"],
             "turns": int(r["turns"]),
             "last_ts": int(r["last_ts"] or 0),
+            "first_ts": int(r["first_ts"] or 0),
             "parent_session_id": r["parent_session_id"],
         }
 
     def children(self, session_id: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT session_id, agent_id, title, turns, last_ts, parent_session_id"
+                "SELECT session_id, agent_id, title, turns, last_ts, first_ts, parent_session_id"
                 " FROM sessions WHERE parent_session_id=? ORDER BY last_ts",
                 (session_id,),
             ).fetchall()
