@@ -33,3 +33,4 @@ blocked_by: []
 ## Progress notes
 
 - 2026-08-23 CLI 入口落地（计划 Task 2/10/11）：`session.scored` 事件类型入 schema（value 三选一 + 可选 note，turn 强制 null）；`ata rate <sid> --value good|bad|partial [--note ...]` 经服务事件追加门写入，拒绝 `--ledger` 直写。真机冒烟通过：对 cue 会话 `01a029d0` 打 `good` 标注，seq 141 落账，payload 形状与 Resolution 一致。Web UI 标注控件留待第二份计划（需先摸前端现状），本票 Resolution 第 2 点的 Web UI 部分未完成。
+- 2026-08-23 Web UI 入口落地（计划：`docs/superpowers/plans/2026-08-23-web-annotation.md`），Resolution 第 2 点至此完整兑现：投影层 `project_session` 透出 `scores` 数组（tail 裁剪不波及标注），顶栏加徽章 + 备注框 + Good/Bad/Partial 控件直发 `/api/events`。真机闭环通过：POST 落账 seq 3611、投影读回含 note、CLI 与 Web 共用同一追加门。`make test` 全量 PASS，服务已 restart 且 health 返回 `{"ok": true}`。数值型评分仍按本票决议留待以后。
