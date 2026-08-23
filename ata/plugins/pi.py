@@ -246,9 +246,14 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                         "output_text": text,
                     },
                 ))
+        stop = (msg.get("stopReason") if isinstance(msg, dict) else None)
+        status = {"error": "failed", "aborted": "cancelled"}.get(stop)
+        ended_payload = {"usage": usage}
+        if status:
+            ended_payload["status"] = status
         out.append(_ev(
             f"{session_id}:turn:{turn}:end", agent_id, session_id, ts,
-            "turn.ended", turn, {"usage": usage},
+            "turn.ended", turn, ended_payload,
         ))
         return out
     # agent_end / agent_settled / 其他：不做收尾。以前把 agent_end 当会话结束，
