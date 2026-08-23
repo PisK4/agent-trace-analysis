@@ -175,6 +175,8 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 "usage": usage,
                 "started_at": int(msg.get("timestamp") or ts),
                 "duration_ms": duration,
+                "model": msg.get("model"),
+                "provider": msg.get("provider"),
                 "output_text": text if role == "assistant" else None,
             },
         ))
@@ -257,12 +259,19 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                         "usage": usage,
                         "started_at": int(msg.get("timestamp") or ts),
                         "duration_ms": state.get("msg_dur", {}).get(mid),
+                        "model": msg.get("model"),
+                        "provider": msg.get("provider"),
                         "output_text": text,
                     },
                 ))
         stop = (msg.get("stopReason") if isinstance(msg, dict) else None)
         status = {"error": "failed", "aborted": "cancelled"}.get(stop)
-        ended_payload = {"usage": usage}
+        # turn.ended 是部分轮次取 usage/model 的唯一来源，必须带归因字段。
+        ended_payload = {
+            "usage": usage,
+            "model": msg.get("model"),
+            "provider": msg.get("provider"),
+        }
         if status:
             ended_payload["status"] = status
         out.append(_ev(
