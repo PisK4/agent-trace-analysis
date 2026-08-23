@@ -76,6 +76,7 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
     title = session_id
     entities = {}
     order = []
+    scores = []
     turn_usage = {}
     turn_status = {}
     turn_model = {}
@@ -85,6 +86,9 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
         p = ev["payload"]
         if ev["type"] == "session.opened":
             title = p.get("title") or title
+            continue
+        if ev["type"] == "session.scored":
+            scores.append({"value": p.get("value"), "note": p.get("note"), "ts": ev["ts"]})
             continue
         if ev["type"] == "turn.ended":
             if p.get("usage"):
@@ -281,6 +285,7 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
         "has_older": has_older,
         "cursor": cursor,
         "turns": len({t for t in seen_turn if t is not None}),
+        "scores": scores,
         "tools_index": tools_index,
         "rows": rows,
     }
