@@ -1,4 +1,5 @@
 import argparse
+import sys
 import threading
 import time
 from pathlib import Path
@@ -52,6 +53,11 @@ def seed_demo(ledger: Ledger):
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # 机器读路径：read/rate 走 CLI 模块，不进 serve/seed 参数解析
+    if argv and argv[0] in {"read", "rate"}:
+        from ata.cli import main as cli_main
+        return cli_main(argv)
     p = argparse.ArgumentParser()
     p.add_argument("cmd", choices=["serve", "seed"])
     p.add_argument("--port", type=int, default=8787)
