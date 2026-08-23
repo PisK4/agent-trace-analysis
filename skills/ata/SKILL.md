@@ -26,20 +26,34 @@ python3 -m ata read sessions --ledger ~/.ata/ata.sqlite   # 离线兜底
 python3 -m ata read sessions [--agent cue] [--limit N]
 ```
 
-输出 JSON 数组：`id`、`agent`、`title`、`turns`、`last_ts`、`parent_session_id`。按 title 关键词或 agent 过滤锁定目标 sid。
+输出 JSON 数组：`id`、`agent`、`title`、`turns`、`last_ts`、`parent_session_id`。服务端不做过滤：`--agent` 是客户端裁剪，title 关键词要自己对输出 grep。
 
 ## 3. 下钻诊断
 
 先看轮廓再精读，顺序固定：
 
 1. `read usage SID` —— 每轮 token 与模型；usage 缺失的轮保留且 `status:"missing"`，另有 `missing_turns` 计数
-2. `read tools SID --status failed` —— 失败工具清单（默认 result 只给尾部 200 字符预览，确认要全文再加 `--full`）
-3. `read events SID --after-seq N --limit M` —— 权威层裸事件流，前两步解释不了时才用；游标翻页，不要一次拉全量
+2. `read tools SID --status failed` —— 工具清单（result 默认只给尾部 200 字符预览；`--full` 取全文，对 compactions 的 summary 同样生效）
+3. `read events SID --after-seq N --limit M` —— 权威层裸事件流，前两步解释不了时才用
 4. `read compactions SID` / `read lineage SID` —— 压缩点与父子血缘按需查
+
+**events 是全量权威数据，翻到头才算拿完。** 每条是 `{seq, event}` 结构，正文和工具记录都在 `event.payload` 里。HTTP 路径 limit 服务端封顶 500；循环取数直到本页为空或 `next_after_seq` 不再前进，提前停就是漏数据。探活失败时改用 `--ledger` 直读：离线模式不限条数，反而是最省事的全量通道。
+
+**别把 `/api/sessions/{SID}` 投影端点当全量来源。** 它默认只回尾部 80 行（`before` 游标向前翻），是给人看的预览；要完整正文走 events。
+
+### 取「谁说了什么」
+
+- **User 发言**：`message.upserted` 且 `payload.role=="user"` → `payload.text`。首条 user 往往是 `<system-reminder>` 等注入上下文，按前缀区分，别当真人发言。
+- **Tool 行为**：`tool.upserted` → `payload.name`（工具名）、`payload.payload`（入参）、`payload.text`（适配器摘要）、`payload.result`（返回）、`payload.status`。droid 会话字段不齐：有的记录 name 是泛化的 `"tool"`、入参为空、真实内容在 `text` 里，解析时按 `text`/`payload`/`result` 兜着取。
 
 ## 4. 空数据约定
 
 只有两条要记：**HTTP 404 = 不存在**；**200 加空数组 = 存在但为空**（如无失败工具、无血缘）。usage 缺失是数据边界不是异常，别当成故障报。
+
+两个已知陷阱：
+
+- **没有跨会话内容检索端点。** 找「哪条会话提到 X」只能先 `read sessions` 拿 sid 清单，再逐个拉 events 本地 grep；会话多时先用 agent/title 缩小范围。
+- **`--since-days` 是死参数**：CLI 声明了但没有任何执行路径消费它，用了等于没过滤，按时间筛选只能拿到数据后自己裁。
 
 ## 5. 隐私与数据边界（硬约束）
 
