@@ -34,10 +34,11 @@ status: open
 - [对照复跑的可行性](tickets/T3-replay-feasibility.md)：Cue 会话能重放但做不到逐字复现，对比靠固定可控项 + 挑低耦合任务 + 多次 run 看统计。测试项字段定为 input（首条用户消息全文）+ channel + model/thinkingLevel，可选 cwd、注入快照、回链 id；提取首版手动复制粘贴，不预做导出命令。噪声源主要是记忆库、采集数据、屏幕注入、web_search 和模型随机性；失败类指标对噪声最鲁棒，优先建。
 - [人工标注机制](tickets/T9-human-annotation.md)：产出质量的主观真值由用户标注给出。新事件类型 `session.scored` 走同一条追加门，值为 good/bad/partial 加自由备注；Web UI 与 CLI 第一期一起做。主观标注是锚、机器信号是线索，分开存分开统计，run 对比时标注优先级最高。
 - [外部评估体系经验盘点](tickets/T10-external-eval-survey.md)：可吸取清单定稿。T2 编码本用 AgentErrorTaxonomy 五类失败模式（arXiv:2509.25370）加六簇综合；T5 候选指标加 pass^k 与"子任务/端到端分歧"告警；T4 采纳"评过程不只评结果"但 LLM 判官不进首版；工程形态确认任务集文件化 + git 版本 + 无服务端。
+- [指标体系与对比输出](tickets/T5-metrics-and-diff.md)：run 归属走账本新事件 `run.opened`/`session.assigned`（manifest 文件取消）；任务集与分数快照放 `~/.ata/regression/` 本地 git；score 快照定性为可重建；pass^k 定义锁死缓实现；数据缺失一律记 missing 不当 0、任一侧缺则 Δ 为 n/a；题面冻结、对比只在同版任务集间做；命令面为薄 CLI（tasks add/list、run new、对比表），任务集管理不做前端，归组/打分控件并入人工标注机制票的范围。
 
 ## Not yet specified
 
-- 指标体系的具体定义收口在 T5（现只剩 T2 一个前置）：编码本与候选指标已由 T10 备齐。
+- Web UI 增加「实验」只读 tab（轮次列表、对比表渲染）：等真实跑过几轮实验、终端表格确实不够用时再立票。
 - 泛化路径：Cue 之后第二个宿主对象怎么挑，等飞轮在 Cue 上先转起来再说。
 
 ## Out of scope
