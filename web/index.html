@@ -693,6 +693,13 @@
     .diff { color: var(--ink-2); }
     .diff .add { color: var(--green); }
     .diff .del { color: var(--red); }
+    .view-toggle { display: inline-flex; gap: 4px; margin-bottom: 8px; vertical-align: middle; }
+    .view-toggle button {
+      font-size: 11px; padding: 1px 10px; cursor: pointer;
+      border: 1px solid var(--line-strong); border-radius: 999px;
+      background: none; color: var(--ink-3);
+    }
+    .view-toggle button[aria-selected="true"] { color: var(--accent-ink); border-color: var(--accent-ink); }
     @media (prefers-reduced-motion: reduce) {
       * { transition: none !important; animation: none !important; }
     }
@@ -1386,17 +1393,77 @@
       callsBtn.querySelector(".ico").textContent = allCalls ? "⊞" : "⊟";
     }
 
+    // 视图状态只存「tree 还是 pretty raw」，数据永远来自投影原文。
+    const jsonViewMode = {};
+    // ponytail: 阈值写死；真嫌小再提成常量或设置项。
+    const STR_FOLD = 400, ARR_SLICE = 20;
+
+    function parseMaybe(text) {
+      if (typeof text !== "string" || text.length < 2) return null;
+      const c = text[0];
+      if (c !== "{" && c !== "[") return null;
+      try {
+        const v = JSON.parse(text);
+        return v && typeof v === "object" ? v : null;
+      } catch { return null; }
+    }
+
     function jsonTree(value, key) {
+      const label = k => `<span class="k">${esc(k)}</span>: `;
       if (value && typeof value === "object") {
-        const entries = Array.isArray(value)
-          ? value.map((item, i) => jsonTree(item, String(i)))
-          : Object.entries(value).map(([k, v]) => jsonTree(v, k));
-        const label = key == null ? (Array.isArray(value) ? `array[${value.length}]` : "object") : esc(key);
-        return `<details open><summary><span class="k">${label}</span></summary>${entries.join("")}</details>`;
+        let entries, fold = "";
+        if (Array.isArray(value)) {
+          entries = value.slice(0, ARR_SLICE).map((item, i) => jsonTree(item, String(i)));
+          if (value.length > ARR_SLICE)
+            fold = `<details><summary><span class="miss">… ${value.length - ARR_SLICE} more items</span></summary>`
+              + value.slice(ARR_SLICE).map((item, i) => jsonTree(item, String(i))).join("") + `</details>`;
+        } else {
+          entries = Object.entries(value).map(([k, v]) => jsonTree(v, k));
+        }
+        const name = key == null ? (Array.isArray(value) ? `array[${value.length}]` : "object") : esc(key);
+        return `<details open><summary><span class="k">${name}</span></summary>${entries.join("")}${fold}</details>`;
+      }
+      if (typeof value === "string" && value.length > STR_FOLD) {
+        const nested = parseMaybe(value);
+        // 字符串里又嵌了一层 JSON（double-encoded）：展开成子树。
+        if (nested)
+          return `<div>${key != null ? label(key) : ""}<details open><summary><span class="s">"(embedded JSON · ${fmtNum(value.length)} chars)"</span></summary><div class="tree">${jsonTree(nested)}</div></details></div>`;
+        return `<div>${key != null ? label(key) : ""}<details><summary><span class="s">"${esc(value.slice(0, STR_FOLD))}…"</span> <span class="miss">(${fmtNum(value.length)} chars)</span></summary><span class="s">${esc(value)}</span></details></div>`;
       }
       const shown = typeof value === "string" ? `"${esc(value)}"` : esc(value);
       const cls = typeof value === "string" ? "s" : "n";
-      return `<div>${key != null ? `<span class="k">${esc(key)}</span>: ` : ""}<span class="${cls}">${shown}</span></div>`;
+      return `<div>${key != null ? label(key) : ""}<span class="${cls}">${shown}</span></div>`;
+    }
+
+    // 可解析 JSON 的内容给 tree/raw 双视图；raw 是 pretty-print 后走 hljs 高亮。
+    function jsonView(stateKey, parsed) {
+      const mode = jsonViewMode[stateKey] || "tree";
+      const body = mode === "raw"
+        ? `<pre class="blob lang-json">${esc(JSON.stringify(parsed, null, 2))}</pre>`
+        : `<div class="tree">${jsonTree(parsed)}</div>`;
+      return `<span class="view-toggle">
+          <button type="button" data-vset="${stateKey}" data-vmode="tree" aria-selected="${mode === "tree"}">Tree</button>
+          <button type="button" data-vset="${stateKey}" data-vmode="raw" aria-selected="${mode === "raw"}">Raw</button>
+        </span>${body}`;
+    }
+
+    // ponytail: 只裁公共前后缀、不做 LCS，对「模型改了几个字段」这类局部编辑够用；
+    // 大范围改写会显示成大段 +/-，届时再上真正的 diff 算法。
+    function lineDiff(before, after) {
+      const A = before.split("\n"), B = after.split("\n");
+      let s = 0;
+      while (s < A.length && s < B.length && A[s] === B[s]) s++;
+      let e = 0;
+      while (e < A.length - s && e < B.length - s && A[A.length - 1 - e] === B[B.length - 1 - e]) e++;
+      const ctx = 2, parts = [];
+      if (s > ctx) parts.push(`<span class="miss">… ${s - ctx} unchanged lines</span>`);
+      for (let i = Math.max(0, s - ctx); i < s; i++) parts.push(`  ${esc(A[i])}`);
+      for (let i = s; i < A.length - e; i++) parts.push(`<span class="del">- ${esc(A[i])}</span>`);
+      for (let i = s; i < B.length - e; i++) parts.push(`<span class="add">+ ${esc(B[i])}</span>`);
+      const tailStart = Math.max(A.length - e, s);
+      if (A.length - tailStart > ctx) parts.push(`<span class="miss">… ${A.length - e - tailStart - ctx} unchanged lines</span>`);
+      for (let i = tailStart; i < Math.min(tailStart + ctx, A.length); i++) parts.push(`  ${esc(A[i])}`);
+      return `<pre class="blob diff">${parts.join("\n") || "Identical arguments"}</pre>`;
     }
     if (window.marked) {
       // 语料是本地会话文本，不构成高信任边界：原始 HTML 一律转义成文本，
@@ -1427,6 +1494,11 @@
     function highlightMd() {
       if (!window.hljs) return;
       document.querySelectorAll(".md pre code").forEach(el => {
+        if (el.dataset.highlighted) return;
+        try { hljs.highlightElement(el); } catch (err) { /* 保留纯文本 */ }
+        el.dataset.highlighted = "1";
+      });
+      document.querySelectorAll("pre.blob.lang-json").forEach(el => {
         if (el.dataset.highlighted) return;
         try { hljs.highlightElement(el); } catch (err) { /* 保留纯文本 */ }
         el.dataset.highlighted = "1";
@@ -1473,10 +1545,19 @@
       return `<details class="think"><summary>Thinking</summary><div class="think-body">${markdown(text)}</div></details>`;
     }
     function previewBody(row) {
-      const output = row.kind === "assistant"
+      const shown = row.kind === "assistant"
         ? (row.outputText || "")
         : (row.payloadText || row.outputText || row.text || "");
-      const html = thinkingBlock(row.thinking) + (output ? markdown(output) : "");
+      // 整条正文就是一份 JSON（Cue 意图 context 等）：不进 markdown，给结构化视图。
+      const parsed = row.kind === "assistant" ? null : parseMaybe(shown);
+      // 像 JSON 但解析失败（上游截断损坏）：至少给等宽块，别让 marked 糊成一段。
+      const brokenJson = !parsed && !row.thinking && /^\s*[{[]/.test(shown) && shown.length > 200;
+      const html = thinkingBlock(row.thinking)
+        + (shown
+          ? (parsed ? jsonView(`${row.id}:body`, parsed)
+            : brokenJson ? `<pre class="blob">${esc(shown)}</pre>`
+            : markdown(shown))
+          : "");
       return html || `<p class="miss">No content</p>`;
     }
     function tokenRows(row) {
@@ -1496,6 +1577,22 @@
     function unifiedDiff(before, after) {
       if (before === after) return `<pre class="blob miss">No prompt change</pre>`;
       return `<pre class="blob diff"><span class="del">- ${esc(before)}</span>\n<span class="add">+ ${esc(after)}</span></pre>`;
+    }
+
+    // 工具 result：能解析成 JSON 就给双视图，否则维持原文 pre。
+    function resultInner(row) {
+      const parsed = parseMaybe(row.result || "");
+      return `<div class="copyable" data-copy="result">${
+        parsed ? jsonView(`${row.id}:result`, parsed) : `<pre class="blob">${esc(row.result)}</pre>`
+      }</div>`;
+    }
+
+    // 同名工具的上一次调用入参 diff；没有前例或两侧 payload 都缺时返回空。
+    function prevCallDiff(row) {
+      const same = current.rows.filter(r => r.kind === "tool" && r.name === row.name && r._seq < row._seq);
+      const prev = same[same.length - 1];
+      if (!prev || !row.payload || !prev.payload) return "";
+      return lineDiff(JSON.stringify(prev.payload, null, 2), JSON.stringify(row.payload, null, 2));
     }
 
     function paintInspector() {
@@ -1582,9 +1679,10 @@
               ${row.note ? `<div><dt>Note</dt><dd>${esc(row.note)}</dd></div>` : ""}
             </dl>
             ${isMarkdown ? section("Preview", "preview", `<div class="copyable" data-copy="preview">${previewBody(row)}</div>`) : ""}
-            ${!isMarkdown && row.payload ? section("Payload", "payload", `<div class="copyable" data-copy="payload"><div class="tree">${jsonTree(row.payload)}</div></div>`) : ""}
-            ${!isMarkdown && row.result ? section("Result", "result", `<div class="copyable" data-copy="result"><pre class="blob">${esc(row.result)}</pre></div>`) : ""}
+            ${!isMarkdown && row.payload ? section("Payload", "payload", `<div class="copyable" data-copy="payload">${jsonView(`${row.id}:payload`, row.payload)}</div>`) : ""}
+            ${!isMarkdown && row.result ? section("Result", "result", resultInner(row)) : ""}
             ${!isMarkdown && toolSchema ? section("Schema", "schema", `<div class="schema-box"><h3>${esc(toolSchema.name)}</h3>${toolSchema.description ? `<p>${esc(toolSchema.description)}</p>` : ""}</div>`) : ""}
+            ${row.kind === "tool" && prevCallDiff(row) ? `<div class="sec"><div class="sec-h">Diff vs previous "${esc(row.name)}" call</div>${prevCallDiff(row)}</div>` : ""}
             ${section(row.kind === "assistant" ? "Request Timing" : "Timing", "timing", `<dl class="kv">
               <div><dt>Started</dt>${startedButton(row.startedAt)}</div>
               <div><dt>Duration</dt><dd>${durLabel(row.durationMs || 0)}</dd></div>
@@ -1592,12 +1690,12 @@
             </dl>`)}`;
         } else if (tab === "payload") {
           body.innerHTML = row.payload
-            ? `<div class="sec"><div class="copyable" data-copy="payload"><div class="tree">${jsonTree(row.payload)}</div></div></div>`
+            ? `<div class="sec"><div class="copyable" data-copy="payload">${jsonView(`${row.id}:payload`, row.payload)}</div></div>`
             : row.payloadText ? `<div class="sec"><div class="copyable" data-copy="preview">${markdown(row.payloadText)}</div></div>`
             : `<div class="sec miss">No payload captured</div>`;
         } else if (tab === "result") {
           body.innerHTML = row.result
-            ? `<div class="sec"><div class="copyable" data-copy="result"><pre class="blob">${esc(row.result)}</pre></div></div>`
+            ? `<div class="sec">${resultInner(row)}</div>`
             : `<div class="sec miss">No result captured</div>`;
         } else if (tab === "schema") {
           const toolSchema = row.schema || (current.toolsIndex && current.toolsIndex[row.name]);
@@ -1626,6 +1724,7 @@
       }
       document.querySelectorAll("#tabs .tab").forEach(btn => btn.addEventListener("click", () => { rememberTab(btn.dataset.tab); paintInspector(); }));
       body.querySelectorAll("[data-open]").forEach(btn => btn.addEventListener("click", () => { rememberTab(btn.dataset.open); paintInspector(); }));
+      body.querySelectorAll("[data-vset]").forEach(btn => btn.addEventListener("click", () => { jsonViewMode[btn.dataset.vset] = btn.dataset.vmode; paintInspector(); }));
       body.querySelectorAll("[data-jump]").forEach(btn => btn.addEventListener("click", () => selectRecord(btn.dataset.jump)));
       body.querySelectorAll("[data-open-req]").forEach(btn => btn.addEventListener("click", () => selectRequest(btn.dataset.openReq)));
       const startedBtn = document.getElementById("startedBtn");
