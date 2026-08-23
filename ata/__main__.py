@@ -54,8 +54,9 @@ def seed_demo(ledger: Ledger):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    # 机器读路径：read/rate 走 CLI 模块，不进 serve/seed 参数解析
-    if argv and argv[0] in {"read", "rate"}:
+    # 机器读路径：read/rate 走 CLI 模块，不进 serve/seed 参数解析；
+    # tasks/run/compare 同理（run/compare 是写或聚合入口，也归 CLI）
+    if argv and argv[0] in {"read", "rate", "tasks", "run", "compare"}:
         from ata.cli import main as cli_main
         return cli_main(argv)
     p = argparse.ArgumentParser()

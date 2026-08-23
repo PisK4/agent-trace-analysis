@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 
@@ -46,6 +47,12 @@ class Ledger:
                 UNIQUE (session_id, seq)
             );
             CREATE INDEX IF NOT EXISTS idx_events_session_seq ON events(session_id, seq);
+            CREATE TABLE IF NOT EXISTS runs (
+                run_id TEXT PRIMARY KEY,
+                description TEXT NOT NULL,
+                taskset_fingerprint TEXT,
+                created_ts INTEGER NOT NULL
+            );
             """
         )
         cols = {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}
@@ -189,3 +196,53 @@ class Ledger:
 
     def close(self):
         self._conn.close()
+
+    # ---- 实验轮次（run）：轮次级事实不属于任何会话，落专用表；
+    # 写入仍只经 Ledger 这一个 writer，与事件追加门同级。
+
+    def create_run(self, run_id: str, description: str,
+                   taskset_fingerprint: str | None = None, ts: int | None = None) -> None:
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "INSERT INTO runs(run_id, description, taskset_fingerprint, created_ts)"
+                    " VALUES (?,?,?,?)",
+                    (run_id, description, taskset_fingerprint,
+                     int(ts if ts is not None else time.time() * 1000)),
+                )
+                self._conn.commit()
+            except sqlite3.IntegrityError:
+                raise ValueError("duplicate run_id") from None
+
+    def run(self, run_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT run_id, description, taskset_fingerprint, created_ts"
+                " FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        return None if row is None else {
+            "run_id": row["run_id"], "description": row["description"],
+            "taskset_fingerprint": row["taskset_fingerprint"],
+            "created_ts": int(row["created_ts"]),
+        }
+
+    def runs(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT run_id, description, taskset_fingerprint, created_ts"
+                " FROM runs ORDER BY created_ts").fetchall()
+        return [{"run_id": r["run_id"], "description": r["description"],
+                 "taskset_fingerprint": r["taskset_fingerprint"],
+                 "created_ts": int(r["created_ts"])} for r in rows]
+
+    def assign_events(self) -> list[dict]:
+        """全部 session.assigned 事件的展平视图：{session_id, seq, ts, run_id, task_id}。"""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, seq, ts, event_json FROM events"
+                " WHERE type='session.assigned' ORDER BY seq").fetchall()
+        out = []
+        for r in rows:
+            payload = json.loads(r["event_json"])["payload"]
+            out.append({"session_id": r["session_id"], "seq": int(r["seq"]),
+                        "ts": int(r["ts"]), **payload})
+        return out

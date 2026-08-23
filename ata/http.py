@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -46,6 +47,22 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
             path = parsed.path
             if path == "/api/health":
                 return self._json(200, {"ok": True})
+            if path == "/api/runs":
+                assigns = ledger.assign_events()
+                out = []
+                for r in ledger.runs():
+                    r["assignment_count"] = sum(
+                        1 for a in assigns if a.get("run_id") == r["run_id"])
+                    out.append(r)
+                return self._json(200, out)
+            if path.startswith("/api/runs/"):
+                rid = path[len("/api/runs/"):]
+                run = ledger.run(rid)
+                if run is None:
+                    return self._json(404, {"ok": False, "error": "unknown run"})
+                run["assignments"] = [
+                    a for a in ledger.assign_events() if a.get("run_id") == rid]
+                return self._json(200, {"ok": True, **run})
             if path == "/api/sessions":
                 return self._json(200, _list_sessions(ledger))
             if path.startswith("/api/sessions/"):
@@ -116,6 +133,16 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 return self._json(400, {"ok": False, "error": str(exc)})
             if parsed.path == "/api/pi-hooks":
                 return self._ingest_pi_hooks(raw)
+            if parsed.path == "/api/runs":
+                if not isinstance(raw, dict) or not (raw.get("description") or "").strip():
+                    return self._json(400, {"ok": False, "error": "description required"})
+                rid = "r-" + uuid.uuid4().hex[:8]
+                try:
+                    ledger.create_run(rid, raw["description"].strip(),
+                                      raw.get("taskset_fingerprint"))
+                except ValueError as exc:
+                    return self._json(400, {"ok": False, "error": str(exc)})
+                return self._json(200, {"ok": True, "run_id": rid})
             if parsed.path != "/api/events":
                 return self._json(404, {"ok": False, "error": "not found"})
             items = raw.get("events") if isinstance(raw, dict) and "events" in raw else [raw]

@@ -205,8 +205,14 @@
     .item .t { grid-column: 1 / -1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
     .item small { color: var(--ink-3); font-size: 11px; font-family: "JetBrains Mono", ui-monospace, monospace; }
     .item small.agent { color: var(--agent, var(--ink-3)); }
-    .score { display: flex; align-items: center; gap: 6px; }
+    .score {
+      display: flex; align-items: center; gap: 4px;
+      padding: 2px 6px 2px 8px; border-radius: 8px;
+      box-shadow: 0 0 0 1px var(--line-strong);
+      flex: none;
+    }
     .score[hidden] { display: none; }
+    .score .label { color: var(--ink-3); font-size: 11px; margin-right: 2px; }
     .score-note {
       width: 150px; padding: 3px 8px; border-radius: 6px;
       background: var(--field); box-shadow: var(--shadow-inset-field);
@@ -230,13 +236,8 @@
     }
     .shell[data-home="true"] .overview,
     .shell[data-home="true"] .ledger,
-    .shell[data-home="true"] .follow,
-    .shell[data-home="true"] .mode-chip,
-    .shell[data-home="true"] #durBtn,
-    .shell[data-home="true"] #timeBtn,
-    .shell[data-home="true"] #turnsBtn,
-    .shell[data-home="true"] #callsBtn,
-    .shell[data-home="true"] #followBtn,
+    .shell[data-home="true"] .follow-toggle,
+    .shell[data-home="true"] #themeBtn,
     .shell[data-home="true"] .search { display: none; }
     .shell[data-home="true"] .home-empty { display: flex; }
     .stage { display: flex; min-width: 0; min-height: 0; flex-direction: column; background: var(--surface); }
@@ -248,9 +249,14 @@
       gap: 6px;
       box-shadow: inset 0 -1px 0 var(--line);
     }
-    .crumb { color: var(--ink-2); font-size: 12px; }
+    .crumb {
+      color: var(--ink-2); font-size: 12px;
+      max-width: 32vw; min-width: 60px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .crumb b { color: var(--ink); font-weight: 500; }
     .grow { flex: 1; }
+    .divider { width: 1px; height: 16px; background: var(--line-strong); flex: none; }
     .ghost {
       display: inline-flex;
       align-items: center;
@@ -263,9 +269,31 @@
     }
     .ghost:hover, .ghost[aria-pressed="true"] { background: var(--hover-2); color: var(--ink); }
     .ghost .ico { font-size: 12px; line-height: 1; }
-    .mode-chip {
-      color: var(--ink-3);
-      font: 10.5px/16px "JetBrains Mono", ui-monospace, monospace;
+    .follow-toggle {
+      display: inline-flex; align-items: center; gap: 5px;
+      height: 24px; padding: 0 9px; border-radius: 999px;
+      color: var(--ink-3); font-size: 11.5px;
+      white-space: nowrap; flex: none;
+    }
+    .follow-toggle .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--ink-3); transition: background .15s;
+    }
+    .follow-toggle[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent-tint); }
+    .follow-toggle[aria-pressed="true"] .dot { background: var(--accent); }
+    .theme-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px; border-radius: 6px;
+      color: var(--ink-3); font-size: 13px; flex: none;
+    }
+    .zone-bar {
+      display: flex; align-items: center; gap: 6px;
+      height: 28px; padding: 0 10px;
+      box-shadow: inset 0 -1px 0 var(--line);
+    }
+    .zone-name {
+      font: 10px/1 "JetBrains Mono", ui-monospace, monospace;
+      letter-spacing: .04em; color: var(--ink-3); margin-right: 2px;
     }
     .search {
       width: 168px;
@@ -296,8 +324,7 @@
       color: var(--ink);
       box-shadow: var(--shadow-btn);
     }
-    .follow { color: var(--ink-3); font-size: 11px; }
-    .follow[data-on="true"] { color: var(--accent-ink); }
+    .zone-bar .ghost { height: 22px; }
 
     .overview { flex: none; border-bottom: 1px solid var(--line); user-select: none; }
     .plot {
@@ -408,7 +435,11 @@
     .tip[data-on="true"] { display: block; }
 
     .ledger { display: flex; flex: 1; min-height: 0; }
-    .table-wrap { flex: 1; min-width: 280px; overflow: auto; }
+    .ledger-main {
+      display: flex; flex-direction: column;
+      flex: 1; min-width: 280px; min-height: 0;
+    }
+    .table-wrap { flex: 1; overflow: auto; }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     th {
       position: sticky; top: 0; z-index: 2;
@@ -663,29 +694,36 @@
     <main class="stage">
       <header class="top">
         <div class="crumb" id="crumb">选择一条会话</div>
-        <span class="follow" id="live" data-on="true">跟随尾部</span>
-        <span class="mode-chip" id="modeChip">sequence</span>
+        <button class="follow-toggle" id="live" type="button" aria-pressed="true"><span class="dot"></span><span class="txt">跟随尾部</span></button>
+        <div class="grow"></div>
         <div class="score" id="scoreBox" hidden>
+          <span class="label">标注</span>
           <span class="score-badge" id="scoreBadge" hidden></span>
           <input class="score-note" id="scoreNote" type="text" placeholder="备注（可选）" maxlength="200" />
           <button class="ghost" type="button" data-score="good">Good</button>
           <button class="ghost" type="button" data-score="bad">Bad</button>
           <button class="ghost" type="button" data-score="partial">Partial</button>
         </div>
-        <div class="grow"></div>
-        <button class="ghost" id="durBtn" aria-pressed="false" title="Use actual duration">Duration</button>
-        <button class="ghost" id="timeBtn" aria-pressed="false" title="Use actual time">Actual time</button>
-        <button class="ghost" id="turnsBtn" aria-pressed="false" title="Collapse turns"><span class="ico">⊟</span>Turns</button>
-        <button class="ghost" id="callsBtn" aria-pressed="false" title="Collapse calls"><span class="ico">⊟</span>Calls</button>
-        <button class="ghost" id="followBtn" aria-pressed="true">跟随</button>
-        <div class="seg" role="group" aria-label="主题">
-          <button type="button" data-theme="dark">Dark</button>
-          <button type="button" data-theme="light" aria-pressed="true">Light</button>
+        <div class="score" id="assignBox" hidden>
+          <span class="label">归组</span>
+          <select id="assignRun"><option value="">选 run…</option></select>
+          <input class="score-note" id="assignTask" type="text" placeholder="任务 id（t-xxxx）" maxlength="40" />
+          <button class="ghost" type="button" id="assignBtn">归入</button>
         </div>
+        <div class="divider"></div>
         <input class="search" id="q" type="search" placeholder="Search" aria-label="Search trajectory" />
+        <button class="theme-btn" id="themeBtn" type="button" title="切换主题" aria-label="切换主题">☾</button>
       </header>
       <div class="home-empty" id="homeEmpty">选择一条会话</div>
       <section class="overview">
+        <div class="zone-bar">
+          <span class="zone-name">Timeline</span>
+          <div class="seg" id="modeSeg" role="group" aria-label="时间轴模式">
+            <button type="button" data-mode="sequence" aria-pressed="true">Sequence</button>
+            <button type="button" data-mode="time" aria-pressed="false">Actual time</button>
+          </div>
+          <button class="ghost" id="durBtn" aria-pressed="false" title="Use actual duration">Duration</button>
+        </div>
         <div class="plot">
           <div class="labels" aria-hidden="true"><span>Input</span><span>Model</span><span>Tools</span></div>
           <div class="track" id="track" tabindex="0" aria-label="Timeline overview; drag horizontally to focus events">
@@ -699,17 +737,24 @@
         </div>
       </section>
       <section class="ledger">
-        <div class="table-wrap" id="scroller">
-          <table>
-            <thead>
-              <tr>
-                <th class="idx">#</th>
-                <th class="evt">Event</th>
-                <th>Content</th>
-              </tr>
-            </thead>
-            <tbody id="rows"></tbody>
-          </table>
+        <div class="ledger-main">
+          <div class="zone-bar">
+            <span class="zone-name">Ledger</span>
+            <button class="ghost" id="turnsBtn" aria-pressed="false" title="Collapse turns"><span class="ico">⊟</span>Turns</button>
+            <button class="ghost" id="callsBtn" aria-pressed="false" title="Collapse calls"><span class="ico">⊟</span>Calls</button>
+          </div>
+          <div class="table-wrap" id="scroller">
+            <table>
+              <thead>
+                <tr>
+                  <th class="idx">#</th>
+                  <th class="evt">Event</th>
+                  <th>Content</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
         </div>
         <aside class="details" id="details">
           <div class="resize" id="resize" role="separator" aria-orientation="vertical" aria-label="Resize event details" tabindex="0" title="Drag to resize. Double-click to reset."></div>
@@ -778,6 +823,23 @@
         scores: page.scores || [],
         toolsIndex: page.tools_index || {}
       };
+    }
+
+    // 归组：run 列表来自 /api/runs（低频变化，进会话页时懒加载一次）
+    let runsLoaded = false;
+    async function ensureRunsLoaded() {
+      if (runsLoaded) return;
+      const box = document.getElementById("assignRun");
+      try {
+        const runs = await fetchJSON("/api/runs");
+        for (const r of runs) {
+          const opt = document.createElement("option");
+          opt.value = r.run_id;
+          opt.textContent = `${r.run_id} · ${r.description}`;
+          box.appendChild(opt);
+        }
+        runsLoaded = true;
+      } catch { /* 服务不可达时保持空下拉，归组按钮会拦 */ }
     }
 
     async function boot() {
@@ -1124,8 +1186,8 @@
 
     function paintOverview() {
       const m = model();
-      const chip = document.getElementById("modeChip");
-      chip.textContent = timelineMode();
+      document.querySelectorAll("#modeSeg [data-mode]").forEach((btn) =>
+        btn.setAttribute("aria-pressed", (actualTime ? "time" : "sequence") === btn.dataset.mode));
       if (!m) return;
       const { domainStart, domainDuration, fullDuration } = domainState(m);
       const left = `${-((domainStart - m.start) / domainDuration) * 100}%`;
@@ -1539,8 +1601,11 @@
 
     function paintScore() {
       const box = document.getElementById("scoreBox");
-      if (!current.id) { box.hidden = true; return; }
+      const assignBox = document.getElementById("assignBox");
+      if (!current.id) { box.hidden = true; assignBox.hidden = true; return; }
       box.hidden = false;
+      assignBox.hidden = false;
+      ensureRunsLoaded();
       const badge = document.getElementById("scoreBadge");
       const list = current.scores || [];
       const latest = list[list.length - 1];
@@ -1834,11 +1899,37 @@
       }
     });
     document.getElementById("close").addEventListener("click", () => { app.dataset.inspect = ""; selected = null; });
-    document.getElementById("followBtn").addEventListener("click", (e) => {
+    document.getElementById("assignBtn").addEventListener("click", async () => {
+      if (!current.id) return;
+      const runId = document.getElementById("assignRun").value;
+      const taskId = document.getElementById("assignTask").value.trim();
+      if (!runId || !taskId) { window.alert("先选 run 并填任务 id（ata tasks list 可查）"); return; }
+      const body = {
+        v: 1, id: crypto.randomUUID().replace(/-/g, ""),
+        agent_id: current.agent, session_id: current.id,
+        ts: Date.now(), type: "session.assigned", turn: null,
+        payload: { run_id: runId, task_id: taskId }
+      };
+      try {
+        const res = await fetch(API + "/api/events", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        if (!res.ok) throw new Error((await res.json()).error || res.status);
+        window.alert(`已归组：${taskId} → ${runId}`);
+      } catch (err) {
+        window.alert("归组写入失败：" + err.message);
+      }
+    });
+    const setFollowUi = (on) => {
+      const el = document.getElementById("live");
+      el.setAttribute("aria-pressed", on);
+      el.querySelector(".txt").textContent = on ? "跟随尾部" : "已暂停跟随";
+    };
+    document.getElementById("live").addEventListener("click", () => {
       follow = !follow;
-      e.currentTarget.setAttribute("aria-pressed", follow);
-      document.getElementById("live").dataset.on = follow;
-      document.getElementById("live").textContent = follow ? "跟随尾部" : "已暂停跟随";
+      setFollowUi(follow);
       if (follow) scroller.scrollTop = scroller.scrollHeight;
     });
     document.getElementById("durBtn").addEventListener("click", (e) => {
@@ -1849,13 +1940,13 @@
       viewport = null;
       paint();
     });
-    document.getElementById("timeBtn").addEventListener("click", (e) => {
-      actualTime = !actualTime;
-      e.currentTarget.setAttribute("aria-pressed", actualTime);
+    document.querySelectorAll("#modeSeg [data-mode]").forEach((btn) => btn.addEventListener("click", () => {
+      if ((actualTime ? "time" : "sequence") === btn.dataset.mode) return;
+      actualTime = btn.dataset.mode === "time";
       range = null;
       viewport = null;
       paint();
-    });
+    }));
     document.getElementById("turnsBtn").addEventListener("click", () => {
       const turns = collapsibleTurns();
       const all = turns.length > 0 && turns.every(turn => collapsedTurns.has(turn));
@@ -1874,9 +1965,7 @@
       const top = scroller.scrollTop;
       if (top < scroller.scrollHeight - scroller.clientHeight - 24) {
         follow = false;
-        document.getElementById("followBtn").setAttribute("aria-pressed", "false");
-        document.getElementById("live").dataset.on = "false";
-        document.getElementById("live").textContent = "已暂停跟随";
+        setFollowUi(false);
       }
       if (!suppressOlder && top <= LOAD_NEAR_TOP && lastScrollTop > LOAD_NEAR_TOP) loadOlder();
       lastScrollTop = top;
@@ -1888,11 +1977,9 @@
         app.dataset.inspect = "";
       }
     });
-    document.querySelectorAll("[data-theme]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        document.documentElement.classList.toggle("dark", btn.dataset.theme === "dark");
-        document.querySelectorAll("[data-theme]").forEach(el => el.setAttribute("aria-pressed", el === btn));
-      });
+    document.getElementById("themeBtn").addEventListener("click", () => {
+      const dark = document.documentElement.classList.toggle("dark");
+      document.getElementById("themeBtn").textContent = dark ? "☀" : "☾";
     });
 
     const clampDetailsWidth = (width, splitWidth) =>

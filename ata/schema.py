@@ -8,6 +8,7 @@ ALLOWED_TYPES = {
     "system.upserted",
     "compaction.boundary",
     "session.scored",
+    "session.assigned",
 }
 ALLOWED_AGENTS = {"pi", "cue", "droid", "claude", "codex"}
 USAGE_KEYS = ("status", "input", "output", "cache_read", "cache_write", "total_tokens", "cost")
@@ -79,6 +80,10 @@ def _check_payload(typ, p):
             raise ValidationError("bad score value")
         if "note" in p and not isinstance(p["note"], str):
             raise ValidationError("score note must be string")
+    if typ == "session.assigned":
+        for key in ("run_id", "task_id"):
+            if not isinstance(p.get(key), str) or not p[key]:
+                raise ValidationError(f"{key} required")
 
 
 def _check_usage(u):
