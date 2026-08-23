@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from ata.plugins.pi import translate_hook
-from ata.project import project_session
+from ata.project import list_compactions, list_tools, project_session, summarize_usage, tail_preview
 from ata.schema import ValidationError, parse_event
 
 
@@ -49,17 +49,47 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
             if path == "/api/sessions":
                 return self._json(200, _list_sessions(ledger))
             if path.startswith("/api/sessions/"):
-                sid = path[len("/api/sessions/"):]
+                rest = path[len("/api/sessions/"):]
+                sid, _, sub = rest.partition("/")
                 qs = parse_qs(parsed.query)
-                limit = int(qs.get("limit", ["80"])[0])
-                before = qs.get("before", [None])[0]
-                before = int(before) if before not in (None, "") else None
                 meta = ledger.session(sid)
                 if meta is None:
                     return self._json(404, {"ok": False, "error": "unknown session"})
-                recs = ledger.read(sid)
-                page = project_session(sid, meta["agent"], recs, tail=limit, before=before)
-                return self._json(200, page)
+                if sub == "":
+                    limit = int(qs.get("limit", ["80"])[0])
+                    before = qs.get("before", [None])[0]
+                    before = int(before) if before not in (None, "") else None
+                    recs = ledger.read(sid)
+                    page = project_session(sid, meta["agent"], recs, tail=limit, before=before)
+                    return self._json(200, page)
+                if sub == "events":
+                    after = int(qs.get("after_seq", ["0"])[0])
+                    limit = min(int(qs.get("limit", ["100"])[0]), 500)
+                    picked = [r for r in ledger.read(sid) if r["seq"] > after][:limit]
+                    nxt = picked[-1]["seq"] if picked else after
+                    return self._json(200, {"ok": True, "events": picked, "next_after_seq": nxt})
+                if sub == "lineage":
+                    return self._json(200, {"ok": True,
+                                            "ancestors": ledger.ancestry(sid),
+                                            "children": ledger.children(sid)})
+                if sub == "usage":
+                    return self._json(200, {"ok": True,
+                                            **summarize_usage(ledger.read(sid))})
+                if sub == "tools":
+                    full = qs.get("full", ["false"])[0] == "true"
+                    rows = list_tools(ledger.read(sid),
+                                      qs.get("status", [None])[0],
+                                      qs.get("name", [None])[0])
+                    for r in rows:
+                        r["result"] = r["result"] if full else tail_preview(r["result"])
+                    return self._json(200, {"ok": True, "tools": rows})
+                if sub == "compactions":
+                    full = qs.get("full", ["false"])[0] == "true"
+                    rows = list_compactions(ledger.read(sid))
+                    for r in rows:
+                        r["summary"] = r["summary"] if full else tail_preview(r["summary"])
+                    return self._json(200, {"ok": True, "compactions": rows})
+                return self._json(404, {"ok": False, "error": "not found"})
             if path in ("/", "/index.html"):
                 target = webroot / "index.html"
                 if not target.exists():
