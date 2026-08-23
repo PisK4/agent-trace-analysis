@@ -11,6 +11,22 @@ from pathlib import Path
 _REAL_TS_FLOOR = 10 ** 12
 
 
+def _dedupe_key(event: dict) -> str | None:
+    """自然键幂等：同实体的多次快照只留最新一行。翻译层对不同阶段发的
+    确定性 event id（:message_start/:message_end/:end）由此收敛；
+    session.opened 的标题纠正同键折叠，与投影层 last-write-wins 一致。
+    无自然键的事件保持追加式。"""
+    typ = event.get("type")
+    payload = event.get("payload") or {}
+    if typ == "message.upserted" and payload.get("message_id"):
+        return f"{typ}:{payload['message_id']}"
+    if typ == "tool.upserted" and payload.get("tool_call_id"):
+        return f"{typ}:{payload['tool_call_id']}"
+    if typ == "session.opened":
+        return f"{typ}:"
+    return None
+
+
 class Ledger:
     def __init__(self, root: Path):
         root = Path(root)
@@ -88,6 +104,36 @@ class Ledger:
         if "parent_session_id" not in {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)")
+        if "dedupe_key" not in {row[1] for row in self._conn.execute("PRAGMA table_info(events)")}:
+            # 存量迁移：补自然键并把同键旧行坍缩为最新一条（已确认不保留快照史），
+            # 再用部分唯一索引约束后续写入。只在新列首次加入时执行一次。
+            self._conn.execute("ALTER TABLE events ADD COLUMN dedupe_key TEXT")
+            self._conn.execute(
+                """
+                UPDATE events SET dedupe_key = CASE
+                    WHEN type='message.upserted'
+                         AND json_extract(event_json,'$.payload.message_id') IS NOT NULL
+                        THEN type || ':' || json_extract(event_json,'$.payload.message_id')
+                    WHEN type='tool.upserted'
+                         AND json_extract(event_json,'$.payload.tool_call_id') IS NOT NULL
+                        THEN type || ':' || json_extract(event_json,'$.payload.tool_call_id')
+                    WHEN type='session.opened' THEN type || ':'
+                    ELSE NULL
+                END
+                """
+            )
+            self._conn.execute(
+                """
+                DELETE FROM events WHERE dedupe_key IS NOT NULL AND seq < (
+                    SELECT MAX(e2.seq) FROM events e2
+                    WHERE e2.session_id = events.session_id
+                      AND e2.dedupe_key = events.dedupe_key)
+                """
+            )
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedupe"
+            " ON events(session_id, dedupe_key) WHERE dedupe_key IS NOT NULL"
+        )
         self._conn.commit()
 
     def append(self, event: dict) -> int:
@@ -140,10 +186,27 @@ class Ledger:
                 "INSERT INTO sessions(session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id) VALUES (?,?,?,?,?,?,?,?)",
                 (sid, event["agent_id"], title, turns, seq, last_ts, first_ts, parent),
             )
-        self._conn.execute(
-            "INSERT INTO events(session_id, event_id, seq, ts, type, turn, event_json) VALUES (?,?,?,?,?,?,?)",
-            (sid, event["id"], seq, event["ts"], event["type"], turn, json.dumps(event, ensure_ascii=False)),
-        )
+        dk = _dedupe_key(event)
+        existed = None
+        if dk:
+            existed = self._conn.execute(
+                "SELECT seq FROM events WHERE session_id=? AND dedupe_key=?",
+                (sid, dk),
+            ).fetchone()
+        if existed:
+            # 同自然键：整行替换为最新快照。seq 用新号保证 read 按 seq 排序时
+            # 最新态排在最后；旧行的 event_id 列保留原值，读方一律以 event_json 为准。
+            self._conn.execute(
+                "UPDATE events SET seq=?, ts=?, turn=?, event_json=? WHERE session_id=? AND dedupe_key=?",
+                (seq, event["ts"], turn, json.dumps(event, ensure_ascii=False), sid, dk),
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO events(session_id, event_id, seq, ts, type, turn, event_json, dedupe_key)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (sid, event["id"], seq, event["ts"], event["type"], turn,
+                 json.dumps(event, ensure_ascii=False), dk),
+            )
         return seq
 
     def read(self, session_id: str) -> list[dict]:
