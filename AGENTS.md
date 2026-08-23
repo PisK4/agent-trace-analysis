@@ -16,7 +16,7 @@
 
 1. `make test` 全量测试通过
 2. `./scripts/install-service.sh restart` 重建常驻服务（旧进程先杀、立即以新代码拉起）
-3. `curl -s http://127.0.0.1:8787/api/health` 确认恢复
+3. `curl -s http://127.0.0.1:17877/api/health` 确认恢复
 
 其他操作：`./scripts/install-service.sh status` 查看状态；`uninstall` 停止并移除常驻；临时用 `make serve` 前台起服务时，先 `uninstall` 避免端口冲突。改 plist 本身（端口/窗口/日志路径）后同样 `restart` 生效。
 
