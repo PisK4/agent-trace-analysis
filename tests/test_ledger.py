@@ -37,6 +37,7 @@ class LedgerTest(unittest.TestCase):
                 "title": "hello",
                 "turns": 0,
                 "last_ts": 10,
+                "parent_session_id": None,
             }])
 
     def test_sessions_ordered_by_latest_event(self):

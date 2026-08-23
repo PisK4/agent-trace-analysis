@@ -59,6 +59,9 @@ class Ledger:
                     (SELECT MAX(ts) FROM events e WHERE e.session_id = sessions.session_id), 0)
                 """
             )
+        if "parent_session_id" not in {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)")
         self._conn.commit()
 
     def append(self, event: dict) -> int:
@@ -77,7 +80,7 @@ class Ledger:
         if found:
             return int(found["seq"])
         row = self._conn.execute(
-            "SELECT last_seq, title, turns, last_ts FROM sessions WHERE session_id=?",
+            "SELECT last_seq, title, turns, last_ts, parent_session_id FROM sessions WHERE session_id=?",
             (sid,),
         ).fetchone()
         seq = (int(row["last_seq"]) if row else 0) + 1
@@ -86,20 +89,23 @@ class Ledger:
         last_ts = int(event["ts"])
         if row:
             last_ts = max(int(row["last_ts"] or 0), last_ts)
+        # 非 opened 事件必须保留已有父引用，否则后续 UPDATE 会把血缘抹成 NULL。
+        parent = row["parent_session_id"] if row else None
         if event["type"] == "session.opened":
             title = event["payload"].get("title") or title
+            parent = event["payload"].get("parent_session")
         turn = event.get("turn")
         if isinstance(turn, int) and turn > turns:
             turns = turn
         if row:
             self._conn.execute(
-                "UPDATE sessions SET agent_id=?, title=?, turns=?, last_seq=?, last_ts=? WHERE session_id=?",
-                (event["agent_id"], title, turns, seq, last_ts, sid),
+                "UPDATE sessions SET agent_id=?, title=?, turns=?, last_seq=?, last_ts=?, parent_session_id=? WHERE session_id=?",
+                (event["agent_id"], title, turns, seq, last_ts, parent, sid),
             )
         else:
             self._conn.execute(
-                "INSERT INTO sessions(session_id, agent_id, title, turns, last_seq, last_ts) VALUES (?,?,?,?,?,?)",
-                (sid, event["agent_id"], title, turns, seq, last_ts),
+                "INSERT INTO sessions(session_id, agent_id, title, turns, last_seq, last_ts, parent_session_id) VALUES (?,?,?,?,?,?,?)",
+                (sid, event["agent_id"], title, turns, seq, last_ts, parent),
             )
         self._conn.execute(
             "INSERT INTO events(session_id, event_id, seq, ts, type, turn, event_json) VALUES (?,?,?,?,?,?,?)",
@@ -120,7 +126,7 @@ class Ledger:
     def session(self, session_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT session_id, agent_id, title, turns, last_ts FROM sessions WHERE session_id=?",
+                "SELECT session_id, agent_id, title, turns, last_ts, parent_session_id FROM sessions WHERE session_id=?",
                 (session_id,),
             ).fetchone()
         return None if row is None else self._session_row(row)
@@ -129,7 +135,7 @@ class Ledger:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT session_id, agent_id, title, turns, last_ts
+                SELECT session_id, agent_id, title, turns, last_ts, parent_session_id
                 FROM sessions
                 ORDER BY last_ts DESC, title
                 """
@@ -144,7 +150,32 @@ class Ledger:
             "title": r["title"],
             "turns": int(r["turns"]),
             "last_ts": int(r["last_ts"] or 0),
+            "parent_session_id": r["parent_session_id"],
         }
+
+    def children(self, session_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, agent_id, title, turns, last_ts, parent_session_id"
+                " FROM sessions WHERE parent_session_id=? ORDER BY last_ts",
+                (session_id,),
+            ).fetchall()
+        return [self._session_row(r) for r in rows]
+
+    def ancestry(self, session_id: str) -> list[dict]:
+        ids: list[str] = []
+        seen = {session_id}
+        cur = session_id
+        while True:
+            row = self.session(cur)
+            parent = (row or {}).get("parent_session_id")
+            if not parent or parent in seen:
+                break
+            seen.add(parent)
+            ids.append(parent)
+            cur = parent
+        # ids 按收集顺序即最近祖先在前，与 children 的就近语义一致。
+        return [self.session(p) for p in ids]
 
     def append_many(self, events: list[dict]) -> None:
         """一批事件一次事务提交；等价的重复 id 仍然返回，不重复写。"""
