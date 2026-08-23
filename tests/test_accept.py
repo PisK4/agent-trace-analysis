@@ -65,7 +65,10 @@ class AcceptTest(unittest.TestCase):
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/") as r:
                     html = r.read().decode()
                 self.assertIn("Atatrace", html)
-                self.assertIn("/api/sessions", html)
+                # UI 逻辑已拆分到 web/js/ 模块：首页必须引用入口模块且可被伺服
+                self.assertIn("js/app.js", html)
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/js/app.js") as r:
+                    self.assertTrue(r.headers["Content-Type"].startswith("text/javascript"))
             finally:
                 httpd.shutdown()
 
