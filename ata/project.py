@@ -281,3 +281,88 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
         "tools_index": tools_index,
         "rows": rows,
     }
+
+
+def tail_preview(text, n=200):
+    if not isinstance(text, str) or len(text) <= n:
+        return text
+    return "…" + text[-n:]
+
+
+def summarize_usage(recs):
+    turn_rows = {}
+    turn_fallback = {}
+    for rec in recs:
+        e = rec["event"]
+        p = e["payload"]
+        if e["type"] == "message.upserted" and p.get("role") == "assistant":
+            t = e.get("turn")
+            u = _usage(p.get("usage"))
+            if t is None or u is None:
+                continue
+            if t not in turn_rows or turn_rows[t]["status"] != "reported":
+                turn_rows[t] = {
+                    "turn": t, "model": p.get("model"), "effort": p.get("effort"),
+                    "status": u["status"], "input": u["input"], "output": u["output"],
+                    "cache_read": u["cacheRead"], "cache_write": u["cacheWrite"],
+                    "total_tokens": u["totalTokens"], "cost": u["cost"],
+                }
+        elif e["type"] == "turn.ended" and e.get("turn") is not None:
+            u = _usage(p.get("usage"))
+            if u is not None:
+                turn_fallback[e["turn"]] = u
+    for t, u in turn_fallback.items():
+        row = turn_rows.setdefault(t, {"turn": t, "model": None, "effort": None})
+        if row.get("status") != "reported":
+            row.update({"status": u["status"], "input": u["input"], "output": u["output"],
+                        "cache_read": u["cacheRead"], "cache_write": u["cacheWrite"],
+                        "total_tokens": u["totalTokens"], "cost": u["cost"]})
+    rows = [turn_rows[t] for t in sorted(turn_rows)]
+    total = {"input": 0, "output": 0, "total_tokens": 0}
+    missing = 0
+    for r in rows:
+        if r.get("status") == "reported":
+            total["input"] += r["input"] or 0
+            total["output"] += r["output"] or 0
+            total["total_tokens"] += r["total_tokens"] or 0
+        else:
+            missing += 1
+    return {"turns": rows, "total": total, "missing_turns": missing}
+
+
+def list_tools(recs, status=None, name=None):
+    latest = {}
+    for rec in recs:
+        e = rec["event"]
+        if e["type"] != "tool.upserted":
+            continue
+        p = e["payload"]
+        cid = p.get("tool_call_id")
+        row = {
+            "id": cid, "turn": e.get("turn"), "name": p.get("name"),
+            "status": p.get("status"), "duration_ms": p.get("duration_ms"),
+            "result": p.get("result"), "started_at": e["ts"],
+        }
+        if latest.get(cid, {}).get("status") == "pending" or cid not in latest:
+            latest[cid] = row
+        else:
+            latest[cid].update(row)
+    rows = [latest[c] for c in sorted(latest, key=lambda c: latest[c]["started_at"])]
+    if status:
+        rows = [r for r in rows if r["status"] == status]
+    if name:
+        rows = [r for r in rows if r["name"] == name]
+    return rows
+
+
+def list_compactions(recs):
+    rows = []
+    for rec in recs:
+        e = rec["event"]
+        if e["type"] != "compaction.boundary":
+            continue
+        p = e["payload"]
+        rows.append({"trigger": p.get("trigger"), "pre_tokens": p.get("pre_tokens"),
+                     "post_tokens": p.get("post_tokens"), "summary": p.get("summary"),
+                     "ts": e["ts"]})
+    return rows
