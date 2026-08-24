@@ -1,38 +1,41 @@
-// ata web · 会话级统计面板：工具调用统计（条带+钻取+跳转）与逐轮 usage 趋势
+// ata web · 会话级统计面板：工具调用统计（徽章+排序表+时间序钻取+跳转）与逐轮 usage 趋势
 
-    const TSTRIP_MAX = 40;          // 超过则压缩为比例条
-    const TDRILL_BATCH = 5;         // 二级列表初始渲染与每次追加条数
+    const TDRILL_BATCH = 5;         // 钻取列表初始渲染与每次追加条数
     let toolStats = { open: false, data: null, expanded: "", shown: {} };
     let sessionUsageData = null;
 
     function resetSessionPanels() {
       toolStats = { open: false, data: null, expanded: "", shown: {} };
       sessionUsageData = null;
-      document.getElementById("tstatBar").hidden = true;
-      document.getElementById("tstatPanel").hidden = true;
+      paintToolStatsBar();
+      document.getElementById("statsPanel").hidden = true;
+      document.getElementById("statBadge").setAttribute("aria-expanded", "false");
       const up = document.getElementById("usagePanel");
       up.hidden = true;
       document.getElementById("usageBtn").setAttribute("aria-pressed", "false");
     }
 
+    // 常驻徽章：统计模块唯一入口，failed 非零时红字永远在场。
     function paintToolStatsBar() {
-      document.getElementById("tstatBar").hidden = !current.id;
+      document.getElementById("statBadge").hidden = !current.id;
       const s = toolStats.data && toolStats.data.summary;
-      const el = document.getElementById("tstatSummary");
-      if (!s) { el.textContent = ""; return; }
-      el.innerHTML = `${s.tools} tools · ${s.calls} calls` +
-        (s.failed ? ` · <b class="bad">${s.failed} failed</b>` : "");
+      const el = document.getElementById("badgeText");
+      if (!s) { el.innerHTML = ""; return; }
+      el.innerHTML = `<b>${s.calls} calls</b>` +
+        (s.failed ? `<span class="fbadge">· ${s.failed} failed</span>` : "");
     }
 
     async function toggleToolStats() {
-      toolStats.open = !toolStats.open;
-      document.getElementById("tstatPanel").hidden = !toolStats.open;
-      document.getElementById("tstatToggle").setAttribute("aria-expanded", String(toolStats.open));
+      const panel = document.getElementById("statsPanel");
+      toolStats.open = panel.hidden;
+      panel.hidden = !toolStats.open;
+      document.getElementById("statBadge").setAttribute("aria-expanded", String(toolStats.open));
       if (toolStats.open) await refreshToolStats();
     }
 
     async function refreshToolStats() {
-      if (!current.id || !toolStats.open) return;
+      // 徽章数字要常驻，打开会话就拉一次；面板未开时秒级轮询不重复拉。
+      if (!current.id) return;
       try {
         toolStats.data = await fetchJSON("/api/sessions/" + encodeURIComponent(current.id) + "/tool-stats");
       } catch { toolStats.data = null; }
@@ -40,51 +43,58 @@
       paintToolStatsBar();
     }
 
-    const sqClass = (status) => status === "completed" ? "ok" : status === "failed" ? "fail" : status === "pending" ? "wait" : "other";
-
-    function stripHTML(calls) {
-      if (calls.length <= TSTRIP_MAX) {
-        return `<span class="sq-strip">` + calls.map(c =>
-          `<i class="sq ${sqClass(c.status)}"></i>`).join("") + `</span>`;
-      }
-      // ponytail: 比例条只分四段纯色，不做逐格压缩；需要更细再改。
-      const n = calls.length;
-      const seg = (st) => {
-        const k = calls.filter(c => sqClass(c.status) === st).length;
-        return k ? `<i class="sqseg ${st}" style="--w:${(k / n * 100).toFixed(2)}%"></i>` : "";
-      };
-      return `<span class="ratio-strip">` +
-        seg("ok") + seg("fail") + seg("wait") + seg("other") + `</span>`;
-    }
+    const sqClass = (status) => status === "completed" ? "ok"
+      : status === "failed" ? "fail" : status === "pending" ? "wait" : "other";
 
     function renderToolStats() {
-      const box = document.getElementById("tstatBody");
       const data = toolStats.data;
+      const sum = data && data.summary;
+      document.getElementById("statSum").textContent =
+        sum ? `${sum.calls} calls · ${sum.failed} failed · ${sum.tools} tools` : "";
+      const urate = document.getElementById("urate");
+      if (!sum) { urate.hidden = true; }
+      else if (sum.mounted) {
+        urate.hidden = false;
+        urate.title = "分母来自 SYSTEM 行的工具目录";
+        urate.innerHTML = `<span class="u-seg">挂载 <b>${sum.mounted}</b></span>` +
+          `<span class="u-seg">已用 <b>${sum.tools}</b></span>` +
+          `<span class="u-seg rate">使用率 <b>${sum.usage_rate}%</b></span>`;
+      } else {
+        // 目录缺失的宿主（Claude / Droid 等）：使用率 n/a，不硬算。
+        urate.hidden = false;
+        urate.title = "本会话没有工具目录记录，无法计算使用率";
+        urate.innerHTML = `<span class="u-seg">已用 <b>${sum.tools}</b></span>` +
+          `<span class="u-seg rate">使用率 <b>n/a</b></span>`;
+      }
+      const box = document.getElementById("distRows");
       if (!data || !data.tools.length) {
-        box.innerHTML = `<p class="miss">No tool calls in this session.</p>`;
+        box.innerHTML = `<p class="miss" style="padding:10px 14px">No tool calls in this session.</p>`;
         return;
       }
-      box.innerHTML = data.tools.map(tool => {
+      // 排序：失败数降序 → 调用数降序；红色数字自己完成分区。
+      const sorted = [...data.tools].sort((a, b) => (b.failed - a.failed) || (b.total - a.total));
+      box.innerHTML = sorted.map(tool => {
         const open = toolStats.expanded === tool.name;
         const shown = toolStats.shown[tool.name] || TDRILL_BATCH;
         const drill = !open ? "" :
+          // calls 按 started_at 升序（后端口径），钻取即时间顺序。
           tool.calls.slice(0, shown).map(c => `
-            <button class="tcall" type="button" data-seq="${c.seq}">
+            <button class="crow" type="button" data-seq="${c.seq}">
               <i class="dot ${sqClass(c.status)}"></i>
-              <span class="tt">${clock(c.ts)}</span>
-              <span class="td">${c.duration_ms != null ? durLabel(c.duration_ms) : "—"}</span>
-              <span class="tx">${esc(compactPreview(c.text)) || '<span class="dim">(no input preview)</span>'}</span>
+              <span class="ct">${clock(c.ts)}</span>
+              <span class="cd">${c.duration_ms != null ? durLabel(c.duration_ms) : "—"}</span>
+              <span class="cx">${esc(compactPreview(c.text)) || '<span class="dim">(no input preview)</span>'}</span>
             </button>`).join("") +
           (tool.calls.length > shown
-            ? `<button class="ghost tmore" type="button" data-tool="${esc(tool.name)}">show more (${tool.calls.length - shown} left)</button>`
+            ? `<button class="more" type="button" data-tool="${esc(tool.name)}">show more (${tool.calls.length - shown} left)</button>`
             : "");
-        return `<div class="trow-wrap">
-          <button class="trow" type="button" data-tool="${esc(tool.name)}" aria-expanded="${open}">
-            <span class="tname">${esc(tool.name)}</span>
-            <span class="tstrip">${stripHTML(tool.calls)}</span>
-            <span class="tnum">${tool.total}${tool.failed ? ` · <b class="bad">${tool.failed} failed</b>` : ""}</span>
+        return `<div class="drow-wrap">
+          <button class="drow" type="button" data-tool="${esc(tool.name)}" aria-expanded="${open}">
+            <span class="dname" title="${esc(tool.name)}">${esc(tool.name)}</span>
+            <span class="dnum">${tool.total}</span>
+            <span class="dnum ${tool.failed ? "bad" : "mute"}">${tool.failed || ""}</span>
           </button>
-          <div class="tdrill">${drill}</div>
+          <div class="drill" ${open ? "" : "hidden"}>${drill}</div>
         </div>`;
       }).join("");
     }

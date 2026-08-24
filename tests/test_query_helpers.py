@@ -85,19 +85,31 @@ class TestSummarizeTools(unittest.TestCase):
 
     def test_counts_dedup_order_and_summary(self):
         out = summarize_tools(self._recs())
-        self.assertEqual(out["summary"], {"tools": 2, "calls": 3, "failed": 1})
+        self.assertEqual(out["summary"], {"tools": 2, "calls": 3, "failed": 1,
+                                          "mounted": None, "usage_rate": None})
         bash, read = out["tools"]
         self.assertEqual(bash["name"], "Bash")  # 按首次出现排序
         self.assertEqual(bash["total"], 1)      # pending+failed 去重为一次
         self.assertEqual(bash["failed"], 1)
         self.assertEqual(read["total"], 2)
         self.assertEqual([c["seq"] for c in read["calls"]], [3, 4])  # 保序
-        # 跳转锚点与入参预览字段在调用序列里
-        self.assertEqual(set(out["tools"][0]["calls"][0]), {"seq", "ts", "status", "duration_ms"})
+        # 跳转锚点、时间与入参预览字段在调用序列里
+        self.assertEqual(set(out["tools"][0]["calls"][0]),
+                         {"seq", "ts", "status", "duration_ms", "text"})
+
+    def test_usage_rate_from_catalog(self):
+        recs = self._recs() + [
+            ev(9, "system.upserted", None, {"prompt_text": "p", "tools_catalog": [
+                {"name": "Bash"}, {"name": "Read"}, {"name": "Grep"}, {"name": "WebFetch"}]}),
+        ]
+        out = summarize_tools(recs)
+        self.assertEqual(out["summary"]["mounted"], 4)
+        self.assertEqual(out["summary"]["usage_rate"], 50)  # 已用 2 / 挂载 4
 
     def test_empty_session(self):
         self.assertEqual(summarize_tools([]),
-                         {"tools": [], "summary": {"tools": 0, "calls": 0, "failed": 0}})
+                         {"tools": [], "summary": {"tools": 0, "calls": 0, "failed": 0,
+                                                   "mounted": None, "usage_rate": None}})
 
 
 if __name__ == "__main__":

@@ -376,7 +376,19 @@ def list_tools(recs, status=None, name=None):
 
 
 def summarize_tools(recs):
-    """会话级工具调用统计：按工具名分组计数，附保序调用序列供条带渲染。"""
+    """会话级工具调用统计：按工具名分组计数，附保序调用序列供表格钻取。
+
+    使用率的分母取 system.upserted 的 tools_catalog 去重名字数（与投影层
+    tools_index 同口径）；会话没有目录时 mounted/usage_rate 为 None，不硬算。
+    """
+    catalog = {}
+    for rec in recs:
+        e = rec["event"]
+        if e["type"] != "system.upserted":
+            continue
+        for tool in e["payload"].get("tools_catalog") or []:
+            if isinstance(tool, dict) and tool.get("name"):
+                catalog[str(tool["name"])] = tool
     tools = {}
     order = []
     for row in list_tools(recs):
@@ -387,12 +399,16 @@ def summarize_tools(recs):
         g["total"] += 1
         g["failed"] += 1 if row["status"] == "failed" else 0
         g["calls"].append({"seq": row["seq"], "ts": row["started_at"],
-                           "status": row["status"], "duration_ms": row["duration_ms"]})
+                           "status": row["status"], "duration_ms": row["duration_ms"],
+                           "text": row["text"]})
     ordered = [tools[n] for n in order]
     calls = sum(g["total"] for g in ordered)
     failed = sum(g["failed"] for g in ordered)
+    mounted = len(catalog) or None
+    usage_rate = min(100, round(len(ordered) / mounted * 100)) if mounted else None
     return {"tools": ordered,
-            "summary": {"tools": len(ordered), "calls": calls, "failed": failed}}
+            "summary": {"tools": len(ordered), "calls": calls, "failed": failed,
+                        "mounted": mounted, "usage_rate": usage_rate}}
 
 
 def list_compactions(recs):

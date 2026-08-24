@@ -389,6 +389,13 @@
         var(--assistant) 100%);
     }
     .span.tool, .span.subtool { background: var(--orange); opacity: 1; }
+    /* 失败强化：加高、红底斜纹描边，滚动时自然入眼（统计徽章的泳道半边） */
+    .span.tool[data-error="true"] {
+      top: calc(var(--lane) * 14px - 3px); height: 14px; opacity: 1; z-index: 2;
+      background: var(--red);
+      background-image: repeating-linear-gradient(-45deg, transparent 0 3px, #ffffff55 3px 5px);
+      box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 3px var(--red);
+    }
     .span.compacted { background: var(--ink-3); }
     .span.system { background: var(--ink-3); opacity: .78; }
     .span[data-error="true"] { background: var(--red); opacity: 1; }
@@ -699,55 +706,80 @@
       * { transition: none !important; animation: none !important; }
     }
 
-    /* ── 会话统计面板（stats.js）：工具条带、二级钻取、逐轮 usage 趋势 ── */
-    .tstat-bar { padding: 2px 8px; border-top: 1px solid var(--line); display: flex; }
-    .tstat-bar .ico { display: inline-block; transition: transform .12s; margin-right: 4px; }
-    .tstat-bar .ghost[aria-expanded="true"] .ico { transform: rotate(90deg); }
-    .tstat-summary { margin-left: 6px; color: var(--ink-3); font-size: 11px; }
-    .bad { color: var(--red); font-style: normal; }
-    .dim { color: var(--ink-3); }
+    /* ── 会话统计面板：常驻徽章 + 弹出表格 + 时间序钻取 + usage 趋势 ── */
+    .stat-badge {
+      display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 10px;
+      border-radius: 999px; background: var(--surface); box-shadow: var(--shadow-btn);
+      font-size: 11px; color: var(--ink-2); cursor: pointer;
+    }
+    .stat-badge:hover { box-shadow: 0 0 0 1px var(--accent), var(--shadow-btn); }
+    .stat-badge[hidden] { display: none; }
+    .stat-badge b { font-family: "JetBrains Mono", ui-monospace, monospace; font-weight: 500; color: var(--ink); }
+    .stat-badge .fbadge { color: var(--red); font-weight: 600; }
+    .stat-badge[aria-expanded="true"] { box-shadow: 0 0 0 1.5px var(--accent); }
 
-    .tstat-panel {
-      max-height: 200px; overflow: auto;
-      border-top: 1px solid var(--line);
-      background: var(--inset);
-      padding: 6px 10px;
+    .panel-wrap { position: relative; }
+    .stats-panel {
+      position: absolute; z-index: 30; left: 12px; right: 12px; top: -6px;
+      background: var(--surface); border-radius: 10px;
+      box-shadow: 0 0 0 1px var(--line-strong), 0 12px 32px #10182822;
+      overflow: hidden;
     }
-    .trow-wrap { border-bottom: 1px solid var(--line); }
-    .trow-wrap:last-child { border-bottom: 0; }
-    .trow {
-      display: flex; align-items: center; gap: 10px; width: 100%;
-      padding: 3px 2px; text-align: left; cursor: pointer;
-      background: none; color: var(--ink); font-size: 12px;
-    }
-    .trow:hover { background: var(--hover); }
-    .tname { min-width: 140px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; }
-    .tstrip { flex: 1; min-width: 0; }
-    .sq-strip, .ratio-strip { display: inline-flex; gap: 2px; align-items: center; width: 100%; }
-    .sq, .sqseg { display: inline-block; height: 9px; border-radius: 2px; background: var(--ink-3); }
-    .sq { width: 9px; }
-    .sq.ok, .sqseg.ok { background: var(--green); }
-    .sq.fail, .sqseg.fail { background: var(--red); }
-    .sq.wait, .sqseg.wait { background: var(--orange); }
-    .ratio-strip { height: 9px; }
-    .sqseg { height: 100%; width: var(--w); min-width: 1px; }
-    .tnum { white-space: nowrap; color: var(--ink-2); font-size: 11px; }
+    .sp-head { display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+               border-bottom: 1px solid var(--line); }
+    .sp-head b { font-size: 12px; }
+    .sp-head .sum { color: var(--ink-3); font-size: 11px; font-family: "JetBrains Mono", ui-monospace, monospace; }
+    .sp-close { color: var(--ink-3); font-size: 15px; padding: 0 4px; margin-left: auto; }
+    .sp-close:hover { color: var(--ink); }
 
-    .tdrill { padding: 0 0 4px 14px; display: flex; flex-direction: column; gap: 1px; }
-    .tcall {
-      display: flex; align-items: center; gap: 8px;
-      padding: 2px 6px; border-radius: 5px; cursor: pointer;
-      background: none; border: 0; color: var(--ink-2); font-size: 11px; text-align: left;
-    }
-    .tcall:hover { background: var(--hover-2); color: var(--ink); }
+    /* 工具使用率：三段小字，放标题右侧；目录缺失时使用率 n/a */
+    .urate { display: inline-flex; align-items: center; gap: 10px; margin-left: 14px;
+             font-size: 11px; color: var(--ink-3); }
+    .urate b { font-family: "JetBrains Mono", ui-monospace, monospace; font-weight: 500; color: var(--ink); }
+    .urate .rate b { color: var(--accent-ink); }
+
+    .sp-body { max-height: 300px; overflow: auto; padding: 6px 0; }
+    .hint { padding: 8px 14px 10px; font-size: 10px; color: var(--ink-3); border-top: 1px solid var(--line); }
+
+    /* 分布表：失败降序 → 调用降序，红色数字自己完成分区 */
+    .dtable { width: 100%; }
+    .dhead { display: flex; align-items: center; gap: 18px; padding: 6px 14px 3px;
+             font: 10px/1 "JetBrains Mono", ui-monospace, monospace; letter-spacing: .05em;
+             color: var(--ink-3); border-bottom: 1px solid var(--line); }
+    .dhead .h-tool { width: 180px; }
+    .dhead .h-n { width: 44px; text-align: right; }
+    .drow-wrap { border-bottom: 1px solid var(--line); }
+    .drow-wrap:last-child { border-bottom: 0; }
+    .drow { display: flex; align-items: center; gap: 18px; width: 100%; text-align: left;
+            padding: 4px 14px; font-size: 12px; cursor: pointer;
+            background: none; color: var(--ink); }
+    .drow:hover { background: var(--hover); }
+    .drow[aria-expanded="true"] { background: var(--inset); }
+    .dname { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px;
+             width: 180px; flex: none; overflow: hidden; text-overflow: ellipsis;
+             white-space: nowrap; }
+    .dnum { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px;
+            color: var(--ink-2); width: 44px; text-align: right; flex: none; }
+    .dnum.bad { color: var(--red); font-weight: 600; }
+    .dnum.mute { color: var(--ink-3); }
+
+    /* 钻取：单工具的调用序列，按时间顺序，红点行含错误预览 */
+    .drill { background: var(--inset); padding: 2px 0 6px 26px;
+             display: flex; flex-direction: column; gap: 1px; }
+    .drill[hidden] { display: none; }
+    .crow { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+            padding: 3px 14px 3px 0; border-radius: 5px; cursor: pointer;
+            background: none; border: 0; color: var(--ink-2); font-size: 11px; }
+    .crow:hover { background: var(--hover-2); color: var(--ink); }
     .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ink-3); }
     .dot.ok { background: var(--green); }
     .dot.fail { background: var(--red); }
     .dot.wait { background: var(--orange); }
-    .tt { font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--ink-3); flex: none; }
-    .td { min-width: 56px; text-align: right; flex: none; }
-    .tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .tmore { align-self: flex-start; }
+    .ct { font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--ink-3); flex: none; }
+    .cd { min-width: 56px; text-align: right; flex: none;
+          font-family: "JetBrains Mono", ui-monospace, monospace; }
+    .cx { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .more { margin: 4px 0 0 14px; font-size: 11px; color: var(--accent-ink); align-self: flex-start; }
 
     .usage-panel {
       border-top: 1px solid var(--line);

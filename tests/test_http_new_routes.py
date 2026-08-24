@@ -85,7 +85,9 @@ class TestRoutes(unittest.TestCase):
         self.assertEqual(out["tools"][0]["result"], "EACCES")
         code, out = self.get("/api/sessions/conv/tool-stats")
         self.assertEqual(code, 200)
-        self.assertEqual(out["summary"], {"tools": 1, "calls": 1, "failed": 1})
+        self.assertEqual(out["summary"]["calls"], 1)
+        self.assertEqual(out["summary"]["failed"], 1)
+        self.assertEqual(out["summary"]["mounted"], None)  # 会话无目录，使用率 n/a
         self.assertEqual(out["tools"][0]["name"], "read")
         self.assertEqual(out["tools"][0]["calls"][0]["status"], "failed")
         code, out = self.get("/api/sessions/nope/tool-stats")

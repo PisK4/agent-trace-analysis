@@ -110,6 +110,7 @@
       app.dataset.home = "";
       paintSessions();
       paint();
+      refreshToolStats();
       requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
     }
 
@@ -245,22 +246,23 @@
       syncFilterChips();
       paint();
     });
-    document.getElementById("tstatToggle").addEventListener("click", () => toggleToolStats());
+    document.getElementById("statBadge").addEventListener("click", () => toggleToolStats());
+    document.getElementById("statClose").addEventListener("click", () => toggleToolStats());
     document.getElementById("usageBtn").addEventListener("click", () => toggleUsagePanel());
-    document.getElementById("tstatPanel").addEventListener("click", async (event) => {
-      const more = event.target.closest(".tmore");
+    document.getElementById("statsPanel").addEventListener("click", async (event) => {
+      const more = event.target.closest(".more");
       if (more) {
         toolStats.shown[more.dataset.tool] = (toolStats.shown[more.dataset.tool] || TDRILL_BATCH) + TDRILL_BATCH;
         renderToolStats();
         return;
       }
-      const head = event.target.closest(".trow");
+      const head = event.target.closest(".drow");
       if (head) {
         toolStats.expanded = toolStats.expanded === head.dataset.tool ? "" : head.dataset.tool;
         renderToolStats();
         return;
       }
-      const call = event.target.closest(".tcall");
+      const call = event.target.closest(".crow");
       if (call) await jumpToSeq(call.dataset.seq);
     });
     let lastScrollTop = 0;

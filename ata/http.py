@@ -32,6 +32,8 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Access-Control-Allow-Origin", "*")
+            # 本地开发工具，前端文件改动频繁；禁缓存避免浏览器吃旧页面。
+            self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(body)
 
