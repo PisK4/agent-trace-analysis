@@ -87,6 +87,9 @@
     }
     html:not(.dark) { color-scheme: light; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* 显式 display 的类（.ghost 等）会盖过 hidden 的 UA 样式：全局兜底，
+       不再逐类补 [hidden]（.pop/.stat-badge 等历史补丁保留无害） */
+    [hidden] { display: none !important; }
     html, body { height: 100%; }
     body {
       background: var(--page);
