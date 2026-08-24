@@ -364,12 +364,14 @@ def _turn_row(seq, agent, turn, model, effort, u):
 
 def summarize_usage(recs):
     rows, _, _ = _usage_turns(recs)
-    total = {"input": 0, "output": 0, "total_tokens": 0}
+    total = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total_tokens": 0}
     missing = 0
     for r in rows:
         if r.get("status") == "reported":
             total["input"] += r["input"] or 0
             total["output"] += r["output"] or 0
+            total["cache_read"] += r["cache_read"] or 0
+            total["cache_write"] += r["cache_write"] or 0
             total["total_tokens"] += r["total_tokens"] or 0
         else:
             missing += 1

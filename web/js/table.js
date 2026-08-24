@@ -62,10 +62,14 @@
           ? `<span class="turn-chip">${row.turn < 0 ? "T…" : `T${row.turn}`}</span>`
           : "";
         const content = rowContent(row);
+        // assistant 行尾挂 usage 迷你条（sub2API 式）：只有真实上报（reported/estimated）
+        // 才渲染；missing 行全是破折号，是噪音。明细悬停经全局 #tip 展开。
+        const hasUsage = row.usage && (row.usage.status === "reported" || row.usage.status === "estimated");
+        const usageHtml = row.kind === "assistant" && hasUsage ? usageStrip(row.usage, true) : "";
         parts.push(`<tr data-id="${row.id}" data-selected="${selectedRow}" data-focus="${out ? "out" : "in"}" data-error="${row.status === "failed" || row.status === "cancelled"}" data-pending="${row.status === "pending"}" ${row.start ? 'data-turn-start="true"' : ""} class="${row.kind === "subtool" ? "subtool" : ""}">
           <td class="idx">${idx}${turn}</td>
           <td class="evt">${req}<span class="kind ${row.kind}">${esc(row.tag)}</span></td>
-          <td class="content ${row.kind === "tool" || row.kind === "subtool" ? "mono" : ""}">${esc(content)}</td>
+          <td class="content ${row.kind === "tool" || row.kind === "subtool" ? "mono" : ""}">${esc(content)}${usageHtml}</td>
         </tr>`);
       }
       if (pack.virtual && pack.bottom) parts.push(`<tr class="spacer"><td colspan="3" style="--h:${pack.bottom}px;height:${pack.bottom}px"></td></tr>`);
@@ -96,6 +100,26 @@
       if (loadBtn) loadBtn.addEventListener("click", () => loadOlder());
       paintFoldButtons();
     }
+
+    // 行内 usage 迷你条的悬停明细：走全局 #tip（fixed 定位），不被 .table-wrap 的 overflow 裁剪。
+    // 事件委托挂在 tbody 上，重绘不丢；离开迷你条即收起，不影响 timeline 自己的 tip 用法。
+    tbody.addEventListener("mousemove", (event) => {
+      const strip = event.target.closest?.(".row-usage");
+      if (!strip) {
+        if (tip.dataset.usage === "true") { tip.dataset.on = "false"; tip.dataset.usage = "false"; }
+        return;
+      }
+      const row = byId(strip.closest("tr")?.dataset.id);
+      if (!row || !row.usage) return;
+      tip.innerHTML = usageCells(row.usage);
+      tip.dataset.usage = "true";
+      tip.dataset.on = "true";
+      tip.style.left = Math.min(window.innerWidth - 300, event.clientX + 14) + "px";
+      tip.style.top = Math.min(window.innerHeight - 230, event.clientY + 16) + "px";
+    });
+    tbody.addEventListener("mouseleave", () => {
+      if (tip.dataset.usage === "true") { tip.dataset.on = "false"; tip.dataset.usage = "false"; }
+    });
 
     function paintFoldButtons() {
       const turns = collapsibleTurns();

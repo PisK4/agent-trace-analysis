@@ -444,13 +444,13 @@
     .tip {
       position: fixed; z-index: 20;
       display: none;
-      max-width: 280px;
+      max-width: 300px;
       padding: 8px 10px;
       border-radius: 6px;
-      background: var(--tooltip);
-      color: #F4F5F6;
+      background: var(--surface);
+      color: var(--ink);
       font: 11px/16px "JetBrains Mono", ui-monospace, monospace;
-      box-shadow: 0 8px 24px #0006;
+      box-shadow: var(--shadow-overlay), 0 8px 24px #00000026;
       pointer-events: none;
       white-space: pre-line;
     }
@@ -819,6 +819,11 @@
                   width: 100%; padding: 8px; border-radius: 8px; margin-top: 4px;
                   background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 6px 18px #10182822; }
     .ustrip-wrap:hover .ustrip-pop { display: block; }
+    /* Ledger assistant 行尾的 usage 迷你条：同一条 .ustrip 压成单行行尾形态，明细走全局 #tip */
+    .row-usage { float: right; margin-left: 12px; }
+    .row-usage .ustrip { gap: 8px; padding: 0; background: none; font-size: 11px; }
+    .row-usage .us-info { color: var(--ink-3); font-size: 10px; cursor: help; }
+    .tip .usage-grid { white-space: normal; }
 
     /* ── 会话统计面板：常驻徽章 + 弹出表格 + 时间序钻取 + usage 趋势 ── */
     .stat-badge {

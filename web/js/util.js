@@ -310,20 +310,24 @@
         ${cell("Cost", fmtCost(usage.cost), st(usage.cost))}
       </div>`;
     }
-    // sub2API 式紧凑条：↓输入 ↑输出 · 缓存徽标 · 成本，悬停展开六字段明细。
+    // sub2API 式紧凑条：↓输入 ↑输出 · 缓存读写徽标 · 成本，悬停展开六字段明细。
+    // 缓存/cost 为 0 或缺失时不上条；Missing 只在明细弹层标注。
     // cost 只在上报时显示，不查价目表补算（Droid 等方言恒缺，如实标 Missing）。
-    function usageStrip(usage) {
+    // inline=true 用于 Ledger 行内：不带弹层（明细走全局 #tip），加 ⓘ 提示可悬停。
+    function usageStrip(usage, inline = false) {
       if (!usage || usage.status === "n/a") return `<p class="miss">No usage reported</p>`;
-      const seg = (label, value, cls) => value == null
-        ? `<span class="us-seg ${cls || ""} miss">${label} —</span>`
-        : `<span class="us-seg ${cls || ""}" title="${label}">${label} <b>${value}</b></span>`;
       const est = usage.status === "estimated" ? ` <span class="us-est" title="estimated，非实测">est</span>` : "";
-      return `<div class="ustrip-wrap"><div class="ustrip ${usage.status === "reported" ? "" : "us-dim"}">
+      const strip = `<div class="ustrip ${usage.status === "reported" ? "" : "us-dim"}">
           <span class="us-seg us-in" title="Input tokens">↓ <b>${fmtNum(usage.input) ?? "—"}</b></span>
           <span class="us-seg us-out" title="Output tokens">↑ <b>${fmtNum(usage.output) ?? "—"}</b></span>
-          ${usage.cacheRead != null ? `<span class="us-seg us-cache" title="Cache read tokens">⛁ <b>${fmtNum(usage.cacheRead)}</b></span>` : ""}
-          ${usage.cost != null ? `<span class="us-seg us-cost" title="Cost">$${fmtCost(usage.cost)}</span>` : `<span class="us-seg us-cost miss">cost missing</span>`}
-        </div>${est}<div class="ustrip-pop">${usageCells(usage)}</div></div>`;
+          ${usage.cacheRead ? `<span class="us-seg us-cache" title="Cache read tokens">⛁ <b>${fmtNum(usage.cacheRead)}</b></span>` : ""}
+          ${usage.cacheWrite ? `<span class="us-seg us-cache" title="Cache write tokens">⛁+ <b>${fmtNum(usage.cacheWrite)}</b></span>` : ""}
+          ${usage.cost ? `<span class="us-seg us-cost" title="Cost">$${fmtCost(usage.cost)}</span>` : ""}
+          ${inline ? `<span class="us-info" title="悬停看明细">ⓘ</span>` : ""}
+        </div>`;
+      return inline
+        ? `<span class="row-usage">${strip}${est}</span>`
+        : `<div class="ustrip-wrap">${strip}${est}<div class="ustrip-pop">${usageCells(usage)}</div></div>`;
     }
     function sessionUsage() {
       // Session cumulative：按已加载窗口内所有 reported 的 assistant 行累计

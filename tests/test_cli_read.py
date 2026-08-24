@@ -24,7 +24,7 @@ class TestCliRead(unittest.TestCase):
 
     def test_usage_local_mode_shape(self):
         out = self.run_cli("usage", "s1")
-        self.assertEqual(out["total"], {"input": 0, "output": 0, "total_tokens": 0})
+        self.assertEqual(out["total"], {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total_tokens": 0})
 
 
 if __name__ == "__main__":

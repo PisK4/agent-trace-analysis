@@ -125,6 +125,7 @@
       const total = d.total || {};
       document.getElementById("usageSum").textContent =
         `Σ ${fmtK(total.total_tokens || 0)} tok · in ${fmtK(total.input || 0)} · out ${fmtK(total.output || 0)}` +
+        ` · cache R ${fmtK(total.cache_read || 0)} · W ${fmtK(total.cache_write || 0)}` +
         (d.missing_turns ? ` · ${d.missing_turns} 轮缺` : "");
 
       const wrap = document.getElementById("usageFindingsWrap");
@@ -152,6 +153,7 @@
         tip.innerHTML = `<b>第 ${t.turn} 轮 · ${esc(t.status)}</b>` +
           `<div>context ${fmtNum(t.context)} · 输入 ${fmtNum(t.input)} · 输出 ${fmtNum(t.output)}</div>` +
           `<div>缓存读取 ${fmtNum(t.cache_read)} · 命中 ${rate}</div>` +
+          (t.cache_write != null ? `<div>缓存写入 ${fmtNum(t.cache_write)}</div>` : "") +
           `<div>总 ${fmtNum(t.total_tokens)} tok${t.cost != null ? ` · $${fmtCost(t.cost)}` : ""}</div>` +
           (susp[t.turn] ? `<div class="uc-tip-bad">${URULE_LABEL[susp[t.turn]] || susp[t.turn]}</div>` : "");
         const px = Math.min(Math.max(x(turn) / W * rect.width, 70), rect.width - 70);
