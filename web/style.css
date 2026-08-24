@@ -202,6 +202,8 @@
       flex: none;
     }
     .score[hidden] { display: none; }
+    /* run 下拉选项可能很长，不设上限会把 header 撑爆、标题挤没 */
+    .score select { max-width: 120px; }
     .score .label { color: var(--ink-3); font-size: 11px; margin-right: 2px; }
     .score-note {
       width: 150px; padding: 3px 8px; border-radius: 6px;
@@ -241,6 +243,9 @@
     }
     .crumb {
       color: var(--ink-2); font-size: 12px;
+      /* 吃掉左侧剩余空间：右侧控件组保持贴右，标题尽量露出。
+         grow 系数压过 header 里 .grow 占位，空闲宽度优先给标题 */
+      flex: 999 1 auto;
       max-width: 32vw; min-width: 60px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
