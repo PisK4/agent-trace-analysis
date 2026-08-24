@@ -345,10 +345,11 @@ def _usage_turns(recs):
 
 
 def _context_of(agent, u):
-    base = u["input"] or 0
-    if agent == "claude":
-        return base + (u["cacheRead"] or 0) + (u["cacheWrite"] or 0)
-    return base
+    # claude/pi/cue 的 input 与 cache 分列（Anthropic 语义），上下文要加回缓存；
+    # codex 的 input_tokens 本身含 cached（OpenAI 语义），直接用。
+    if agent in {"claude", "pi", "cue"}:
+        return (u["input"] or 0) + (u["cacheRead"] or 0) + (u["cacheWrite"] or 0)
+    return u["input"] or 0
 
 
 def _turn_row(seq, agent, turn, model, effort, u):

@@ -776,7 +776,12 @@
     .uc-svg .uc-lab { fill: var(--ink-3); font: 9.5px Inter, sans-serif; }
     .uc-svg .uc-area { fill: color-mix(in srgb, var(--accent) 12%, transparent); }
     .uc-svg .uc-line { fill: none; stroke: var(--accent-ink); stroke-width: 1.6; }
-    .uc-svg .uc-hit { fill: none; stroke: var(--violet, #ae9bf7); stroke-width: 1.4; stroke-dasharray: 3 2; }
+    .uc-svg .uc-hit { fill: none; stroke: var(--violet, #ae9bf7); stroke-width: 1.4; }
+    .uc-svg .uc-hitmin { fill: var(--violet, #ae9bf7); }
+    .uc-svg .uc-anno { fill: var(--ink-2); font: 9.5px Inter, sans-serif; paint-order: stroke;
+                       stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
+    .uc-svg .uc-drop { fill: var(--red); font: 9.5px "JetBrains Mono", ui-monospace, monospace;
+                       paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
     .uc-svg .uc-comp { stroke: var(--red); stroke-width: 1; stroke-dasharray: 2 2; opacity: .7; }
     .uc-svg .uc-dot { fill: var(--red); cursor: pointer; }
     .uc-svg .uc-dot:hover { r: 6; }
