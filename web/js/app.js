@@ -19,20 +19,30 @@
       showHome();
     }
     function paintScore() {
-      const box = document.getElementById("scoreBox");
-      const assignBox = document.getElementById("assignBox");
-      if (!current.id) { box.hidden = true; assignBox.hidden = true; return; }
-      box.hidden = false;
-      assignBox.hidden = false;
+      // 标注/归组收成 Badge：这里只更新徽章可见性与状态文字，弹出面板由 bindPopover 管理。
+      const annoBtn = document.getElementById("scoreBadgeBtn");
+      const assignBtn = document.getElementById("assignBadgeBtn");
+      const annoPop = document.getElementById("scoreBox");
+      const assignPop = document.getElementById("assignBox");
+      if (!current.id) {
+        annoBtn.hidden = true; assignBtn.hidden = true;
+        annoPop.hidden = true; assignPop.hidden = true;
+        return;
+      }
+      annoBtn.hidden = false; assignBtn.hidden = false;
       ensureRunsLoaded();
-      const badge = document.getElementById("scoreBadge");
+      const txt = document.getElementById("annoBadgeText");
+      const dot = document.getElementById("scoreDot");
       const list = current.scores || [];
       const latest = list[list.length - 1];
-      badge.hidden = !latest;
       if (latest) {
-        badge.dataset.value = latest.value;
-        badge.textContent = latest.value + (latest.note ? ` · ${latest.note}` : "");
-        badge.title = `${list.length} 条标注${latest.note ? ` · 最近：${latest.note}` : ""}`;
+        dot.dataset.v = latest.value;
+        txt.textContent = latest.value + (latest.note ? ` · ${latest.note}` : "");
+        annoBtn.title = `${list.length} 条标注${latest.note ? ` · 最近：${latest.note}` : ""}`;
+      } else {
+        delete dot.dataset.v;
+        txt.textContent = "未标注";
+        annoBtn.title = "尚未标注";
       }
     }
 
@@ -136,6 +146,31 @@
       paint();
     });
     document.getElementById("homeBtn").addEventListener("click", showHome);
+    // 统一弹层管理（标注 / 归组 / 视图菜单）：点击徽章切换展开，点击外部收起。
+    function bindPopover(btnId, panelId) {
+      const btn = document.getElementById(btnId), panel = document.getElementById(panelId);
+      if (!btn || !panel) return;
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const open = panel.hidden;
+        panel.hidden = !open;
+        btn.setAttribute("aria-expanded", String(open));
+      });
+    }
+    document.addEventListener("click", (e) => {
+      [["scoreBadgeBtn", "scoreBox"], ["assignBadgeBtn", "assignBox"], ["viewMenuBtn", "viewMenu"]]
+        .forEach(([btnId, panelId]) => {
+          const btn = document.getElementById(btnId), panel = document.getElementById(panelId);
+          if (!btn || !panel || panel.hidden) return;
+          if (!panel.contains(e.target) && !btn.contains(e.target)) {
+            panel.hidden = true;
+            btn.setAttribute("aria-expanded", "false");
+          }
+        });
+    });
+    bindPopover("scoreBadgeBtn", "scoreBox");
+    bindPopover("assignBadgeBtn", "assignBox");
+    bindPopover("viewMenuBtn", "viewMenu");
     document.getElementById("scoreBox").addEventListener("click", async (event) => {
       const btn = event.target.closest("[data-score]");
       if (!btn || !current.id) return;
@@ -156,6 +191,9 @@
         current.scores = [...(current.scores || []),
           { value: payload.value, note: note || null, ts: body.ts }];
         document.getElementById("scoreNote").value = "";
+        // 提交成功即收起弹层，Badge 状态由 paintScore 更新。
+        document.getElementById("scoreBox").hidden = true;
+        document.getElementById("scoreBadgeBtn").setAttribute("aria-expanded", "false");
         paintScore();
       } catch (err) {
         window.alert("标注写入失败：" + err.message);
@@ -195,21 +233,6 @@
       setFollowUi(follow);
       if (follow) scroller.scrollTop = scroller.scrollHeight;
     });
-    document.getElementById("durBtn").addEventListener("click", (e) => {
-      actualDuration = !actualDuration;
-      e.currentTarget.setAttribute("aria-pressed", actualDuration);
-      e.currentTarget.title = actualDuration ? "Use equal-width operations" : "Use actual duration";
-      range = null;
-      viewport = null;
-      paint();
-    });
-    document.querySelectorAll("#modeSeg [data-mode]").forEach((btn) => btn.addEventListener("click", () => {
-      if ((actualTime ? "time" : "sequence") === btn.dataset.mode) return;
-      actualTime = btn.dataset.mode === "time";
-      range = null;
-      viewport = null;
-      paint();
-    }));
     document.getElementById("copySidBtn").addEventListener("click", async (e) => {
       const btn = e.currentTarget;
       try {
@@ -248,7 +271,6 @@
     });
     document.getElementById("statBadge").addEventListener("click", () => toggleToolStats());
     document.getElementById("statClose").addEventListener("click", () => toggleToolStats());
-    document.getElementById("usageBtn").addEventListener("click", () => toggleUsagePanel());
     document.getElementById("statsPanel").addEventListener("click", async (event) => {
       const more = event.target.closest(".more");
       if (more) {
@@ -318,8 +340,11 @@
       event.preventDefault();
     });
 
-    setInterval(async () => {
-      if (!follow || !current.id || loadingOlder) return;
+    // 单会话尾部增量刷新：轮询与手动刷新按钮共用。force 供按钮绕过 follow 开关；
+    // 只更新数据不动视口，跳尾是 follow 开关自己的职责。
+    async function refreshTail(force) {
+      if (!current.id || loadingOlder) return;
+      if (!force && !follow) return;
       const page = await loadSession(current.id);
       const tailIds = new Set(page.rows.map(r => r.id));
       const kept = current.rows.filter(r => r._keptOlder && !tailIds.has(r.id));
@@ -328,7 +353,12 @@
       if (!current.cursor) current.cursor = page.cursor;
       paint();
       if (toolStats.open) refreshToolStats();
-      if (!document.getElementById("usagePanel").hidden) refreshSessionUsage();
+    }
+    document.getElementById("refreshBtn").addEventListener("click", () => refreshTail(true));
+
+    setInterval(async () => {
+      if (!follow || !current.id || loadingOlder) return;
+      await refreshTail(false);
       if (follow) scroller.scrollTop = scroller.scrollHeight;
     }, 1000);
 

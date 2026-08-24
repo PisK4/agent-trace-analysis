@@ -1,18 +1,13 @@
-// ata web · 会话级统计面板：工具调用统计（徽章+排序表+时间序钻取+跳转）与逐轮 usage 趋势
+// ata web · 会话级统计面板：工具调用统计（徽章+排序表+时间序钻取+跳转）
 
     const TDRILL_BATCH = 5;         // 钻取列表初始渲染与每次追加条数
     let toolStats = { open: false, data: null, expanded: "", shown: {} };
-    let sessionUsageData = null;
 
     function resetSessionPanels() {
       toolStats = { open: false, data: null, expanded: "", shown: {} };
-      sessionUsageData = null;
       paintToolStatsBar();
       document.getElementById("statsPanel").hidden = true;
       document.getElementById("statBadge").setAttribute("aria-expanded", "false");
-      const up = document.getElementById("usagePanel");
-      up.hidden = true;
-      document.getElementById("usageBtn").setAttribute("aria-pressed", "false");
     }
 
     // 常驻徽章：统计模块唯一入口，failed 非零时红字永远在场。
@@ -120,51 +115,3 @@
       paint();
     }
 
-    async function toggleUsagePanel() {
-      const panel = document.getElementById("usagePanel");
-      const on = panel.hidden;
-      panel.hidden = !on;
-      document.getElementById("usageBtn").setAttribute("aria-pressed", String(on));
-      if (on) await refreshSessionUsage();
-    }
-
-    async function refreshSessionUsage() {
-      if (!current.id) { sessionUsageData = null; renderUsagePanel(); return; }
-      try {
-        sessionUsageData = await fetchJSON("/api/sessions/" + encodeURIComponent(current.id) + "/usage");
-      } catch { sessionUsageData = null; }
-      renderUsagePanel();
-    }
-
-    function renderUsagePanel() {
-      const el = document.getElementById("usagePanel");
-      if (el.hidden) return;
-      const u = sessionUsageData;
-      const turns = (u && u.turns) || [];
-      if (!turns.length) {
-        el.innerHTML = `<div class="meta-line"><span class="dim">No usage recorded.</span></div>`;
-        return;
-      }
-      const max = Math.max(1, ...turns.map(t => Math.max(t.input || 0, t.output || 0)));
-      const bars = turns.map(t => `
-        <div class="urow">
-          <span class="ut">T${t.turn}</span>
-          <span class="ubars">
-            <i class="ubar in" style="--w:${(((t.input || 0) / max) * 100).toFixed(1)}%" title="input ${fmtNum(t.input)}"></i>
-            <i class="ubar out" style="--w:${(((t.output || 0) / max) * 100).toFixed(1)}%" title="output ${fmtNum(t.output)}"></i>
-          </span>
-          <span class="unum">↑${fmtNum(t.input) ?? "—"} ↓${fmtNum(t.output) ?? "—"}</span>
-        </div>`).join("");
-      const total = (u && u.total) || {};
-      const miss = u.missing_turns;
-      // 元信息条：agent 与轮次数来自会话权威字段；token 合计来自 /usage 全量投影，
-      // 不用前端已加载窗口数数（那是分页窗口，会漏）。
-      el.innerHTML = `
-        <div class="meta-line">
-          <span>${esc(AGENT_LABELS[current.agent] || current.agent)}</span>
-          <span>${current.turns != null ? `${current.turns} turns` : `${turns.length} turns w/ usage`}</span>
-          <span>tokens ↑${fmtNum(total.input) ?? "—"} / ↓${fmtNum(total.output) ?? "—"}</span>
-          ${miss ? `<b class="bad" title="这些轮次没有可归因的 usage 计量">${miss} turns missing usage</b>` : ""}
-          <span class="dim">cache 在本地中转语料常为空（已知盲区）</span>
-        </div>${bars}`;
-    }

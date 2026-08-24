@@ -20,22 +20,35 @@
     <main class="stage">
       <header class="top">
         <div class="crumb" id="crumb">选择一条会话</div>
+        <button class="ghost" id="refreshBtn" type="button" title="重新拉取当前会话的最新数据（原地更新，不改变选中与滚动位置）">⟳ 刷新</button>
         <button class="follow-toggle" id="live" type="button" aria-pressed="true"><span class="dot"></span><span class="txt">跟随尾部</span></button>
         <div class="grow"></div>
-        <div class="score" id="scoreBox" hidden>
-          <span class="label">标注</span>
-          <span class="score-badge" id="scoreBadge" hidden></span>
-          <input class="score-note" id="scoreNote" type="text" placeholder="备注（可选）" maxlength="200" />
-          <button class="ghost" type="button" data-score="good">Good</button>
-          <button class="ghost" type="button" data-score="bad">Bad</button>
-          <button class="ghost" type="button" data-score="partial">Partial</button>
-        </div>
-        <div class="score" id="assignBox" hidden>
-          <span class="label">归组</span>
-          <select id="assignRun"><option value="">选 run…</option></select>
-          <input class="score-note" id="assignTask" type="text" placeholder="任务 id（t-xxxx）" maxlength="40" />
-          <button class="ghost" type="button" id="assignBtn">归入</button>
-        </div>
+        <!-- 标注/归组收成 Badge + 弹出层：低频会话级动作不常驻占版面 -->
+        <span class="popwrap">
+          <button class="stat-badge anno-badge" id="scoreBadgeBtn" type="button" aria-expanded="false" aria-controls="scoreBox" hidden>
+            <span class="adot" id="scoreDot"></span><span>标注</span><b id="annoBadgeText">未标注</b>
+          </button>
+          <div class="pop" id="scoreBox" hidden>
+            <div class="pop-title">标注本条会话</div>
+            <div class="pop-row">
+              <button class="ghost" type="button" data-score="good">Good</button>
+              <button class="ghost" type="button" data-score="bad">Bad</button>
+              <button class="ghost" type="button" data-score="partial">Partial</button>
+            </div>
+            <input class="score-note" id="scoreNote" type="text" placeholder="备注（可选）" maxlength="200" />
+          </div>
+        </span>
+        <span class="popwrap">
+          <button class="stat-badge" id="assignBadgeBtn" type="button" aria-expanded="false" aria-controls="assignBox" hidden>
+            <span>归组</span><span class="caret">▾</span>
+          </button>
+          <div class="pop" id="assignBox" hidden>
+            <div class="pop-title">归组到回归轮次</div>
+            <select id="assignRun"><option value="">选 run…</option></select>
+            <input class="score-note" id="assignTask" type="text" placeholder="任务 id（t-xxxx）" maxlength="40" />
+            <button class="ghost" type="button" id="assignBtn">归入</button>
+          </div>
+        </span>
         <div class="divider"></div>
         <input class="search" id="q" type="search" placeholder="Search" aria-label="Search trajectory" />
         <button class="theme-btn" id="themeBtn" type="button" title="切换主题" aria-label="切换主题">☾</button>
@@ -44,12 +57,7 @@
       <section class="overview">
         <div class="zone-bar">
           <span class="zone-name">Timeline</span>
-          <div class="seg" id="modeSeg" role="group" aria-label="时间轴模式">
-            <button type="button" data-mode="sequence" aria-pressed="true">Sequence</button>
-            <button type="button" data-mode="time" aria-pressed="false">Actual time</button>
-          </div>
-          <button class="ghost" id="durBtn" aria-pressed="false" title="Use actual duration">Duration</button>
-          <button class="ghost" id="usageBtn" aria-pressed="false" type="button" title="Per-turn token trend">Usage</button>
+          <!-- 时间轴固定 Sequence 视图：Actual time / Duration / Usage 已移除（决策见提交说明） -->
           <button class="stat-badge" id="statBadge" aria-expanded="false" type="button" title="工具调用统计" hidden>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M22.7 19 13.6 9.9c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1 .1-1.4z"/></svg>
             <span id="badgeText"></span>
@@ -72,7 +80,6 @@
             </div>
           </div>
         </div>
-        <div class="usage-panel" id="usagePanel" hidden></div>
         <div class="plot">
           <div class="labels" aria-hidden="true"><span>Input</span><span>Model</span><span>Tools</span></div>
           <div class="track" id="track" tabindex="0" aria-label="Timeline overview; drag horizontally to focus events">
@@ -89,13 +96,17 @@
         <div class="ledger-main">
           <div class="zone-bar">
             <span class="zone-name">Ledger</span>
-            <button class="ghost chip" id="failChip" aria-pressed="false" type="button" title="Only failed rows"><span class="ico">●</span>Failed</button>
-            <button class="ghost chip" id="toolChip" aria-pressed="false" type="button" title="Only tool calls"><span class="ico">▣</span>Tools</button>
-            <button class="ghost" id="turnsBtn" aria-pressed="false" title="Collapse turns"><span class="ico">⊟</span>Turns</button>
-            <button class="ghost" id="callsBtn" aria-pressed="false" title="Collapse calls"><span class="ico">⊟</span>Calls</button>
+            <!-- 过滤器归位列头、视图开关收进菜单：操作不再与区名并排 -->
             <div class="grow"></div>
             <code class="sid" id="sidBox" hidden></code>
             <button class="ghost" id="copySidBtn" hidden type="button" title="复制 session id">⧉</button>
+            <div class="viewmenu">
+              <button class="ghost" id="viewMenuBtn" type="button" aria-expanded="false" aria-controls="viewMenu">视图 ▾</button>
+              <div class="pop" id="viewMenu" hidden>
+                <button class="ghost vmi" id="turnsBtn" aria-pressed="false" title="Collapse turns"><span class="ico">⊟</span>折叠所有轮次</button>
+                <button class="ghost vmi" id="callsBtn" aria-pressed="false" title="Collapse calls"><span class="ico">⊟</span>折叠所有调用</button>
+              </div>
+            </div>
           </div>
           <div class="table-wrap" id="scroller">
             <table>
@@ -103,7 +114,12 @@
                 <tr>
                   <th class="idx">#</th>
                   <th class="evt">Event</th>
-                  <th>Content</th>
+                  <th>Content
+                    <span class="th-filters">
+                      <button class="ghost chip" id="failChip" aria-pressed="false" type="button" title="只看失败的行"><span class="ico">●</span>Failed</button>
+                      <button class="ghost chip" id="toolChip" aria-pressed="false" type="button" title="只看工具调用"><span class="ico">▣</span>Tools</button>
+                    </span>
+                  </th>
                 </tr>
               </thead>
               <tbody id="rows"></tbody>

@@ -808,3 +808,41 @@
       color: var(--accent-ink);
       box-shadow: 0 0 0 1px var(--accent-ink) inset;
     }
+
+/* ===== 标注/归组 Badge 化与 Ledger 工具条重排 ===== */
+.popwrap { position: relative; display: inline-flex; }
+.anno-badge .adot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-3, #8b93a1); display: inline-block;
+}
+.anno-badge .adot[data-v="good"]    { background: #3fb96f; }
+.anno-badge .adot[data-v="bad"]     { background: #e5534b; }
+.anno-badge .adot[data-v="partial"] { background: #d9a53f; }
+.anno-badge b { font-weight: 600; }
+
+.pop {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 80;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 9px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .35);
+  min-width: 240px;
+}
+.pop-title { font-size: 11px; color: var(--text-3, #8b93a1); text-transform: uppercase; letter-spacing: .06em; }
+.pop-row { display: flex; gap: 6px; }
+.pop .score-note, .pop select {
+  background: var(--field); border: 1px solid var(--line);
+  border-radius: 7px; color: inherit; padding: 6px 10px; font-size: 13px; outline: none;
+}
+.pop .score-note:focus, .pop select:focus { border-color: var(--accent); }
+
+.th-filters { float: right; display: inline-flex; gap: 6px; margin-left: 14px; }
+.th-filters .chip { padding: 2px 9px; font-size: 11px; }
+.th-filters .ghost[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
+.viewmenu { position: relative; }
+.viewmenu .pop { left: 0; right: auto; top: calc(100% + 6px); min-width: 180px; }
+.viewmenu .vmi { width: 100%; justify-content: flex-start; text-align: left; }
+.viewmenu .ghost[aria-expanded="true"] { border-color: var(--accent); }
