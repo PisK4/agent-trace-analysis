@@ -50,7 +50,7 @@
         tag.textContent = row.tag;
         loc.textContent = row.turn == null ? "SYSTEM" : `Turn ${row.turn} · Step ${row.step}`;
         document.getElementById("tabs").innerHTML = tabs.map(id => {
-          const label = { summary:"Summary", payload:"Payload", result:"Result", schema:"Schema", timing:"Timing", preview:"Preview", raw:"Raw", source:"Source", prompt:"System Prompt", tools:"Tools", diff:"Diff" }[id] || id;
+          const label = { summary:"Summary", payload:"Payload", result:"Result", schema:"Schema", timing:"Timing", preview:"Preview", raw:"Raw", source:"Source", prompt:"System Prompt", tools:"Tools", skills:"Skills", diff:"Diff" }[id] || id;
           return `<button class="tab" type="button" data-tab="${id}" aria-selected="${id === tab}">${label}</button>`;
         }).join("");
         const parent = row.parentId ? byId(row.parentId) : null;
@@ -58,8 +58,16 @@
         if (row.kind === "system") {
           if (tab === "prompt") body.innerHTML = `<div class="sec"><div class="copyable" data-copy="prompt">${markdown(row.promptText || "")}</div></div>`;
           else if (tab === "tools") body.innerHTML = (row.toolsCatalog || []).map(tool =>
-            `<details class="tool-card"><summary>${esc(tool.name)}</summary><div class="inner"><p class="miss">${esc(tool.description)}</p><div class="tree">${jsonTree(tool.parameters)}</div></div></details>`
+            `<details class="tool-card"><summary>${esc(tool.name)}</summary><div class="inner"><p class="miss">${esc(tool.description)}</p>${tool.parameters && Object.keys(tool.parameters).length ? `<div class="tree">${jsonTree(tool.parameters)}</div>` : ""}</div></details>`
           ).join("");
+          else if (tab === "skills") body.innerHTML = (row.skillsCatalog || []).length ? row.skillsCatalog.map(skill =>
+            // skill 元素结构按 Pi Skill 接口防御式渲染：name 做标题，其余字段全部展示。
+            `<details class="tool-card"><summary>${esc(skill.name || "skill")}</summary><div class="inner"><dl class="kv">${
+              Object.entries(skill).filter(([k, v]) => k !== "name" && v != null).map(([k, v]) =>
+                `<div><dt>${esc(k)}</dt><dd>${esc(typeof v === "object" ? JSON.stringify(v) : String(v))}</dd></div>`
+              ).join("")
+            }</dl></div></details>`
+          ).join("") : `<div class="sec"><p class="miss">No skills injected in this round.</p></div>`;
           else body.innerHTML = `<div class="sec">${unifiedDiff(row.previousPrompt || "", row.promptText || "")}</div>`;
         } else if (row.kind === "compacted") {
           if (tab === "raw") {

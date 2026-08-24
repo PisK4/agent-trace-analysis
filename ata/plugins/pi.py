@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
 
 ZERO = (0, 0, 0, 0)
 
@@ -50,8 +53,8 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
     state["ts"] = ts
     out = []
     if name == "before_agent_start":
-        # Pi 契约（锚定 845d6ff1）：systemPrompt + systemPromptOptions
-        # （selectedTools 只是名字数组，toolSnippets 是 {name: 单行描述}）。
+        # Pi 契约：systemPrompt + systemPromptOptions（toolSnippets 是
+        # {name: 单行描述}）；skills 与 toolsFull 见 b1efcf7 / v0.84.2。
         prompt = event.get("systemPrompt") or ""
         if not prompt:
             return out
@@ -61,16 +64,31 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
             {"name": str(n), "description": (str(s) or "")[:200], "parameters": {}}
             for n, s in snippets.items()
         ]
+        # toolSnippets 无参数 schema；extension 在事件上附带 getAllTools 快照，
+        # 按名字回填 parameters。
+        full = event.get("toolsFull")
+        schemas = {}
+        if isinstance(full, dict) and isinstance(full.get("tools"), list):
+            for t in full["tools"]:
+                if isinstance(t, dict) and t.get("name"):
+                    schemas[str(t["name"])] = t.get("parameters")
+        for item in catalog:
+            params = schemas.get(item["name"])
+            if params is not None:
+                item["parameters"] = params
+        skills = opts.get("skills") if isinstance(opts, dict) and isinstance(opts.get("skills"), list) else []
         n = int(state.get("sys_no") or 0) + 1
         state["sys_no"] = n
+        payload = {"prompt_text": prompt, "previous_prompt": state.get("last_prompt")}
+        # 目录逐轮同质化：内容不变不重复落库，投影层前向填充补齐展示。
+        fp = hashlib.sha1(json.dumps({"t": catalog, "s": skills}, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        if fp != state.get("catalog_fp"):
+            payload["tools_catalog"] = catalog
+            payload["skills_catalog"] = skills
+        state["catalog_fp"] = fp
         out.append(_ev(
             f"{session_id}:system:{n}", agent_id, session_id, ts,
-            "system.upserted", None,
-            {
-                "prompt_text": prompt,
-                "previous_prompt": state.get("last_prompt"),
-                "tools_catalog": catalog,
-            },
+            "system.upserted", None, payload,
         ))
         state["last_prompt"] = prompt
         return out

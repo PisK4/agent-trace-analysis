@@ -80,6 +80,8 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
     turn_usage = {}
     turn_status = {}
     turn_model = {}
+    last_catalog = []
+    last_skills = []
     for rec in recs:
         ev = rec["event"]
         seq = rec["seq"]
@@ -182,7 +184,11 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
                 order.append(key)
         elif ev["type"] == "system.upserted":
             key = ("s", ev["id"])
-            catalog = p.get("tools_catalog") or []
+            # 目录按内容哈希去重落库，缺省轮次沿用最近一份（前向填充）。
+            if p.get("tools_catalog") is not None:
+                last_catalog = p["tools_catalog"]
+            if p.get("skills_catalog") is not None:
+                last_skills = p["skills_catalog"]
             row = entities.get(key) or {"_first": seq, "_seq": seq}
             row.update({
                 "id": ev["id"],
@@ -196,7 +202,8 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
                 "status": "completed",
                 "promptText": p.get("prompt_text"),
                 "previousPrompt": p.get("previous_prompt"),
-                "toolsCatalog": catalog,
+                "toolsCatalog": last_catalog,
+                "skillsCatalog": last_skills,
                 "usage": dict(NA),
             })
             entities[key] = row

@@ -141,7 +141,7 @@
       if (target.type === "request") return ["summary", "usage", "timing"];
       const row = byId(target.id);
       if (!row) return ["summary"];
-      if (row.kind === "system") return row.previousPrompt ? ["diff", "prompt", "tools"] : ["prompt", "tools"];
+      if (row.kind === "system") return row.previousPrompt ? ["diff", "prompt", "tools", "skills"] : ["prompt", "tools", "skills"];
       if (row.kind === "compacted") return ["summary", "raw"];
       if (row.kind === "tool" || row.kind === "subtool") {
         const tabs = ["summary"];

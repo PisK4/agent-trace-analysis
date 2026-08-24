@@ -27,6 +27,10 @@ class PiTest(unittest.TestCase):
         self.assertIsNone(sys_ev["turn"])
         self.assertIn("prompt_text", sys_ev["payload"])
         self.assertEqual([t["name"] for t in sys_ev["payload"]["tools_catalog"]], ["read", "bash"])
+        self.assertEqual(sys_ev["payload"]["skills_catalog"][0]["name"], "ata-ops")
+        self.assertEqual(
+            sys_ev["payload"]["tools_catalog"][0]["parameters"]["properties"]["path"]["type"], "string",
+        )
         self.assertIsNone(sys_ev["payload"]["previous_prompt"])
         sys2 = [e for e in evs if e["type"] == "system.upserted"][1]
         self.assertIsNotNone(sys2["payload"]["previous_prompt"])
@@ -60,6 +64,27 @@ class PiTest(unittest.TestCase):
         ]
         self.assertTrue(all(e["payload"]["text"] for e in asst_done))
         self.assertIn("need to answer concisely", asst_done[0]["payload"]["text"])
+
+    def test_catalog_dedupe(self):
+        # 目录逐轮同质化：内容不变不落 tools_catalog / skills_catalog，
+        # 内容变化才重新落（投影层负责前向填充）。
+        hook = {
+            "name": "before_agent_start",
+            "event": {"systemPrompt": "p", "systemPromptOptions": {"toolSnippets": {"read": "r"}, "skills": [{"name": "s1"}]}},
+            "ctx": {"session_id": "dup"},
+        }
+        state = {}
+        first = translate_hook(hook["name"], hook["event"], hook["ctx"], state)
+        self.assertIn("tools_catalog", first[0]["payload"])
+        self.assertIn("skills_catalog", first[0]["payload"])
+        second = translate_hook(hook["name"], hook["event"], hook["ctx"], state)
+        self.assertNotIn("tools_catalog", second[0]["payload"])
+        self.assertNotIn("skills_catalog", second[0]["payload"])
+        changed = translate_hook("before_agent_start", {
+            "systemPrompt": "p",
+            "systemPromptOptions": {"toolSnippets": {"read": "r"}, "skills": []},
+        }, hook["ctx"], state)
+        self.assertIn("skills_catalog", changed[0]["payload"])
 
     def test_hook_http_pipe(self):
         import json

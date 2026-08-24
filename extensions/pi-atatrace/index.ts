@@ -54,6 +54,16 @@ async function postHook(body: object): Promise<void> {
   }
 }
 
+// before_agent_start 的 toolSnippets 只有名字+单行描述；参数 schema 只能从
+// ExtensionAPI 取（getAllTools/getActiveTools，锚定 b1efcf7 / v0.84.2）。
+function toolsSnapshot(pi: ExtensionAPI): unknown {
+  try {
+    return { tools: pi.getAllTools?.() ?? [], active: pi.getActiveTools?.() ?? [] };
+  } catch {
+    return undefined;
+  }
+}
+
 export default function (pi: ExtensionAPI) {
   for (const name of HOOKS) {
     pi.on(name, async (event, ctx) => {
@@ -68,7 +78,7 @@ export default function (pi: ExtensionAPI) {
         runtime: ATA_CONFIG.runtime,
         channel: process.env.ATA_CHANNEL || undefined,
         lineage: lineageFromEnv(),
-        event: jsonSafe(event),
+        event: jsonSafe(name === "before_agent_start" ? { ...event, toolsFull: toolsSnapshot(pi) } : event),
       });
     });
   }
