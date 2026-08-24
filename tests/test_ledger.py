@@ -32,6 +32,7 @@ class LedgerTest(unittest.TestCase):
             led = Ledger(Path(td))
             led.append(EV)
             listing = led.sessions()
+            # event_count/error_count 供侧栏卡片 meta 行（卡片分诊列）
             self.assertEqual(listing, [{
                 "id": "s1",
                 "agent": "pi",
@@ -40,7 +41,27 @@ class LedgerTest(unittest.TestCase):
                 "last_ts": 1787000000010,
                 "first_ts": 1787000000010,
                 "parent_session_id": None,
+                "event_count": 1,
+                "error_count": 0,
             }])
+
+    def test_sessions_count_events_and_failed_tools(self):
+        with tempfile.TemporaryDirectory() as td:
+            led = Ledger(Path(td))
+            led.append(EV)
+            led.append(parse_event({
+                "v": 1, "id": "t1", "agent_id": "pi", "session_id": "s1",
+                "ts": 1787000000020, "type": "tool.upserted", "turn": 1,
+                "payload": {"tool_call_id": "c1", "name": "Bash", "status": "failed"},
+            }))
+            led.append(parse_event({
+                "v": 1, "id": "t2", "agent_id": "pi", "session_id": "s1",
+                "ts": 1787000000025, "type": "tool.upserted", "turn": 1,
+                "payload": {"tool_call_id": "c2", "name": "Read", "status": "completed"},
+            }))
+            row = led.sessions()[0]
+            self.assertEqual(row["event_count"], 3)
+            self.assertEqual(row["error_count"], 1)
 
     def test_sessions_ordered_by_created_desc(self):
         with tempfile.TemporaryDirectory() as td:

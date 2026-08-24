@@ -10,6 +10,22 @@
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
+  <!-- SVG 图标 sprite：替换全部文本字形，跨平台渲染一致且走 currentColor -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M17.65 6.35A8 8 0 1 0 19.73 14h-2.08a6 6 0 1 1-1.42-6.23L13 11h7V4l-2.35 2.35Z"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><path d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5Zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9Z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10ZM2 13h2a1 1 0 0 0 0-2H2a1 1 0 0 0 0 2Zm18 0h2a1 1 0 0 0 0-2h-2a1 1 0 0 0 0 2ZM11 2v2a1 1 0 0 0 2 0V2a1 1 0 0 0-2 0Zm0 18v2a1 1 0 0 0 2 0v-2a1 1 0 0 0-2 0ZM5.99 4.58a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 0 0 1.41-1.41L5.99 4.58Zm12.37 12.37a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 0 0 1.41-1.41l-1.06-1.06Zm1.06-10.96a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 0 0 1.41 1.41l1.06-1.06ZM7.05 18.36a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 0 0 1.41 1.41l1.06-1.06Z"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12.34 2.02a10 10 0 1 0 9.64 9.64A8 8 0 0 1 12.34 2.02Z"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24"><path d="M3 3h18a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm1 2v14h7V5H4Zm9 0v14h8V5h-8Z"/></symbol>
+    <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M22.7 19 13.6 9.9c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1 .1-1.4Z"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 17l5-5 4 4 8-8v6h2V4h-10v2h6l-6 6-4-4-7 7z"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 19 17.59 13.41 12z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21Zm12-3h-2v-2h2v2Zm0-4h-2v-4h2v4Z"/></symbol>
+    <symbol id="i-fold" viewBox="0 0 24 24"><path d="M4 5h16v2H4zm0 6h16v2H4zm0 6h16v2H4z"/></symbol>
+    <symbol id="i-unfold" viewBox="0 0 24 24"><path d="M4 5h16v2H4zm0 6h10v2H4zm0 6h16v2H4zm12-5 4 4-4 4v-8z"/></symbol>
+  </svg>
   <div class="shell" id="app" data-home="true">
     <aside class="nav">
       <button class="brand" type="button" id="homeBtn" aria-label="Back to home"><i class="mark"></i><b>Atatrace</b><em>ledger</em></button>
@@ -19,9 +35,9 @@
     </aside>
     <main class="stage">
       <header class="top">
-        <button class="ghost" id="navToggle" type="button" aria-pressed="false" title="收起/展开侧栏">◧</button>
+        <button class="ghost" id="navToggle" type="button" aria-pressed="false" title="收起/展开侧栏"><svg class="ico"><use href="#i-panel"/></svg></button>
         <div class="crumb" id="crumb">选择一条会话</div>
-        <button class="ghost" id="refreshBtn" type="button" title="重新拉取当前会话的最新数据（原地更新，不改变选中与滚动位置）">⟳ 刷新</button>
+        <button class="ghost" id="refreshBtn" type="button" title="重新拉取当前会话的最新数据（原地更新，不改变选中与滚动位置）"><svg class="ico"><use href="#i-refresh"/></svg>刷新</button>
         <button class="follow-toggle" id="live" type="button" aria-pressed="true"><span class="dot"></span><span class="txt">跟随尾部</span></button>
         <div class="grow"></div>
         <!-- 标注/归组收成 Badge + 弹出层：低频会话级动作不常驻占版面 -->
@@ -29,6 +45,7 @@
           <button class="stat-badge anno-badge" id="scoreBadgeBtn" type="button" aria-expanded="false" aria-controls="scoreBox" hidden>
             <span class="adot" id="scoreDot"></span><span>标注</span><b id="annoBadgeText">未标注</b>
           </button>
+          <!-- scoreDot 走全局 .adot 三态类（good/bad/partial + 未标注空心） -->
           <div class="pop" id="scoreBox" hidden>
             <div class="pop-title">标注本条会话</div>
             <div class="pop-row">
@@ -51,8 +68,11 @@
           </div>
         </span>
         <div class="divider"></div>
-        <input class="search" id="q" type="search" placeholder="Search" aria-label="Search trajectory" />
-        <button class="theme-btn" id="themeBtn" type="button" title="切换主题" aria-label="切换主题">☾</button>
+        <span class="searchwrap">
+          <svg class="sico" aria-hidden="true"><use href="#i-search"/></svg>
+          <input class="search" id="q" type="search" placeholder="Search" aria-label="Search trajectory" />
+        </span>
+        <button class="theme-btn" id="themeBtn" type="button" title="切换主题" aria-label="切换主题"><svg class="ico"><use href="#i-moon"/></svg></button>
       </header>
       <div class="home-empty" id="homeEmpty">选择一条会话</div>
       <section class="overview">
@@ -60,11 +80,11 @@
           <span class="zone-name">Timeline</span>
           <!-- 时间轴固定 Sequence 视图：Actual time / Duration / Usage 已移除（决策见提交说明） -->
           <button class="stat-badge" id="statBadge" aria-expanded="false" type="button" title="工具调用统计" hidden>
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M22.7 19 13.6 9.9c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1 .1-1.4z"/></svg>
+            <svg class="ico" aria-hidden="true"><use href="#i-wrench"/></svg>
             <span id="badgeText"></span>
           </button>
           <button class="stat-badge" id="usageBadge" aria-expanded="false" type="button" title="Usage 全周期与可信度" hidden>
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 17l5-5 4 4 8-8v6h2V4h-10v2h6l-6 6-4-4-7 7z"/></svg>
+            <svg class="ico" aria-hidden="true"><use href="#i-chart"/></svg>
             <span id="usageBadgeText"></span>
           </button>
         </div>
@@ -74,7 +94,7 @@
               <b>工具调用统计</b>
               <span class="sum" id="statSum"></span>
               <span class="urate" id="urate" hidden></span>
-              <button class="sp-close" id="statClose" type="button" aria-label="关闭统计面板">×</button>
+              <button class="sp-close" id="statClose" type="button" aria-label="关闭统计面板"><svg class="ico"><use href="#i-x"/></svg></button>
             </div>
             <div class="sp-body">
               <div class="dtable">
@@ -90,7 +110,7 @@
             <div class="sp-head">
               <b>Usage 全周期</b>
               <span class="sum" id="usageSum"></span>
-              <button class="sp-close" id="usageClose" type="button" aria-label="关闭 Usage 面板">×</button>
+              <button class="sp-close" id="usageClose" type="button" aria-label="关闭 Usage 面板"><svg class="ico"><use href="#i-x"/></svg></button>
             </div>
             <div class="sp-body">
               <div class="ucurve-wrap" id="usageCurve"></div>
@@ -121,12 +141,12 @@
             <!-- 过滤器归位列头、视图开关收进菜单：操作不再与区名并排 -->
             <div class="grow"></div>
             <code class="sid" id="sidBox" hidden></code>
-            <button class="ghost" id="copySidBtn" hidden type="button" title="复制 session id">⧉</button>
+            <button class="ghost" id="copySidBtn" hidden type="button" title="复制 session id"><svg class="ico"><use href="#i-copy"/></svg></button>
             <div class="viewmenu">
               <button class="ghost" id="viewMenuBtn" type="button" aria-expanded="false" aria-controls="viewMenu">视图 ▾</button>
               <div class="pop" id="viewMenu" hidden>
-                <button class="ghost vmi" id="turnsBtn" aria-pressed="false" title="Collapse turns"><span class="ico">⊟</span>折叠所有轮次</button>
-                <button class="ghost vmi" id="callsBtn" aria-pressed="false" title="Collapse calls"><span class="ico">⊟</span>折叠所有调用</button>
+                <button class="ghost vmi" id="turnsBtn" aria-pressed="false" title="Collapse turns"><svg class="ico ico-fold"><use href="#i-fold"/></svg>折叠所有轮次</button>
+                <button class="ghost vmi" id="callsBtn" aria-pressed="false" title="Collapse calls"><svg class="ico ico-fold"><use href="#i-fold"/></svg>折叠所有调用</button>
               </div>
             </div>
           </div>
@@ -138,8 +158,8 @@
                   <th class="evt">Event</th>
                   <th>Content
                     <span class="th-filters">
-                      <button class="ghost chip" id="failChip" aria-pressed="false" type="button" title="只看失败的行"><span class="ico">●</span>Failed</button>
-                      <button class="ghost chip" id="toolChip" aria-pressed="false" type="button" title="只看工具调用"><span class="ico">▣</span>Tools</button>
+                      <button class="ghost chip" id="failChip" aria-pressed="false" type="button" title="只看失败的行"><svg class="ico ico-chip"><use href="#i-alert"/></svg>Failed</button>
+                      <button class="ghost chip" id="toolChip" aria-pressed="false" type="button" title="只看工具调用"><svg class="ico ico-chip"><use href="#i-wrench"/></svg>Tools</button>
                     </span>
                   </th>
                 </tr>
@@ -176,6 +196,8 @@
     </main>
   </div>
   <div class="tip" id="tip"></div>
+  <!-- toast 容器：role=log + aria-live，复制/标注/归组等写操作的读屏反馈通道 -->
+  <div class="toasts" id="toasts" role="log" aria-live="polite"></div>
     <!-- vendored 本地库（web/vendor/README.md 记录来源与许可证），无构建、无运行期下载 -->
     <script src="vendor/marked.umd.js"></script>
     <script src="vendor/highlight.min.js"></script>

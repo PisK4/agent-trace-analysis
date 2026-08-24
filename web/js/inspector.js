@@ -73,7 +73,7 @@
         btn.className = "copy-chip";
         btn.type = "button";
         btn.title = "复制内容";
-        btn.textContent = "⧉";
+        btn.innerHTML = `<svg class="ico"><use href="#i-copy"/></svg>`;
         btn.addEventListener("click", async () => {
           const kind = wrap.dataset.copy;
           let text = "";
@@ -83,11 +83,10 @@
           else text = copyRow.result || copyRow.outputText || copyRow.payloadText || copyRow.text || "";
           try {
             await navigator.clipboard.writeText(text);
-            btn.textContent = "✓";
+            toast("已复制");
           } catch {
-            btn.textContent = "✕";
+            toast("复制失败", "err");
           }
-          setTimeout(() => { btn.textContent = "⧉"; }, 900);
         });
         wrap.appendChild(btn);
       });

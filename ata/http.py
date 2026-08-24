@@ -131,6 +131,8 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 ctype = "text/javascript"
             elif target.suffix == ".css":
                 ctype = "text/css"
+            elif target.suffix in (".html", ".svg", ".png", ".ico"):
+                ctype = "text/html; charset=utf-8" if target.suffix == ".html" else f"image/{target.suffix.lstrip('.')}"
             return self._bytes(200, target.read_bytes(), ctype)
 
         def do_POST(self):

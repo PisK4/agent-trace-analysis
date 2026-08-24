@@ -10,14 +10,16 @@
       paintUsageBadge();
     }
 
-    // 常驻徽章：完全中性，只报轮数；发现只在面板清单里呈现。
+    // 常驻徽章：轮数 + token 总量摘要（in/out/cache R）；发现只在面板清单里呈现。
     function paintUsageBadge() {
       const badge = document.getElementById("usageBadge");
       badge.hidden = !current.id || !usageState.data;
       const el = document.getElementById("usageBadgeText");
       const d = usageState.data;
       if (!d) { el.innerHTML = ""; return; }
-      el.innerHTML = `<b>Usage · ${d.audit.reported_turns} turns</b>`;
+      const t = d.total || {};
+      el.innerHTML = `<b>Usage · ${d.audit.reported_turns} turns</b>` +
+        ` · ↓ ${fmtK(t.input || 0)} ↑ ${fmtK(t.output || 0)} ↓c ${fmtK(t.cache_read || 0)}`;
     }
 
     async function refreshUsage() {

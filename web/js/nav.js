@@ -19,12 +19,26 @@
 
     function paintSessions() {
       const visible = agentFilter ? sessions.filter(session => session.agent === agentFilter) : sessions;
-      document.getElementById("sessList").innerHTML = visible.map(session => `
+      document.getElementById("sessList").innerHTML = visible.map(session => {
+        // 卡片 v2 meta 行：agent · 事件数 · 错误数 · 标注点 · 时间，一眼分诊。
+        // 标注点与徽章共用 .adot 三态类；错误 0 时灰化不抢眼。
+        const errs = Number(session.errorCount ?? 0);
+        const latest = (session.scores || [])[(session.scores || []).length - 1];
+        // 无错误不渲染错误列：卡片上只留异常信号
+        const errsHtml = errs ? `<span class="errs" title="${errs} failed tool calls"><svg class="ico" style="width:9px;height:9px"><use href="#i-alert"/></svg>${errs}</span>` : "";
+        const adot = latest ? `<span class="adot" data-v="${esc(latest.value)}"></span>` : `<span class="adot"></span>`;
+        return `
         <button class="item ${AGENT_CLASS[session.agent] || ""}" type="button" data-sid="${session.id}" aria-current="${session.id === current.id}">
           <span class="t">${esc(session.title)}</span>
-          <small class="agent">${esc(AGENT_LABELS[session.agent] || session.agent)}</small>
-          <small class="ts" data-ts="${Number(session.firstTs ?? 0)}" data-full="0" title="点击展开完整时间">${shortTime(Number(session.firstTs ?? 0))}</small>
-        </button>`).join("");
+          <span class="meta">
+            <span class="ag">${esc(AGENT_LABELS[session.agent] || session.agent)}</span>
+            <span>${Number(session.eventCount ?? 0)} evts</span>
+            ${errsHtml}
+            ${adot}
+            <span class="ts" data-ts="${Number(session.firstTs ?? 0)}" data-full="0" title="点击展开完整时间">${shortTime(Number(session.firstTs ?? 0))}</span>
+          </span>
+        </button>`;
+      }).join("");
       document.querySelectorAll(".item").forEach(btn => btn.addEventListener("click", () => openSession(btn.dataset.sid)));
       document.querySelectorAll(".item .ts").forEach(el => el.addEventListener("click", (e) => {
         e.stopPropagation();

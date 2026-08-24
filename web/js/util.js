@@ -24,6 +24,19 @@
     const API = "";
     let sessions = [];
 
+    // Toast：写操作（复制/标注/归组/刷新）的统一反馈通道，替代 window.alert。
+    // 每条自带 role=status；容器 #toasts 有 aria-live，读屏可感知。
+    function toast(msg, kind = "ok") {
+      const box = document.getElementById("toasts");
+      if (!box) return;
+      const el = document.createElement("div");
+      el.className = `toast ${kind}`;
+      el.setAttribute("role", "status");
+      el.innerHTML = `<span class="tico"><svg class="ico"><use href="#${kind === "ok" ? "i-check" : "i-alert"}"/></svg></span>${esc(msg)}`;
+      box.appendChild(el);
+      setTimeout(() => { el.classList.add("out"); setTimeout(() => el.remove(), 240); }, 2200);
+    }
+
     const emptyUsage = () => ({ status: "n/a", input: null, output: null, cacheRead: null, cacheWrite: null });
 
     async function fetchJSON(path) {

@@ -236,7 +236,29 @@ class Ledger:
                 ORDER BY first_ts DESC, title
                 """
             ).fetchall()
-        return [self._session_row(r) for r in rows]
+            # 侧栏卡片 meta 行要事件数与失败工具数：json_extract 走 event_json，
+            # 单行扫描；会话量大时这里仍是 O(全部事件)，可接受（本机账本量级）。
+            counts = self._conn.execute(
+                """
+                SELECT session_id,
+                       COUNT(*) AS event_count,
+                       SUM(CASE WHEN type='tool.upserted'
+                                 AND json_extract(event_json,'$.payload.status')='failed'
+                            THEN 1 ELSE 0 END) AS error_count
+                FROM events
+                GROUP BY session_id
+                """
+            ).fetchall()
+        by_sid = {r["session_id"]: r for r in counts}
+        out = []
+        for r in rows:
+            c = by_sid.get(r["session_id"])
+            out.append({
+                **self._session_row(r),
+                "event_count": int(c["event_count"]) if c else 0,
+                "error_count": int(c["error_count"] or 0) if c else 0,
+            })
+        return out
 
     @staticmethod
     def _session_row(r) -> dict:

@@ -66,7 +66,10 @@
         // 才渲染；missing 行全是破折号，是噪音。明细悬停经全局 #tip 展开。
         const hasUsage = row.usage && (row.usage.status === "reported" || row.usage.status === "estimated");
         const usageHtml = row.kind === "assistant" && hasUsage ? usageStrip(row.usage, true) : "";
-        parts.push(`<tr data-id="${row.id}" data-selected="${selectedRow}" data-focus="${out ? "out" : "in"}" data-error="${row.status === "failed" || row.status === "cancelled"}" data-pending="${row.status === "pending"}" ${row.start ? 'data-turn-start="true"' : ""} class="${row.kind === "subtool" ? "subtool" : ""}">
+        // turn 色条按起始行 kind 推导（user→green / assistant→紫 / tool→orange），
+        // 不再手写 turn 类，避免漏配退回灰条
+        const turnClass = row.start ? ` turnc-${row.kind}` : "";
+        parts.push(`<tr data-id="${row.id}" data-selected="${selectedRow}" data-focus="${out ? "out" : "in"}" data-error="${row.status === "failed" || row.status === "cancelled"}" data-pending="${row.status === "pending"}" ${row.start ? 'data-turn-start="true"' : ""} class="${row.kind === "subtool" ? "subtool" : ""}${turnClass}">
           <td class="idx">${idx}${turn}</td>
           <td class="evt">${req}<span class="kind ${row.kind}">${esc(row.tag)}</span></td>
           <td class="content ${row.kind === "tool" || row.kind === "subtool" ? "mono" : ""}">${esc(content)}${usageHtml}</td>
@@ -132,6 +135,9 @@
       callsBtn.setAttribute("aria-pressed", allCalls);
       turnsBtn.title = allTurns ? "Expand turns" : "Collapse turns";
       callsBtn.title = allCalls ? "Expand calls" : "Collapse calls";
-      turnsBtn.querySelector(".ico").textContent = allTurns ? "⊞" : "⊟";
-      callsBtn.querySelector(".ico").textContent = allCalls ? "⊞" : "⊟";
+      // 图标 sprite 化后折叠/展开切 use href
+      const setFold = (btn, expanded) =>
+        btn.querySelector("use").setAttribute("href", expanded ? "#i-unfold" : "#i-fold");
+      setFold(turnsBtn, allTurns);
+      setFold(callsBtn, allCalls);
     }

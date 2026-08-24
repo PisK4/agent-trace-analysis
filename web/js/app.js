@@ -12,6 +12,8 @@
         cursor: 0,
         turns: item.turns,
         firstTs: item.first_ts,
+        eventCount: item.event_count,
+        errorCount: item.error_count,
         toolsIndex: {}
       }));
       paintTabs();
@@ -31,6 +33,8 @@
       }
       annoBtn.hidden = false; assignBtn.hidden = false;
       ensureRunsLoaded();
+      // 打开会话时顺带把侧栏卡片的标注点/计数刷成最新（openSession 已合并 scores）
+      paintSessions();
       const txt = document.getElementById("annoBadgeText");
       const dot = document.getElementById("scoreDot");
       const list = current.scores || [];
@@ -201,8 +205,9 @@
         document.getElementById("scoreBox").hidden = true;
         document.getElementById("scoreBadgeBtn").setAttribute("aria-expanded", "false");
         paintScore();
+        toast(`已标注：${payload.value}`);
       } catch (err) {
-        window.alert("标注写入失败：" + err.message);
+        toast("标注写入失败：" + err.message, "err");
       }
     });
     // 清除选中：点表格空白处即可，右栏常驻不消失（收起整栏走右缘 detailsHandle）。
@@ -210,7 +215,7 @@
       if (!current.id) return;
       const runId = document.getElementById("assignRun").value;
       const taskId = document.getElementById("assignTask").value.trim();
-      if (!runId || !taskId) { window.alert("先选 run 并填任务 id（ata tasks list 可查）"); return; }
+      if (!runId || !taskId) { toast("先选 run 并填任务 id（ata tasks list 可查）", "err"); return; }
       const body = {
         v: 1, id: crypto.randomUUID().replace(/-/g, ""),
         agent_id: current.agent, session_id: current.id,
@@ -224,9 +229,9 @@
           body: JSON.stringify(body)
         });
         if (!res.ok) throw new Error((await res.json()).error || res.status);
-        window.alert(`已归组：${taskId} → ${runId}`);
+        toast(`已归组：${taskId} → ${runId}`);
       } catch (err) {
-        window.alert("归组写入失败：" + err.message);
+        toast("归组写入失败：" + err.message, "err");
       }
     });
     const setFollowUi = (on) => {
@@ -243,11 +248,10 @@
       const btn = e.currentTarget;
       try {
         await navigator.clipboard.writeText(current.id);
-        btn.textContent = "✓";
+        toast("已复制 session id");
       } catch {
-        btn.textContent = "✕";
+        toast("复制失败", "err");
       }
-      setTimeout(() => { btn.textContent = "⧉"; }, 900);
     });
     document.getElementById("turnsBtn").addEventListener("click", () => {
       const turns = collapsibleTurns();
@@ -321,7 +325,8 @@
     });
     document.getElementById("themeBtn").addEventListener("click", () => {
       const dark = document.documentElement.classList.toggle("dark");
-      document.getElementById("themeBtn").textContent = dark ? "☀" : "☾";
+      // 图标已 sprite 化：切 use href 而不是文本字形
+      document.querySelector("#themeBtn use").setAttribute("href", dark ? "#i-sun" : "#i-moon");
     });
 
     const clampDetailsWidth = (width, splitWidth) =>
@@ -361,20 +366,39 @@
 
     // 单会话尾部增量刷新：轮询与手动刷新按钮共用。force 供按钮绕过 follow 开关；
     // 只更新数据不动视口，跳尾是 follow 开关自己的职责。
+    // 手动刷新先盖一层骨架行（只动 tbody 渲染层）：选中/滚动/数据都在，回填后原样恢复。
+    let refreshSkeleton = false;
     async function refreshTail(force) {
       if (!current.id || loadingOlder) return;
       if (!force && !follow) return;
+      if (force && !refreshSkeleton) {
+        refreshSkeleton = true;
+        paintSkeleton();
+      }
       const page = await loadSession(current.id);
       const tailIds = new Set(page.rows.map(r => r.id));
       const kept = current.rows.filter(r => r._keptOlder && !tailIds.has(r.id));
       current.rows = [...kept, ...page.rows].map((row, i) => ({ ...row, index: i, _keptOlder: row._keptOlder && !tailIds.has(row.id) }));
       current.older = page.older;
       if (!current.cursor) current.cursor = page.cursor;
+      refreshSkeleton = false;
       paint();
       if (toolStats.open) refreshToolStats();
       if (usageState.open) refreshUsage();
     }
-    document.getElementById("refreshBtn").addEventListener("click", () => refreshTail(true));
+    // 骨架行只替换 tbody 内容，行数取虚拟窗口近似；不碰 current/selected/scroller.scrollTop。
+    function paintSkeleton() {
+      const n = Math.max(6, Math.min(14, Math.ceil(scroller.clientHeight / CONTENT_ROW_HEIGHT)));
+      const skels = Array.from({ length: n }, () =>
+        `<tr class="skel-row"><td class="idx"><div class="skel" style="width:52px"></div></td>` +
+        `<td class="evt"><div class="skel" style="width:64px"></div></td>` +
+        `<td><div class="skel" style="width:${60 + Math.random() * 30}%"></div></td></tr>`).join("");
+      tbody.innerHTML = skels;
+    }
+    document.getElementById("refreshBtn").addEventListener("click", async () => {
+      await refreshTail(true);
+      toast("已刷新到最新事件");
+    });
 
     setInterval(async () => {
       if (!follow || !current.id || loadingOlder) return;
@@ -400,6 +424,8 @@
         cursor: 0,
         turns: item.turns,
         firstTs: item.first_ts,
+        eventCount: item.event_count,
+        errorCount: item.error_count,
         toolsIndex: {}
       });
       paintTabs();
