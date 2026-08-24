@@ -110,8 +110,8 @@
       }
       if (!row) return;
       selectRecord(row.id);
-      // 点进来的动机几乎总是看细节：有 payload tab 就直接落到 payload。
-      if (tabsOf(selected).includes("payload")) rememberTab("payload");
+      // 统计入口的跳转固定落 Summary；要看入参/结果再自己切 payload/result。
+      rememberTab("summary");
       paint();
     }
 
