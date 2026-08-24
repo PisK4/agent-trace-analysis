@@ -146,6 +146,11 @@
       paint();
     });
     document.getElementById("homeBtn").addEventListener("click", showHome);
+    // 侧栏折叠开关：收起时主区占满整行。
+    document.getElementById("navToggle").addEventListener("click", () => {
+      const hidden = document.body.classList.toggle("nav-hidden");
+      document.getElementById("navToggle").setAttribute("aria-pressed", String(hidden));
+    });
     // 统一弹层管理（标注 / 归组 / 视图菜单）：点击徽章切换展开，点击外部收起。
     function bindPopover(btnId, panelId) {
       const btn = document.getElementById(btnId), panel = document.getElementById(panelId);

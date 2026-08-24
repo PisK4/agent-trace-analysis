@@ -172,7 +172,12 @@
     .agent-pi { --agent: var(--ink); --agent-soft: var(--hover); }
     .agent-droid { --agent: var(--cyan); --agent-soft: var(--cyan-tint); }
     .agent-cue { --agent: var(--pink); --agent-soft: var(--pink-tint); }
-    #sessList { display: flex; flex-direction: column; gap: 6px; padding: 4px 10px 12px; }
+    #sessList { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 4px 10px 12px; }
+
+    /* 侧栏折叠开关 */
+    body.nav-hidden .shell { grid-template-columns: 0 minmax(0, 1fr); }
+    body.nav-hidden .nav { display: none; }
+    #navToggle[aria-pressed="true"] { color: var(--ink); }
     .item {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
