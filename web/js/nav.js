@@ -23,7 +23,6 @@
         <button class="item ${AGENT_CLASS[session.agent] || ""}" type="button" data-sid="${session.id}" aria-current="${session.id === current.id}">
           <span class="t">${esc(session.title)}</span>
           <small class="agent">${esc(AGENT_LABELS[session.agent] || session.agent)}</small>
-          ${session.turns != null ? `<small class="tn">${session.turns} turns</small>` : ""}
           <small class="ts" data-ts="${Number(session.firstTs ?? 0)}" data-full="0" title="点击展开完整时间">${shortTime(Number(session.firstTs ?? 0))}</small>
         </button>`).join("");
       document.querySelectorAll(".item").forEach(btn => btn.addEventListener("click", () => openSession(btn.dataset.sid)));
