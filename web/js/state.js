@@ -29,7 +29,13 @@
     let tabHistory = ["summary"];
     let tipTimer = 0;
     let unixStarted = false;
-    let detailsWidth = null;
+    // 详情栏宽度跨会话记忆：拖拽/键盘调整后写入 localStorage，双击分隔条重置。
+    let detailsWidth = (() => {
+      try {
+        const v = parseInt(localStorage.getItem("ata.detailsWidth"), 10);
+        return Number.isFinite(v) && v > 0 ? v : null;
+      } catch { return null; }
+    })();
     let collapsedTurns = new Set();
     let collapsedAssistants = new Set();
     let loadingOlder = false;

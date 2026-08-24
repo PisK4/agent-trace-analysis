@@ -333,8 +333,12 @@
     resize.addEventListener("pointerup", (event) => {
       if (resizeDrag?.pointerId !== event.pointerId) return;
       resizeDrag = null;
+      try { localStorage.setItem("ata.detailsWidth", String(detailsWidth)); } catch {}
     });
-    resize.addEventListener("dblclick", () => { detailsWidth = null; details.style.width = ""; });
+    resize.addEventListener("dblclick", () => {
+      detailsWidth = null; details.style.width = "";
+      try { localStorage.removeItem("ata.detailsWidth"); } catch {}
+    });
     resize.addEventListener("keydown", (event) => {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       const splitWidth = details.parentElement.getBoundingClientRect().width;
@@ -342,6 +346,7 @@
       const next = clampDetailsWidth(currentWidth + (event.key === "ArrowLeft" ? DETAILS_STEP : -DETAILS_STEP), splitWidth);
       detailsWidth = next;
       details.style.width = `${next}px`;
+      try { localStorage.setItem("ata.detailsWidth", String(next)); } catch {}
       event.preventDefault();
     });
 
