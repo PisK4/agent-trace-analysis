@@ -1,5 +1,8 @@
 // ata web · 详情面板：全部 tab 的渲染与面板内事件绑定
 
+    // 上一帧 body 的归属标记（行|tab），用于判断 <details> 快照能否跨重绘复用。
+    let paintedDetailsKey = "";
+
     function paintInspector() {
       if (!selected) { app.dataset.inspect = ""; return; }
       app.dataset.inspect = "open";
@@ -10,6 +13,11 @@
       const tag = document.getElementById("dTag");
       const loc = document.getElementById("dLoc");
       const body = document.getElementById("dBody");
+      // follow 轮询每秒重绘会重置 DOM 里的 <details> 展开态（tool-card / jsonTree / think）。
+      // 重绘前快照；仅当行与 tab 都没换（结构大概率一致）且数量对得上才按原顺序恢复。
+      const detailsKey = `${selected.id}|${tab}`;
+      const sameLayout = detailsKey === paintedDetailsKey;
+      const openDetails = sameLayout ? [...body.querySelectorAll("details")].map(d => d.open) : [];
       if (selected.type === "request") {
         const row = byId(selected.id);
         tag.className = "kind request";
@@ -173,5 +181,8 @@
         });
         wrap.appendChild(btn);
       });
+      const after = body.querySelectorAll("details");
+      if (sameLayout && after.length === openDetails.length) after.forEach((d, i) => { d.open = openDetails[i]; });
+      paintedDetailsKey = detailsKey;
       highlightMd();
     }
