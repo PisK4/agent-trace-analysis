@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+import re
 
 from ata.plugins.pi import translate_hook
 from ata.project import audit_usage, list_compactions, list_tools, project_session, summarize_tools, summarize_usage, tail_preview
 from ata.schema import ValidationError, parse_event
+
+_RE_RENAME = re.compile(r"^/api/sessions/([^/]+)/title$")
 
 
 def make_server(ledger, webroot, host="127.0.0.1", port=8787):
@@ -67,6 +71,8 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 return self._json(200, {"ok": True, **run})
             if path == "/api/sessions":
                 return self._json(200, _list_sessions(ledger))
+            if path == "/api/annotations":
+                return self._json(200, {"ok": True, **ledger.annotations()})
             if path.startswith("/api/sessions/"):
                 rest = path[len("/api/sessions/"):]
                 sid, _, sub = rest.partition("/")
@@ -154,6 +160,24 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 except ValueError as exc:
                     return self._json(400, {"ok": False, "error": str(exc)})
                 return self._json(200, {"ok": True, "run_id": rid})
+            # 会话改名：服务端组一个 session.renamed 事件入账本，前端不必自己造 id/ts。
+            m = _RE_RENAME.match(parsed.path)
+            if m:
+                sid = m.group(1)
+                title = (raw.get("title") or "").strip() if isinstance(raw, dict) else ""
+                if not title:
+                    return self._json(400, {"ok": False, "error": "title required"})
+                meta = ledger.session(sid)
+                if meta is None:
+                    return self._json(404, {"ok": False, "error": "unknown session"})
+                ev = parse_event({
+                    "v": 1, "id": uuid.uuid4().hex, "agent_id": meta["agent"],
+                    "session_id": sid, "ts": int(time.time() * 1000),
+                    "type": "session.renamed", "turn": None,
+                    "payload": {"title": title},
+                })
+                ledger.append(ev)
+                return self._json(200, {"ok": True, "title": title})
             if parsed.path != "/api/events":
                 return self._json(404, {"ok": False, "error": "not found"})
             items = raw.get("events") if isinstance(raw, dict) and "events" in raw else [raw]

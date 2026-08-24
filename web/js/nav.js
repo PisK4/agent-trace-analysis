@@ -39,7 +39,11 @@
           </span>
         </button>`;
       }).join("");
-      document.querySelectorAll(".item").forEach(btn => btn.addEventListener("click", () => openSession(btn.dataset.sid)));
+      document.querySelectorAll(".item").forEach(btn => btn.addEventListener("click", () => {
+        // 侧栏换会话 = 离开标注板来路，返回钮不再亮
+        boardReturn = false;
+        openSession(btn.dataset.sid);
+      }));
       document.querySelectorAll(".item .ts").forEach(el => el.addEventListener("click", (e) => {
         e.stopPropagation();
         const ms = Number(el.dataset.ts);
@@ -50,6 +54,8 @@
     }
 
     function showHome() {
+      boardReturn = false;
+      document.getElementById("boardBackBtn").hidden = true;
       current = { id:"", agent:"", title:"", crumb:"", rows:[], older:false, cursor:0, toolsIndex:{} };
       selected = null;
       range = null;
@@ -63,6 +69,7 @@
       document.getElementById("homeEmpty").textContent = empty;
       document.getElementById("sidBox").hidden = true;
       document.getElementById("copySidBtn").hidden = true;
+      document.getElementById("renameBtn").hidden = true;
       tableFilter = "";
       resetSessionPanels();
       syncFilterChips();

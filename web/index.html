@@ -25,10 +25,19 @@
     <symbol id="i-alert" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21Zm12-3h-2v-2h2v2Zm0-4h-2v-4h2v4Z"/></symbol>
     <symbol id="i-fold" viewBox="0 0 24 24"><path d="M4 5h16v2H4zm0 6h16v2H4zm0 6h16v2H4z"/></symbol>
     <symbol id="i-unfold" viewBox="0 0 24 24"><path d="M4 5h16v2H4zm0 6h10v2H4zm0 6h16v2H4zm12-5 4 4-4 4v-8z"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12ZM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4Z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2Z"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M21.41 11.58l-9-9A2 2 0 0 0 11 2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 .59 1.42l9 9a2 2 0 0 0 2.82 0l7-7a2 2 0 0 0 0-2.84ZM6.5 8A1.5 1.5 0 1 1 8 6.5 1.5 1.5 0 0 1 6.5 8Z"/></symbol>
   </svg>
   <div class="shell" id="app" data-home="true">
     <aside class="nav">
       <button class="brand" type="button" id="homeBtn" aria-label="Back to home"><i class="mark"></i><b>Atatrace</b><em>ledger</em></button>
+      <!-- 视图切换：会话流 | 标注板。标注板是标注/归组的 CRUD 工作台 -->
+      <div class="view-switch" id="viewSwitch" role="group" aria-label="切换视图">
+        <button type="button" data-view="sessions" aria-pressed="true">会话</button>
+        <button type="button" data-view="board" aria-pressed="false">标注板</button>
+      </div>
       <div class="nav-label">Sessions</div>
       <div id="sessTabs" class="sess-tabs" role="group" aria-label="Filter by agent"></div>
       <div id="sessList"></div>
@@ -37,6 +46,8 @@
       <header class="top">
         <button class="ghost" id="navToggle" type="button" aria-pressed="false" title="收起/展开侧栏"><svg class="ico"><use href="#i-panel"/></svg></button>
         <div class="crumb" id="crumb">选择一条会话</div>
+        <button class="ghost" id="renameBtn" hidden type="button" title="重命名会话"><svg class="ico"><use href="#i-edit"/></svg></button>
+        <button class="ghost" id="boardBackBtn" hidden type="button" title="返回标注板">← 标注板</button>
         <button class="ghost" id="refreshBtn" type="button" title="重新拉取当前会话的最新数据（原地更新，不改变选中与滚动位置）"><svg class="ico"><use href="#i-refresh"/></svg>刷新</button>
         <button class="follow-toggle" id="live" type="button" aria-pressed="true"><span class="dot"></span><span class="txt">跟随尾部</span></button>
         <div class="grow"></div>
@@ -193,6 +204,61 @@
         <!-- 右缘细把手：点击折叠/展开详情栏，折叠后把手留在屏幕右缘 -->
         <button class="collapse-handle" id="detailsHandle" type="button" title="收起/展开详情栏" aria-label="收起/展开详情栏"></button>
       </section>
+      <!-- ═══ 标注板视图：标注/归组的 CRUD 工作台，与会话流互斥显示 ═══ -->
+      <section class="board-view" id="boardView" hidden>
+        <div class="zone-bar">
+          <span class="zone-name">Overview</span>
+          <span class="stat-badge" id="annoCountBadge"><svg class="ico"><use href="#i-tag"/></svg><b id="annoCountText">—</b></span>
+          <span class="stat-badge" id="assignCountBadge" hidden><svg class="ico"><use href="#i-wrench"/></svg><span id="assignCountText"></span></span>
+          <div class="grow"></div>
+          <button class="ghost chip" id="badFilter" aria-pressed="false" type="button">只看 bad</button>
+          <span class="popwrap">
+            <button class="ghost primary-btn" id="addAnnoBtn" type="button"><svg class="ico"><use href="#i-plus"/></svg>新增标注</button>
+            <!-- 标注表单：新增/编辑共用；编辑时预填并换标题 -->
+            <div class="pop" id="annoForm" hidden>
+              <div class="pop-title" id="annoFormTitle">新增标注</div>
+              <select class="board-input" id="annoSession" aria-label="选择会话"></select>
+              <div class="pop-row">
+                <button class="ghost" type="button" data-fv="good" aria-pressed="true">Good</button>
+                <button class="ghost" type="button" data-fv="bad" aria-pressed="false">Bad</button>
+                <button class="ghost" type="button" data-fv="partial" aria-pressed="false">Partial</button>
+              </div>
+              <input class="board-input" id="annoNote" type="text" placeholder="备注（可选）" maxlength="200" />
+              <div class="pop-row">
+                <button class="ghost primary-btn" id="annoSave" type="button" style="flex:1;justify-content:center">保存</button>
+                <button class="ghost" id="annoCancel" type="button">取消</button>
+              </div>
+            </div>
+          </span>
+        </div>
+        <div class="board-scroll" id="boardScroll">
+          <div class="board-section">
+            <div class="board-sec-head"><b>标注</b><span class="cnt" id="annoSecCnt"></span></div>
+            <div id="annoList"></div>
+          </div>
+          <div class="board-section">
+            <div class="board-sec-head">
+              <b>归组</b><span class="cnt" id="assignSecCnt"></span>
+              <span class="grow"></span>
+              <span class="popwrap">
+                <button class="ghost" id="addAssignBtn" type="button"><svg class="ico"><use href="#i-plus"/></svg>新建归组</button>
+                <!-- 归组表单：会话 × run × 任务 -->
+                <div class="pop" id="assignForm" hidden>
+                  <div class="pop-title">新建归组</div>
+                  <select class="board-input" id="assignSession" aria-label="选择会话"></select>
+                  <select class="board-input" id="assignRun2" aria-label="选择 run"></select>
+                  <input class="board-input" id="assignTask2" type="text" placeholder="任务 id（t-xxxx）" maxlength="40" />
+                  <div class="pop-row">
+                    <button class="ghost primary-btn" id="assignSave" type="button" style="flex:1;justify-content:center">归入</button>
+                    <button class="ghost" id="assignCancel" type="button">取消</button>
+                  </div>
+                </div>
+              </span>
+            </div>
+            <div id="runList"></div>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
   <div class="tip" id="tip"></div>
@@ -212,6 +278,7 @@
     <script src="js/stats.js"></script>
     <script src="js/usage.js"></script>
     <script src="js/interactions.js"></script>
+    <script src="js/board.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

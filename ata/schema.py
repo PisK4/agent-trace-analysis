@@ -8,7 +8,10 @@ ALLOWED_TYPES = {
     "system.upserted",
     "compaction.boundary",
     "session.scored",
+    "session.score.cleared",
     "session.assigned",
+    "session.unassigned",
+    "session.renamed",
 }
 ALLOWED_AGENTS = {"pi", "cue", "droid", "claude", "codex"}
 USAGE_KEYS = ("status", "input", "output", "cache_read", "cache_write", "total_tokens", "cost")
@@ -84,6 +87,10 @@ def _check_payload(typ, p):
         for key in ("run_id", "task_id"):
             if not isinstance(p.get(key), str) or not p[key]:
                 raise ValidationError(f"{key} required")
+    if typ == "session.unassigned" and not p.get("run_id"):
+        raise ValidationError("run_id required")
+    if typ == "session.renamed" and not (p.get("title") or "").strip():
+        raise ValidationError("title required")
 
 
 def _check_usage(u):

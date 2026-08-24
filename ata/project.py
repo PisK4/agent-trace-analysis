@@ -89,6 +89,10 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
         if ev["type"] == "session.opened":
             title = p.get("title") or title
             continue
+        if ev["type"] == "session.renamed":
+            # 用户改名权威：与账本索引同规则，后到的 opened 不覆盖
+            title = p.get("title") or title
+            continue
         if ev["type"] == "session.scored":
             scores.append({"value": p.get("value"), "note": p.get("note"), "ts": ev["ts"]})
             continue

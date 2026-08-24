@@ -142,6 +142,12 @@ class Ledger:
             self._conn.commit()
             return seq
 
+    def _has_renamed(self, session_id: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM events WHERE session_id=? AND type='session.renamed' LIMIT 1",
+            (session_id,)).fetchone()
+        return row is not None
+
     def _append_locked(self, event: dict) -> int:
         """调用方必须已持有 _lock。返回 seq（重复 id 返回原 seq）。"""
         sid = event["session_id"]
@@ -157,6 +163,7 @@ class Ledger:
         ).fetchone()
         seq = (int(row["last_seq"]) if row else 0) + 1
         title = (row["title"] if row else sid)
+        renamed = title != sid and bool(row) and self._has_renamed(sid)
         turns = int(row["turns"]) if row else 0
         last_ts = int(event["ts"])
         if row:
@@ -171,8 +178,18 @@ class Ledger:
         # 非 opened 事件必须保留已有父引用，否则后续 UPDATE 会把血缘抹成 NULL。
         parent = row["parent_session_id"] if row else None
         if event["type"] == "session.opened":
-            title = event["payload"].get("title") or title
+            # 用户改过名（renamed）后，opened 的标题只做兜底，不再覆盖
+            if not renamed:
+                title = event["payload"].get("title") or title
             parent = event["payload"].get("parent_session")
+        elif event["type"] == "session.renamed":
+            # 用户改名：与 opened 同走投影索引 latest-wins，后续 opened 不再覆盖
+            title = event["payload"].get("title") or title
+            renamed = True
+        elif event["type"] == "session.renamed":
+            # 用户改名：与 opened 同走投影索引 latest-wins，后续 opened 不再覆盖
+            # （opened 只在 title 为空时兜底，见上）。
+            title = event["payload"].get("title") or title
         turn = event.get("turn")
         if isinstance(turn, int) and turn > turns:
             turns = turn
@@ -358,3 +375,67 @@ class Ledger:
             out.append({"session_id": r["session_id"], "seq": int(r["seq"]),
                         "ts": int(r["ts"]), **payload})
         return out
+
+    def annotations(self) -> dict:
+        """标注板聚合读取：latest-wins 折叠墓碑后的有效标注/归组，附会话元信息。
+
+        返回 {scores: [{session_id, value, note, ts, agent, title, event_count,
+        error_count}], assignments: [{session_id, run_id, task_id, ts, agent,
+        title, event_count, error_count}]}，各自按 ts 倒序。
+        墓碑：session.score.cleared 清标注；session.unassigned 清归组
+        （run_id+session_id 粒度，同会话同 run 的全部 task 一起移除）。"""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, seq, ts, type, event_json FROM events"
+                " WHERE type IN ('session.scored','session.score.cleared',"
+                "                'session.assigned','session.unassigned')"
+                " ORDER BY seq").fetchall()
+            metas = {
+                r["session_id"]: r for r in self._conn.execute(
+                    "SELECT s.session_id, s.agent_id, s.title, s.last_ts, s.first_ts,"
+                    " COALESCE(c.event_count,0) AS event_count,"
+                    " COALESCE(c.error_count,0) AS error_count"
+                    " FROM sessions s LEFT JOIN ("
+                    "   SELECT session_id, COUNT(*) AS event_count,"
+                    "   SUM(CASE WHEN type='tool.upserted'"
+                    "              AND json_extract(event_json,'$.payload.status')='failed'"
+                    "            THEN 1 ELSE 0 END) AS error_count"
+                    "   FROM events GROUP BY session_id) c"
+                    " ON c.session_id = s.session_id").fetchall()
+            }
+        scores: dict[str, dict] = {}
+        # 归组键 run_id+session_id：unassigned 墓碑按此粒度整组撤销
+        assigns: dict[tuple, dict] = {}
+        for r in rows:
+            payload = json.loads(r["event_json"])["payload"]
+            sid = r["session_id"]
+            if r["type"] == "session.scored":
+                scores[sid] = {"session_id": sid, "value": payload.get("value"),
+                               "note": payload.get("note"), "ts": int(r["ts"]),
+                               "seq": int(r["seq"])}
+            elif r["type"] == "session.score.cleared":
+                scores.pop(sid, None)
+            elif r["type"] == "session.assigned":
+                assigns[(payload.get("run_id"), sid)] = {
+                    "session_id": sid, "run_id": payload.get("run_id"),
+                    "task_id": payload.get("task_id"), "ts": int(r["ts"]),
+                    "seq": int(r["seq"])}
+            elif r["type"] == "session.unassigned":
+                assigns.pop((payload.get("run_id"), sid), None)
+        def enrich(item):
+            m = metas.get(item["session_id"])
+            if m:
+                item.update({"agent": m["agent_id"], "title": m["title"],
+                             "event_count": int(m["event_count"]),
+                             "error_count": int(m["error_count"])})
+            else:
+                # 会话元数据缺失（理论不可达）：仍返回条目，前端按未知渲染
+                item.update({"agent": None, "title": item["session_id"],
+                             "event_count": 0, "error_count": 0})
+            return item
+        return {
+            "scores": sorted((enrich(s) for s in scores.values()),
+                             key=lambda s: s["ts"], reverse=True),
+            "assignments": sorted((enrich(a) for a in assigns.values()),
+                                  key=lambda a: a["ts"], reverse=True),
+        }

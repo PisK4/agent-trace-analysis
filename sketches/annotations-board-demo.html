@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atatrace · 标注板 mock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Token：与 web/style.css / ui-refresh-demo-v2 同源 ── */
+    :root {
+      --page: #FAFAFB; --canvas: #F1F2F3; --surface: #FFFFFF;
+      --field: #F2F2F3; --inset: #F7F8F9; --hover: #F4F5F6; --hover-2: #E7E9EB;
+      --line: #ECEDEF; --line-strong: #E0E2E5;
+      --ink: #1F2124; --ink-2: #62656B; --ink-3: #9A9DA3;
+      --accent: #0285FF; --accent-ink: #0170DD; --accent-tint: #E9F3FF;
+      --green: #189A4D; --green-tint: #E8F5ED;
+      --orange: #EF720C; --orange-tint: #FDF1E5;
+      --red: #E3474C; --red-tint: #FCECEC;
+      --assistant: #7A4FD3; --assistant-tint: #F1E9FF;
+      --cyan: #0E8AA8; --cyan-tint: #E6F6FA;
+      --pink: #DB2777; --pink-tint: #FCE7F3;
+      --stripe: #49494913; --tooltip: #1A1B1E;
+      --shadow-btn: 0 0 0 1px #E0E2E5, 0 1px 2px #1018280D;
+      --shadow-overlay: 0 0 0 1px #ECEDEF, 0 8px 28px #0001;
+      --shadow-inset-field: inset 0 1px 2px #0000001F;
+      --h-chip: 20px; --h-ghost: 24px; --h-primary: 28px;
+    }
+    html.dark {
+      color-scheme: dark;
+      --page: #17181A; --canvas: #1C1D1F; --surface: #232427;
+      --field: #2B2C2F; --inset: #1F2022; --hover: #2A2B2E; --hover-2: #313236;
+      --line: #2E3033; --line-strong: #3A3C40;
+      --ink: #F2F3F4; --ink-2: #A5A8AD; --ink-3: #6C6F75;
+      --accent: #3D9AFF; --accent-ink: #7EC0FF; --accent-tint: #3D9AFF29;
+      --green: #3DBB72; --green-tint: #3DBB7224;
+      --orange: #F68F3C; --orange-tint: #F68F3C24;
+      --red: #EE5C61; --red-tint: #EE5C6124;
+      --assistant: #8B8DFF; --assistant-tint: #8B8DFF24;
+      --cyan: #22D3EE; --cyan-tint: #22D3EE24;
+      --pink: #F472B6; --pink-tint: #F472B624;
+      --stripe: #FFFFFF0E; --tooltip: #111214;
+      --shadow-btn: 0 0 0 1px #3A3C40, 0 1px 2px #0000004D;
+      --shadow-overlay: 0 0 0 1px #3A3C40, 0 8px 28px #00000057;
+      --shadow-inset-field: inset 0 1px 2px #0006;
+    }
+    html:not(.dark) { color-scheme: light; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: var(--canvas);
+      background-image: repeating-linear-gradient(-45deg, transparent 0, transparent 7px, var(--stripe) 7px, var(--stripe) 8px);
+      color: var(--ink);
+      font: 13px/19.5px Inter, ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: -.01em;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+    button, input, select { font: inherit; color: inherit; }
+    button { border: 0; background: none; cursor: pointer; }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 1px solid var(--accent); outline-offset: -1px;
+    }
+    svg.ico { width: 13px; height: 13px; flex: none; fill: currentColor; }
+
+    .frame {
+      display: grid;
+      grid-template-columns: 232px minmax(0, 1fr);
+      width: calc(100vw - 48px); height: calc(100vh - 76px);
+      margin: 12px 24px 16px;
+      border-radius: 10px; overflow: hidden;
+      background: var(--surface);
+      box-shadow: var(--shadow-overlay);
+    }
+    html.dark .frame { box-shadow: 0 0 0 1px var(--line), 0 8px 28px #00000057; }
+
+    /* ═══ 侧栏（与现网一致，顶部加视图切换） ═══ */
+    .nav {
+      display: flex; flex-direction: column; min-height: 0;
+      background: var(--page);
+      box-shadow: inset -1px 0 0 var(--line);
+    }
+    .brand {
+      display: flex; align-items: center; gap: 10px;
+      width: 100%; height: 52px; padding: 0 14px; text-align: left;
+    }
+    .brand:hover { background: var(--hover); }
+    .mark {
+      width: 22px; height: 22px; border-radius: 6px; background: var(--ink);
+      display: grid; place-items: center; color: var(--page);
+    }
+    .mark svg.ico { width: 12px; height: 12px; }
+    .brand b { font-size: 15px; font-weight: 650; letter-spacing: -.02em; }
+    .brand em { color: var(--ink-3); font-style: normal; margin-left: auto;
+                font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10px; }
+    /* 视图切换：会话 | 标注板 —— 标注板入口收在侧栏顶部，不占主区 */
+    .view-switch {
+      display: flex; gap: 4px; margin: 0 10px 6px; padding: 3px;
+      border-radius: 8px; background: var(--field);
+      box-shadow: var(--shadow-inset-field);
+    }
+    .view-switch button {
+      flex: 1; height: 22px; border-radius: 6px;
+      color: var(--ink-3); font-size: 11.5px; font-weight: 500;
+    }
+    .view-switch button[aria-pressed="true"] {
+      background: var(--surface); color: var(--ink); font-weight: 600;
+      box-shadow: var(--shadow-btn);
+    }
+    .nav-label {
+      padding: 8px 14px 4px; color: var(--ink-3);
+      font-size: 10.5px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase;
+    }
+    .sess-tabs {
+      display: flex; flex-wrap: wrap; gap: 0 2px; margin: 0 10px 6px;
+      box-shadow: inset 0 -1px 0 var(--line);
+    }
+    .sess-tabs .tab {
+      display: inline-flex; align-items: center; gap: 5px;
+      height: 26px; padding: 0 8px;
+      color: var(--ink-3); font-size: 11.5px; font-weight: 500; line-height: 1;
+    }
+    .sess-tabs .tab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--agent, var(--ink-3)); }
+    .sess-tabs .tab:hover { color: var(--ink); }
+    .sess-tabs .tab[aria-pressed="true"] {
+      color: var(--ink); font-weight: 600;
+      background: var(--agent-soft, var(--hover));
+      box-shadow: inset 0 -1.5px 0 var(--agent, var(--ink));
+    }
+    .agent-claude { --agent: var(--orange); --agent-soft: var(--orange-tint); }
+    .agent-codex  { --agent: var(--green);  --agent-soft: var(--green-tint); }
+    .agent-pi     { --agent: var(--ink);    --agent-soft: var(--hover); }
+    .agent-droid  { --agent: var(--cyan);   --agent-soft: var(--cyan-tint); }
+    .agent-cue    { --agent: var(--pink);   --agent-soft: var(--pink-tint); }
+    #sessList { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 4px 10px 12px; }
+    .item {
+      display: flex; flex-direction: column; gap: 3px;
+      width: 100%; padding: 8px 10px; border-radius: 8px;
+      background: var(--hover);
+      box-shadow: inset 0 0 0 1px var(--line);
+      text-align: left; transition: box-shadow .15s;
+    }
+    .item:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
+    .item .t {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 12.5px; font-weight: 500; color: var(--ink);
+    }
+    .item .meta {
+      display: flex; align-items: center; gap: 8px;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 10px; color: var(--ink-3); line-height: 14px;
+      white-space: nowrap; overflow: hidden;
+    }
+    .item .meta .ag { color: var(--agent, var(--ink-3)); overflow: hidden; text-overflow: ellipsis; }
+    .item .meta > :not(.ag) { flex: none; }
+    .item .meta .errs { display: inline-flex; align-items: center; gap: 3px; color: var(--red); }
+    .item .meta .ts { margin-left: auto; }
+    .adot {
+      width: 9px; height: 9px; border-radius: 50%; flex: none;
+      background: transparent;
+      box-shadow: inset 0 0 0 1.25px var(--ink-3); opacity: .5;
+    }
+    .adot[data-v="good"]    { background: var(--green);  box-shadow: none; opacity: 1; }
+    .adot[data-v="bad"]     { background: var(--red);    box-shadow: none; opacity: 1; }
+    .adot[data-v="partial"] { background: var(--orange); box-shadow: none; opacity: 1; }
+    .item .adot { width: 7px; height: 7px; }
+
+    /* ═══ 主区 ═══ */
+    .stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .top {
+      display: flex; align-items: center; gap: 10px;
+      height: 44px; padding: 0 12px;
+      box-shadow: inset 0 -1px 0 var(--line); flex: none;
+    }
+    .crumb {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--ink-2); font-size: 12.5px;
+    }
+    .crumb b { color: var(--ink); font-weight: 500; }
+    .grow { flex: 1; }
+    .divider { width: 1px; height: 16px; background: var(--line-strong); flex: none; }
+    .ghost {
+      display: inline-flex; align-items: center; gap: 5px;
+      height: var(--h-ghost); padding: 0 8px; border-radius: 6px;
+      color: var(--ink-3); font-size: 12px;
+      transition: background .12s, color .12s;
+    }
+    .ghost:hover, .ghost[aria-pressed="true"] { background: var(--hover-2); color: var(--ink); }
+    .ghost.primary {
+      background: var(--accent); color: #fff; font-weight: 500;
+    }
+    .ghost.primary:hover { background: var(--accent-ink); color: #fff; }
+    .searchwrap { position: relative; display: inline-flex; }
+    .searchwrap .sico {
+      position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
+      width: 12px; height: 12px; fill: var(--ink-3); pointer-events: none;
+    }
+    .search {
+      width: 168px; height: var(--h-ghost); padding: 0 8px 0 26px;
+      border: 0; border-radius: 6px; background: var(--field);
+      box-shadow: var(--shadow-inset-field); font-size: 12px;
+    }
+    .text-input, select.text-input { height: var(--h-ghost); padding: 0 8px; border: 0; border-radius: 6px; background: var(--field); box-shadow: var(--shadow-inset-field); font-size: 12px; }
+    .theme-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: var(--h-ghost); height: var(--h-ghost); border-radius: 6px;
+      color: var(--ink-3); flex: none;
+    }
+    .theme-btn:hover { background: var(--hover-2); color: var(--ink); }
+
+    /* 概览徽章行 */
+    .zone-bar {
+      display: flex; align-items: center; gap: 8px;
+      height: var(--h-primary); margin: 10px 12px 0; padding: 0 2px;
+      flex: none;
+    }
+    .zone-name {
+      font-size: 10.5px; font-weight: 500; letter-spacing: .06em;
+      text-transform: uppercase; color: var(--ink-3);
+    }
+    .stat-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      height: var(--h-ghost); padding: 0 10px; border-radius: 999px;
+      background: var(--surface); box-shadow: var(--shadow-btn);
+      font-size: 11px; color: var(--ink-2); cursor: pointer;
+      transition: box-shadow .15s;
+    }
+    .stat-badge:hover { box-shadow: 0 0 0 1px var(--accent), var(--shadow-btn); }
+    .stat-badge b { font-family: "JetBrains Mono", ui-monospace, monospace; font-weight: 500; color: var(--ink); }
+    .stat-badge .fbadge { color: var(--red); font-weight: 600; }
+
+    /* ═══ 标注板主体：双区滚动 ═══ */
+    .board { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 12px 20px; }
+    .section { margin-top: 10px; }
+    .sec-head {
+      display: flex; align-items: center; gap: 10px;
+      margin: 0 2px 8px;
+    }
+    .sec-head b { font-size: 12.5px; font-weight: 600; }
+    .sec-head .cnt { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10px; color: var(--ink-3); }
+    .sec-head .grow { flex: 1; }
+
+    /* 标注行：卡片表格式，一行一条 */
+    .arow {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 10px; border-radius: 8px;
+      background: var(--hover); box-shadow: inset 0 0 0 1px var(--line);
+      margin-bottom: 6px; transition: box-shadow .15s;
+    }
+    .arow:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
+    .arow .adot { width: 9px; height: 9px; }
+    .arow .who { flex: 1; min-width: 0; }
+    .arow .who .t {
+      display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 12.5px; font-weight: 500; cursor: pointer;
+    }
+    .arow .who .t:hover { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; }
+    .arow .who .sub {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 10px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      display: block;
+    }
+    .arow .note {
+      flex: 1.2; min-width: 0; color: var(--ink-2); font-size: 12px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .arow .note i { color: var(--ink-3); font-style: normal; }
+    .arow .ts {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 10px; color: var(--ink-3); flex: none;
+    }
+    .arow .acts { display: inline-flex; gap: 2px; flex: none; }
+    .icon-btn {
+      display: inline-grid; place-items: center;
+      width: 22px; height: 22px; border-radius: 5px; color: var(--ink-3);
+    }
+    .icon-btn:hover { background: var(--hover-2); color: var(--ink); }
+    .icon-btn.danger:hover { color: var(--red); background: var(--red-tint); }
+    .vchip {
+      height: var(--h-chip); padding: 0 8px; border-radius: 999px;
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 10.5px; font-weight: 600; flex: none;
+    }
+    .vchip.good    { background: var(--green-tint);  color: var(--green); }
+    .vchip.bad     { background: var(--red-tint);    color: var(--red); }
+    .vchip.partial { background: var(--orange-tint); color: var(--orange); }
+    .agchip {
+      height: var(--h-chip); padding: 0 7px; border-radius: 4px; flex: none;
+      display: inline-flex; align-items: center;
+      background: var(--agent-soft, var(--field)); color: var(--agent, var(--ink-2));
+      font-size: 10px; font-weight: 600;
+    }
+
+    /* 归组区：run → task → 会话 三层 */
+    .run {
+      border-radius: 10px; background: var(--inset);
+      box-shadow: inset 0 0 0 1px var(--line);
+      margin-bottom: 10px; overflow: hidden;
+    }
+    .run-head {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px;
+      background: var(--hover); box-shadow: inset 0 -1px 0 var(--line);
+    }
+    .run-head b { font-size: 12.5px; }
+    .run-head .fp {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 10px; color: var(--ink-3);
+    }
+    .run-head .grow { flex: 1; }
+    .run-body { padding: 8px 12px 10px; }
+    .task {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 6px 0 2px;
+    }
+    .task + .task { border-top: 1px dashed var(--line); margin-top: 6px; padding-top: 10px; }
+    .task-id {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 11px; font-weight: 500; color: var(--accent-ink);
+      flex: none; width: 64px; padding-top: 3px;
+    }
+    .task-sessions { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    .tsess {
+      display: flex; align-items: center; gap: 8px;
+      padding: 3px 8px; border-radius: 6px; background: var(--surface);
+      box-shadow: inset 0 0 0 1px var(--line);
+      font-size: 12px;
+    }
+    .tsess:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
+    .tsess .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+    .tsess .t:hover { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; }
+    .tsess .meta { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10px; color: var(--ink-3); flex: none; }
+    .task .add-sess { color: var(--ink-3); font-size: 11px; height: 20px; padding: 0 6px; border-radius: 5px; }
+    .task .add-sess:hover { background: var(--hover-2); color: var(--ink); }
+
+    /* 弹层表单（新增/编辑标注、归组） */
+    .popwrap { position: relative; display: inline-flex; }
+    .pop {
+      position: absolute; top: calc(100% + 8px); right: 0; z-index: 80;
+      background: var(--surface); border-radius: 10px;
+      box-shadow: 0 0 0 1px var(--line-strong), 0 12px 30px #10182822;
+      padding: 12px 14px; min-width: 280px;
+      display: flex; flex-direction: column; gap: 9px;
+      animation: fadeUp .14s ease-out;
+    }
+    .pop[hidden] { display: none; }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(4px) scale(.98); }
+      to   { opacity: 1; transform: none; }
+    }
+    .pop-title { font-size: 10.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em;
+                 font-family: "JetBrains Mono", ui-monospace, monospace; }
+    .pop-row { display: flex; gap: 6px; }
+    .pop label { font-size: 11px; color: var(--ink-2); display: flex; flex-direction: column; gap: 4px; }
+
+    /* Toast */
+    .toasts {
+      position: fixed; right: 20px; bottom: 20px; z-index: 200;
+      display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+    }
+    .toast {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; border-radius: 8px;
+      background: var(--tooltip); color: #F4F5F6;
+      font-size: 12px; box-shadow: 0 8px 24px #0005;
+      animation: fadeUp .18s ease-out;
+    }
+    .toast.out { opacity: 0; transform: translateY(4px); transition: all .22s ease-in; }
+    .toast.ok .tico { color: #3DBB72; }
+    .toast.err .tico { color: #EE5C61; }
+
+    .empty {
+      padding: 28px 0; text-align: center; color: var(--ink-3); font-size: 12px;
+    }
+
+    .demo-note {
+      display: flex; align-items: center; gap: 14px;
+      height: 36px; margin: 12px 24px 0; padding: 0 14px;
+      border-radius: 8px; background: var(--surface);
+      box-shadow: var(--shadow-btn);
+      font-size: 11.5px; color: var(--ink-2);
+    }
+    .demo-note b { color: var(--ink); font-weight: 600; }
+    .demo-note .spacer { flex: 1; }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><path d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5Zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9Z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10ZM2 13h2a1 1 0 0 0 0-2H2a1 1 0 0 0 0 2Zm18 0h2a1 1 0 0 0 0-2h-2a1 1 0 0 0 0 2ZM11 2v2a1 1 0 0 0 2 0V2a1 1 0 0 0-2 0Zm0 18v2a1 1 0 0 0 2 0v-2a1 1 0 0 0-2 0ZM5.99 4.58a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 0 0 1.41-1.41L5.99 4.58Zm12.37 12.37a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 0 0 1.41 1.41l1.06-1.06Zm1.06-10.96a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 0 0 1.41 1.41l1.06-1.06ZM7.05 18.36a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 0 0 1.41 1.41l1.06-1.06Z"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12.34 2.02a10 10 0 1 0 9.64 9.64A8 8 0 0 1 12.34 2.02Z"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 24 24"><path d="M3 3h18a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm1 2v14h7V5H4Zm9 0v14h8V5h-8Z"/></symbol>
+  <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M22.7 19 13.6 9.9c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1 .1-1.4Z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 19 17.59 13.41 12z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21Zm12-3h-2v-2h2v2Zm0-4h-2v-4h2v4Z"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12ZM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4Z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2Z"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M21.41 11.58l-9-9A2 2 0 0 0 11 2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 .59 1.42l9 9a2 2 0 0 0 2.82 0l7-7a2 2 0 0 0 0-2.84ZM6.5 8A1.5 1.5 0 1 1 8 6.5 1.5 1.5 0 0 1 6.5 8Z"/></symbol>
+</svg>
+
+<div class="demo-note">
+  <b>标注板 mock</b>
+  <span>侧栏切换视图（会话 | 标注板）· 标注增删改查 · 归组按 run→task→会话 三层 · 墓碑删除（追加 cleared/unassigned，不物理删）· 全部交互为前端 mock</span>
+  <span class="spacer"></span>
+  <button class="ghost" id="noteThemeBtn"><svg class="ico"><use href="#i-moon"/></svg>切换主题</button>
+</div>
+
+<div class="frame" id="app">
+
+  <!-- ═══ 侧栏 ═══ -->
+  <aside class="nav">
+    <button class="brand" type="button"><i class="mark"><svg class="ico"><use href="#i-bolt"/></svg></i><b>Atatrace</b><em>board mock</em></button>
+    <div class="view-switch" role="group" aria-label="切换视图">
+      <button type="button" data-view="sessions" aria-pressed="false">会话</button>
+      <button type="button" data-view="board" aria-pressed="true">标注板</button>
+    </div>
+    <div class="nav-label">Sessions</div>
+    <div class="sess-tabs" role="group" aria-label="Filter by agent">
+      <button class="tab" aria-pressed="true">全部</button>
+      <button class="tab agent-claude" aria-pressed="false"><i class="dot"></i>Claude Code</button>
+      <button class="tab agent-pi" aria-pressed="false"><i class="dot"></i>Pi</button>
+    </div>
+    <div id="sessList">
+      <button class="item agent-pi" type="button">
+        <span class="t">当前 claude code 我用 ccswit…</span>
+        <span class="meta"><span class="ag">Pi</span><span>277 evts</span><span class="errs"><svg class="ico" style="width:9px;height:9px"><use href="#i-alert"/></svg>5</span><span class="adot" data-v="bad"></span><span class="ts">23:37</span></span>
+      </button>
+      <button class="item agent-claude" type="button">
+        <span class="t">修复 ata usage 面板缓存命中率…</span>
+        <span class="meta"><span class="ag">Claude Code</span><span>142 evts</span><span class="adot" data-v="good"></span><span class="ts">14:32</span></span>
+      </button>
+      <button class="item agent-claude" type="button">
+        <span class="t">前端设计语言老旧</span>
+        <span class="meta"><span class="ag">Claude Code</span><span>267 evts</span><span class="adot"></span><span class="ts">23:55</span></span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ═══ 主区：标注板 ═══ -->
+  <main class="stage">
+    <header class="top">
+      <button class="ghost" type="button" title="收起/展开侧栏"><svg class="ico"><use href="#i-panel"/></svg></button>
+      <div class="crumb"><b>标注板</b> · 标注与归组总览</div>
+      <div class="grow"></div>
+      <span class="popwrap">
+        <button class="ghost primary" id="addAnnoBtn" type="button"><svg class="ico"><use href="#i-plus"/></svg>新增标注</button>
+        <div class="pop" id="annoForm" hidden>
+          <div class="pop-title" id="formTitle">新增标注</div>
+          <label>会话<select class="text-input" id="fSession">
+            <option>当前 claude code 我用 ccswitch…（Pi · 277 evts）</option>
+            <option>修复 ata usage 面板缓存命中率…（Claude · 142 evts）</option>
+            <option>调研 AirJelly 悬浮球可行性（pi · 56 evts）</option>
+          </select></label>
+          <label>评价<div class="pop-row">
+            <button class="ghost" data-fv="good" aria-pressed="true">Good</button>
+            <button class="ghost" data-fv="bad" aria-pressed="false">Bad</button>
+            <button class="ghost" data-fv="partial" aria-pressed="false">Partial</button>
+          </div></label>
+          <label>备注<input class="text-input" id="fNote" type="text" placeholder="备注（可选）" maxlength="200" /></label>
+          <div class="pop-row">
+            <button class="ghost primary" id="fSave" style="flex:1;justify-content:center">保存</button>
+            <button class="ghost" id="fCancel">取消</button>
+          </div>
+        </div>
+      </span>
+      <div class="divider"></div>
+      <span class="searchwrap">
+        <svg class="sico"><use href="#i-search"/></svg>
+        <input class="search" id="q" type="search" placeholder="搜标题 / 备注 / 任务" />
+      </span>
+      <button class="theme-btn" id="themeBtn" type="button"><svg class="ico"><use href="#i-moon"/></svg></button>
+    </header>
+
+    <div class="zone-bar">
+      <span class="zone-name">Overview</span>
+      <span class="stat-badge"><svg class="ico"><use href="#i-tag"/></svg><b>12</b> 条标注</span>
+      <span class="stat-badge"><b class="fbadge">4 bad</b></span>
+      <span class="stat-badge"><svg class="ico"><use href="#i-wrench"/></svg><b>2</b> runs · <b>5</b> 任务 · <b>8</b> 会话已归组</span>
+      <div class="grow"></div>
+      <button class="ghost" id="filterBad" aria-pressed="false">只看 bad</button>
+    </div>
+
+    <div class="board">
+
+      <!-- ═══ 区一：标注 ═══ -->
+      <section class="section">
+        <div class="sec-head">
+          <b>标注</b><span class="cnt">12 条 · 按时间倒序</span>
+          <span class="grow"></span>
+        </div>
+
+        <div class="arow">
+          <span class="adot" data-v="bad"></span>
+          <span class="vchip bad">bad</span>
+          <span class="who">
+            <span class="t">当前 claude code 我用 ccswitch 配置了模型，但仍然不能用，报错如下，你需要 fix…</span>
+            <span class="sub">Pi · 277 evts · 5 failed · 23:37</span>
+          </span>
+          <span class="note">ccswitch 切换后 claude 仍走旧 provider，环境变量未生效</span>
+          <span class="ts">08-24 23:58</span>
+          <span class="acts">
+            <button class="icon-btn" title="编辑"><svg class="ico"><use href="#i-edit"/></svg></button>
+            <button class="icon-btn danger" title="删除（追加墓碑，可追溯）"><svg class="ico"><use href="#i-trash"/></svg></button>
+          </span>
+        </div>
+
+        <div class="arow">
+          <span class="adot" data-v="good"></span>
+          <span class="vchip good">good</span>
+          <span class="who">
+            <span class="t">修复 ata usage 面板缓存命中率断口</span>
+            <span class="sub">Claude Code · 142 evts · 14:32</span>
+          </span>
+          <span class="note">定位到 compact 事件 payload 不带 usage，修法干净</span>
+          <span class="ts">08-24 15:02</span>
+          <span class="acts">
+            <button class="icon-btn" title="编辑"><svg class="ico"><use href="#i-edit"/></svg></button>
+            <button class="icon-btn danger" title="删除"><svg class="ico"><use href="#i-trash"/></svg></button>
+          </span>
+        </div>
+
+        <div class="arow">
+          <span class="adot" data-v="partial"></span>
+          <span class="vchip partial">partial</span>
+          <span class="who">
+            <span class="t">调研 AirJelly 悬浮球可行性</span>
+            <span class="sub">Pi · 56 evts · 1 failed · 11:20</span>
+          </span>
+          <span class="note"><i>（无备注）</i></span>
+          <span class="ts">08-23 21:44</span>
+          <span class="acts">
+            <button class="icon-btn" title="编辑"><svg class="ico"><use href="#i-edit"/></svg></button>
+            <button class="icon-btn danger" title="删除"><svg class="ico"><use href="#i-trash"/></svg></button>
+          </span>
+        </div>
+      </section>
+
+      <!-- ═══ 区二：归组 ═══ -->
+      <section class="section">
+        <div class="sec-head">
+          <b>归组</b><span class="cnt">2 runs · 按任务聚合</span>
+          <span class="grow"></span>
+          <button class="ghost" type="button"><svg class="ico"><use href="#i-plus"/></svg>新建归组</button>
+        </div>
+
+        <div class="run">
+          <div class="run-head">
+            <b>R1 · ui-refresh 落地轮</b>
+            <span class="fp">taskset a3f8c2… · 08-24 建</span>
+            <span class="grow"></span>
+            <span class="cnt">3 任务 · 5 会话</span>
+            <span class="acts">
+              <button class="icon-btn danger" title="删除整条归组 run（墓碑）"><svg class="ico"><use href="#i-trash"/></svg></button>
+            </span>
+          </div>
+          <div class="run-body">
+            <div class="task">
+              <span class="task-id">t-a3f8</span>
+              <div class="task-sessions">
+                <div class="tsess">
+                  <span class="t">修复 ata usage 面板缓存命中率断口</span>
+                  <span class="adot" data-v="good"></span>
+                  <span class="meta">Claude · 142 evts · 14:32</span>
+                  <button class="icon-btn danger" title="移出归组（追加 unassigned）"><svg class="ico"><use href="#i-x"/></svg></button>
+                </div>
+                <div class="tsess">
+                  <span class="t">usage 面板断口复现与定位</span>
+                  <span class="adot" data-v="good"></span>
+                  <span class="meta">Claude · 89 evts · 13:10</span>
+                  <button class="icon-btn danger" title="移出归组"><svg class="ico"><use href="#i-x"/></svg></button>
+                </div>
+                <button class="add-sess" type="button">+ 挂会话</button>
+              </div>
+            </div>
+            <div class="task">
+              <span class="task-id">t-b7d1</span>
+              <div class="task-sessions">
+                <div class="tsess">
+                  <span class="t">usage 徽章加 token 总量摘要</span>
+                  <span class="adot"></span>
+                  <span class="meta">Claude · 39 evts · 00:18</span>
+                  <button class="icon-btn danger" title="移出归组"><svg class="ico"><use href="#i-x"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="run">
+          <div class="run-head">
+            <b>R2 · ccswitch 诊断轮</b>
+            <span class="fp">taskset a3f8c2… · 08-25 建</span>
+            <span class="grow"></span>
+            <span class="cnt">2 任务 · 3 会话</span>
+            <span class="acts">
+              <button class="icon-btn danger" title="删除整条归组 run（墓碑）"><svg class="ico"><use href="#i-trash"/></svg></button>
+            </span>
+          </div>
+          <div class="run-body">
+            <div class="task">
+              <span class="task-id">t-c2e9</span>
+              <div class="task-sessions">
+                <div class="tsess">
+                  <span class="t">当前 claude code 我用 ccswitch 配置了模型，但仍然不能用…</span>
+                  <span class="adot" data-v="bad"></span>
+                  <span class="meta">Pi · 277 evts · 23:37</span>
+                  <button class="icon-btn danger" title="移出归组"><svg class="ico"><use href="#i-x"/></svg></button>
+                </div>
+                <div class="tsess">
+                  <span class="t">sub2api provider 排查</span>
+                  <span class="adot" data-v="bad"></span>
+                  <span class="meta">Pi · 64 evts · 22:50</span>
+                  <button class="icon-btn danger" title="移出归组"><svg class="ico"><use href="#i-x"/></svg></button>
+                </div>
+                <button class="add-sess" type="button">+ 挂会话</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<div class="toasts" id="toasts" role="log" aria-live="polite"></div>
+
+<script>
+  // ── 主题 ──
+  if (location.hash === "#dark") document.documentElement.classList.add("dark");
+  const setThemeIcon = () =>
+    document.querySelectorAll("#themeBtn use, #noteThemeBtn use")
+      .forEach(u => u.setAttribute("href", document.documentElement.classList.contains("dark") ? "#i-sun" : "#i-moon"));
+  document.getElementById("themeBtn").addEventListener("click", () => { document.documentElement.classList.toggle("dark"); setThemeIcon(); });
+  document.getElementById("noteThemeBtn").addEventListener("click", () => { document.documentElement.classList.toggle("dark"); setThemeIcon(); });
+
+  // ── toast（mock 版，落地时复用 util.js 的全局 toast） ──
+  function toast(msg, kind = "ok") {
+    const box = document.getElementById("toasts");
+    const el = document.createElement("div");
+    el.className = `toast ${kind}`;
+    el.setAttribute("role", "status");
+    el.innerHTML = `<span class="tico"><svg class="ico"><use href="#i-${kind === "ok" ? "check" : "alert"}"/></svg></span>${msg}`;
+    box.appendChild(el);
+    setTimeout(() => { el.classList.add("out"); setTimeout(() => el.remove(), 240); }, 2400);
+  }
+
+  // ── 视图切换（mock：只切高亮） ──
+  document.querySelectorAll(".view-switch button").forEach(btn =>
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".view-switch button").forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
+      if (btn.dataset.view === "sessions") toast("mock：切回会话视图（本 demo 只做标注板）");
+    }));
+
+  // ── 新增/编辑标注表单 ──
+  const form = document.getElementById("annoForm");
+  document.getElementById("addAnnoBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    form.hidden = !form.hidden;
+  });
+  form.addEventListener("click", e => e.stopPropagation());
+  document.addEventListener("click", () => { if (!form.hidden) form.hidden = true; });
+  form.querySelectorAll("[data-fv]").forEach(btn =>
+    btn.addEventListener("click", () => {
+      form.querySelectorAll("[data-fv]").forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
+    }));
+  document.getElementById("fCancel").addEventListener("click", () => { form.hidden = true; });
+  document.getElementById("fSave").addEventListener("click", () => {
+    form.hidden = true;
+    toast("mock：已写入标注（落地时 POST session.scored）");
+  });
+
+  // ── 行内动作（全部 mock） ──
+  document.querySelectorAll(".arow .icon-btn").forEach(btn =>
+    btn.addEventListener("click", () => {
+      const edit = btn.title.startsWith("编辑");
+      toast(edit ? "mock：打开编辑（复用同一表单，预填当前值）"
+                 : "mock：追加 cleared 墓碑事件，列表 latest-wins 后此标注消失", "err");
+    }));
+  document.querySelectorAll(".tsess .icon-btn").forEach(btn =>
+    btn.addEventListener("click", () => toast("mock：追加 session.unassigned 墓碑", "err")));
+  document.querySelectorAll(".run-head .icon-btn").forEach(btn =>
+    btn.addEventListener("click", () => toast("mock：删除 run 下全部归组（逐条墓碑）", "err")));
+  document.querySelectorAll(".add-sess, .sec-head .ghost:last-child").forEach(btn =>
+    btn.addEventListener("click", () => toast("mock：选会话 + 选 run/任务，POST session.assigned")));
+  document.getElementById("filterBad").addEventListener("click", (e) => {
+    const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
+    e.currentTarget.setAttribute("aria-pressed", String(on));
+    toast(on ? "mock：过滤只看 bad" : "mock：取消过滤");
+  });
+  // 标题点击 = 跳会话
+  document.querySelectorAll(".arow .t, .tsess .t").forEach(el =>
+    el.addEventListener("click", () => toast("mock：跳转对应会话")));
+</script>
+</body>
+</html>

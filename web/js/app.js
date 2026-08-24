@@ -121,6 +121,9 @@
       sidBox.textContent = next.id;
       sidBox.hidden = false;
       document.getElementById("copySidBtn").hidden = false;
+      document.getElementById("renameBtn").hidden = false;
+      // 从标注板点进来的会话：顶栏给一个返回入口
+      document.getElementById("boardBackBtn").hidden = !boardReturn;
       app.dataset.home = "";
       paintSessions();
       paint();
@@ -327,6 +330,34 @@
       const dark = document.documentElement.classList.toggle("dark");
       // 图标已 sprite 化：切 use href 而不是文本字形
       document.querySelector("#themeBtn use").setAttribute("href", dark ? "#i-sun" : "#i-moon");
+    });
+
+    // 返回标注板：只在从标注板进入的会话页出现
+    document.getElementById("boardBackBtn").addEventListener("click", () => {
+      boardReturn = false;
+      openBoard();
+    });
+
+    // 会话改名：POST /api/sessions/{id}/title，服务端组 renamed 事件入账本。
+    document.getElementById("renameBtn").addEventListener("click", () => {
+      if (!current.id) return;
+      const next = window.prompt("重命名会话", current.title || "");
+      if (next == null) return;
+      const title = next.trim();
+      if (!title || title === current.title) return;
+      fetch(`${API}/api/sessions/${encodeURIComponent(current.id)}/title`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title })
+      }).then(async res => {
+        if (!res.ok) throw new Error((await res.json()).error || res.status);
+        toast("已重命名");
+        current.title = title;
+        current.crumb = `${current.agent} · <b>${esc(title)}</b>`;
+        document.getElementById("crumb").innerHTML = current.crumb;
+        const own = sessions.find(s => s.id === current.id);
+        if (own) { own.title = title; paintSessions(); }
+      }).catch(err => toast("重命名失败：" + err.message, "err"));
     });
 
     const clampDetailsWidth = (width, splitWidth) =>
