@@ -574,8 +574,6 @@
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       color: var(--ink-3); font: 11px/16px "JetBrains Mono", ui-monospace, monospace;
     }
-    .x { width: 28px; height: 28px; border-radius: 6px; color: var(--ink-2); font-size: 18px; }
-    .x:hover { background: var(--hover); color: var(--ink); }
     .tabs {
       display: flex; height: 34px; padding: 0 8px;
       border-bottom: 1px solid var(--line-strong);
@@ -594,6 +592,65 @@
       height: 2px; border-radius: 1px 1px 0 0; background: var(--accent);
     }
     .d-body { flex: 1; min-height: 0; overflow: auto; }
+    /* 会话上下文抽屉：常驻右栏顶部，默认折叠成一行摘要条 */
+    .ledger { position: relative; }
+    .ctx { flex: none; border-bottom: 1px solid var(--line-strong); }
+    .ctx-bar {
+      display: flex; align-items: center; gap: 6px;
+      width: 100%; height: 32px; padding: 0 12px;
+      background: var(--field);
+      border-bottom: 1px solid var(--line);
+      color: var(--ink); font-size: 12.5px; font-weight: 600; text-align: left;
+    }
+    .ctx-bar:hover { background: var(--hover); }
+    .ctx-bar .caret { flex: none; font-size: 10px; color: var(--accent-ink); }
+    .ctx-panel { display: flex; flex-direction: column; min-height: 0; max-height: 46%; }
+    .ctx-tabs { height: 30px; flex: none; }
+    .ctx-tabs .tab { height: 30px; font-size: 12px; }
+    .ctx-body { min-height: 0; overflow: auto; padding-bottom: 6px; }
+    .ver { border-bottom: 1px solid var(--line); }
+    .ver > summary {
+      display: flex; align-items: center; gap: 8px;
+      min-height: 28px; padding: 0 12px; cursor: pointer;
+      color: var(--ink-2); font-size: 12px; font-weight: 500; list-style: none;
+    }
+    .ver > summary::-webkit-details-marker { display: none; }
+    .ver > summary::before { content: "▸"; flex: none; color: var(--ink-3); font-size: 10px; }
+    .ver[open] > summary::before { content: "▾"; }
+    .ver > summary:hover { background: var(--hover); color: var(--ink); }
+    .ver > summary small { color: var(--ink-3); font: 10.5px/14px "JetBrains Mono", ui-monospace, monospace; }
+    .ver.latest > summary { color: var(--accent-ink); }
+    .ver-diff { margin: 2px 12px 6px 30px; }
+    .ver-diff > summary {
+      cursor: pointer; color: var(--ink-3); font-size: 11.5px;
+      padding: 3px 0; list-style: none;
+    }
+    .ver-diff > summary::-webkit-details-marker { display: none; }
+    .ver-diff > summary::before { content: "▸ "; font-size: 9px; }
+    .ver-diff[open] > summary::before { content: "▾ "; }
+    .ver-diff > summary:hover { color: var(--ink); }
+    .d-empty {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      color: var(--ink-3); font-size: 12.5px;
+    }
+    .details [hidden] { display: none; }
+    /* 右缘细把手：点击折叠/展开详情栏，折叠后把手留在屏幕右缘 */
+    .collapse-handle {
+      position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+      width: 12px; height: 56px; z-index: 4; padding: 0;
+      border: 1px solid var(--line-strong); border-right: 0; border-radius: 6px 0 0 6px;
+      background: var(--surface);
+      display: none;
+    }
+    .shell[data-inspect="open"] .collapse-handle { display: block; }
+    .collapse-handle::after {
+      content: ""; position: absolute; top: 50%; left: 50%;
+      width: 2px; height: 22px; border-radius: 1px;
+      background: var(--ink-3); opacity: .55;
+      transform: translate(-50%, -50%);
+    }
+    .collapse-handle:hover::after { background: var(--accent); opacity: 1; }
+    .shell[data-details-collapsed="true"] .details { display: none; }
     .kv { margin: 0; padding: 6px 0; }
     .kv > div {
       display: grid; grid-template-columns: 94px minmax(0, 1fr);
@@ -710,6 +767,53 @@
     @media (prefers-reduced-motion: reduce) {
       * { transition: none !important; animation: none !important; }
     }
+
+    /* ── Usage 全周期面板：双层曲线 + 体检发现；右栏 sub2API 式 usage 条 ── */
+    .ucurve-wrap { position: relative; padding: 4px 10px 0; }
+    .uc-svg { width: 100%; height: auto; display: block; }
+    .uc-svg .uc-grid { stroke: var(--line); stroke-width: 1; }
+    .uc-svg .uc-cap { fill: var(--ink-3); font: 9px "JetBrains Mono", ui-monospace, monospace; }
+    .uc-svg .uc-lab { fill: var(--ink-3); font: 9.5px Inter, sans-serif; }
+    .uc-svg .uc-area { fill: color-mix(in srgb, var(--accent) 12%, transparent); }
+    .uc-svg .uc-line { fill: none; stroke: var(--accent-ink); stroke-width: 1.6; }
+    .uc-svg .uc-hit { fill: none; stroke: var(--violet, #ae9bf7); stroke-width: 1.4; stroke-dasharray: 3 2; }
+    .uc-svg .uc-comp { stroke: var(--red); stroke-width: 1; stroke-dasharray: 2 2; opacity: .7; }
+    .uc-svg .uc-dot { fill: var(--red); cursor: pointer; }
+    .uc-svg .uc-dot:hover { r: 6; }
+    .uc-tip {
+      position: absolute; top: 6px; transform: translateX(-50%); z-index: 5;
+      min-width: 190px; padding: 8px 10px; border-radius: 8px; pointer-events: none;
+      background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 6px 18px #10182822;
+      font: 11px/1.6 "JetBrains Mono", ui-monospace, monospace; color: var(--ink-2);
+    }
+    .uc-tip b { color: var(--ink); }
+    .uc-tip .uc-tip-bad { color: var(--red); }
+    .ufindings { margin: 2px 14px 6px; font-size: 11.5px; }
+    .ufindings summary { cursor: pointer; color: var(--ink-2); padding: 4px 0; }
+    .uf-row {
+      display: flex; gap: 8px; align-items: baseline; width: 100%; text-align: left;
+      padding: 4px 6px; border-radius: 6px; background: none; cursor: pointer;
+    }
+    .uf-row:hover { background: var(--inset); }
+    .uf-rule { flex: none; font-size: 10px; padding: 0 6px; border-radius: 999px;
+               background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
+    .uf-turn { flex: none; font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--ink-2); }
+    .uf-detail { color: var(--ink-3); }
+    .ustrip-wrap { position: relative; }
+    .ustrip { display: flex; align-items: center; gap: 12px; padding: 8px 10px;
+              border-radius: 8px; background: var(--inset);
+              font: 12px "JetBrains Mono", ui-monospace, monospace; cursor: default; }
+    .ustrip.us-dim { opacity: .75; }
+    .us-seg { color: var(--ink-3); white-space: nowrap; }
+    .us-seg b { font-weight: 500; color: var(--ink); }
+    .us-in b { color: var(--green); }
+    .us-out b { color: var(--violet, #ae9bf7); }
+    .us-cache b { color: var(--accent-ink); }
+    .us-est { font-size: 10px; color: var(--amber, #e7b663); }
+    .ustrip-pop { display: none; position: absolute; z-index: 6; right: 0; top: 100%;
+                  width: 100%; padding: 8px; border-radius: 8px; margin-top: 4px;
+                  background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 6px 18px #10182822; }
+    .ustrip-wrap:hover .ustrip-pop { display: block; }
 
     /* ── 会话统计面板：常驻徽章 + 弹出表格 + 时间序钻取 + usage 趋势 ── */
     .stat-badge {

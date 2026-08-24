@@ -5,6 +5,7 @@
 
     function resetSessionPanels() {
       toolStats = { open: false, data: null, expanded: "", shown: {} };
+      resetUsagePanel();
       paintToolStatsBar();
       document.getElementById("statsPanel").hidden = true;
       document.getElementById("statBadge").setAttribute("aria-expanded", "false");

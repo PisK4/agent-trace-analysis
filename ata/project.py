@@ -304,35 +304,65 @@ def tail_preview(text, n=200):
     return "…" + text[-n:]
 
 
-def summarize_usage(recs):
+def _usage_turns(recs):
+    """逐轮 usage 行 + 压缩轮集合 + 最大轮号。summarize 与 audit 共用同一份推导，
+    避免两处各推一遍日后漂移。行内带 seq，供前端从曲线跳回轨迹现场。
+    context 是方言感知的上下文占用口径：Anthropic 系（claude）的 input 不含
+    缓存部分，要加回 cache_read/cache_write 才是当轮真实上下文；codex/pi 的
+    input 本身就是全量 prompt，直接用。"""
     turn_rows = {}
     turn_fallback = {}
+    compaction_turns = set()
+    max_turn = 0
     for rec in recs:
         e = rec["event"]
         p = e["payload"]
+        if e.get("turn") is not None and e["turn"] > max_turn:
+            max_turn = e["turn"]
+        if e["type"] == "compaction.boundary":
+            if e.get("turn") is not None:
+                compaction_turns.add(e["turn"])
+            continue
         if e["type"] == "message.upserted" and p.get("role") == "assistant":
             t = e.get("turn")
             u = _usage(p.get("usage"))
             if t is None or u is None:
                 continue
             if t not in turn_rows or turn_rows[t]["status"] != "reported":
-                turn_rows[t] = {
-                    "turn": t, "model": p.get("model"), "effort": p.get("effort"),
-                    "status": u["status"], "input": u["input"], "output": u["output"],
-                    "cache_read": u["cacheRead"], "cache_write": u["cacheWrite"],
-                    "total_tokens": u["totalTokens"], "cost": u["cost"],
-                }
+                turn_rows[t] = _turn_row(rec["seq"], e["agent_id"], t, p.get("model"), p.get("effort"), u)
         elif e["type"] == "turn.ended" and e.get("turn") is not None:
             u = _usage(p.get("usage"))
             if u is not None:
-                turn_fallback[e["turn"]] = u
-    for t, u in turn_fallback.items():
-        row = turn_rows.setdefault(t, {"turn": t, "model": None, "effort": None})
+                turn_fallback[e["turn"]] = (rec["seq"], e["agent_id"], u)
+    for t, (seq, agent, u) in turn_fallback.items():
+        row = turn_rows.setdefault(t, _turn_row(seq, agent, t, None, None, u))
         if row.get("status") != "reported":
             row.update({"status": u["status"], "input": u["input"], "output": u["output"],
                         "cache_read": u["cacheRead"], "cache_write": u["cacheWrite"],
-                        "total_tokens": u["totalTokens"], "cost": u["cost"]})
-    rows = [turn_rows[t] for t in sorted(turn_rows)]
+                        "total_tokens": u["totalTokens"], "cost": u["cost"],
+                        "context": _context_of(agent, u)})
+    return [turn_rows[t] for t in sorted(turn_rows)], compaction_turns, max_turn
+
+
+def _context_of(agent, u):
+    base = u["input"] or 0
+    if agent == "claude":
+        return base + (u["cacheRead"] or 0) + (u["cacheWrite"] or 0)
+    return base
+
+
+def _turn_row(seq, agent, turn, model, effort, u):
+    return {
+        "turn": turn, "seq": seq, "agent": agent, "model": model, "effort": effort,
+        "status": u["status"], "input": u["input"], "output": u["output"],
+        "cache_read": u["cacheRead"], "cache_write": u["cacheWrite"],
+        "total_tokens": u["totalTokens"], "cost": u["cost"],
+        "context": _context_of(agent, u),
+    }
+
+
+def summarize_usage(recs):
+    rows, _, _ = _usage_turns(recs)
     total = {"input": 0, "output": 0, "total_tokens": 0}
     missing = 0
     for r in rows:
@@ -343,6 +373,38 @@ def summarize_usage(recs):
         else:
             missing += 1
     return {"turns": rows, "total": total, "missing_turns": missing}
+
+
+def audit_usage(recs):
+    """usage 可信度体检：纯派生视图，随时可重算。四条规则各自只在单一方言的
+    字段语义内自洽（不做 input+output=total 之类的跨字段校验，各家对 total
+    是否含 cache 口径不一），宁漏勿误报。"""
+    rows, compaction_turns, max_turn = _usage_turns(recs)
+    by_turn = {r["turn"]: r for r in rows}
+    findings = []
+    for t in range(1, max_turn + 1):
+        r = by_turn.get(t)
+        if r is None or r.get("status") != "reported":
+            detail = "该轮无 usage 记录" if r is None else f"usage status={r.get('status')}"
+            findings.append({"rule": "missing", "turn": t, "detail": detail})
+    reported = [r for r in rows if r.get("status") == "reported"]
+    for i, r in enumerate(reported):
+        # 占位值只判显式 0：claude 方言的 total_tokens 恒为 None，不能当占位。
+        if r["total_tokens"] == 0:
+            findings.append({"rule": "placeholder", "turn": r["turn"],
+                             "detail": "reported 但 total_tokens=0，疑占位值"})
+            continue
+        prev = reported[i - 1] if i else None
+        if prev and prev["turn"] == r["turn"] - 1:
+            keys = ("input", "output", "cache_read", "cache_write", "total_tokens")
+            if all((prev[k] or 0) == (r[k] or 0) for k in keys):
+                findings.append({"rule": "duplicate", "turn": r["turn"],
+                                 "detail": f"与第 {prev['turn']} 轮 usage 完全相同，疑流式重复写入"})
+        if prev and (prev["context"] or 0) > 1000 and (r["context"] or 0) < prev["context"] / 2 \
+                and r["turn"] not in compaction_turns:
+            findings.append({"rule": "cliff", "turn": r["turn"],
+                             "detail": f"context {prev['context']}→{r['context']} 且该轮无 compaction 标记"})
+    return {"findings": findings, "reported_turns": len(reported), "expected_turns": max_turn}
 
 
 def list_tools(recs, status=None, name=None):

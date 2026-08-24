@@ -27,6 +27,13 @@
     let viewport = null;
     let tab = "summary";
     let tabHistory = ["summary"];
+    // 会话上下文抽屉：默认折叠、默认 System tab；跨重绘存活，不进 DOM
+    let ctxOpen = false;
+    let ctxTab = "system";
+    // 详情栏折叠态跨会话记忆；宽度记忆见下 detailsWidth
+    let detailsCollapsed = (() => {
+      try { return localStorage.getItem("ata.detailsCollapsed") === "true"; } catch { return false; }
+    })();
     let tipTimer = 0;
     let unixStarted = false;
     // 详情栏宽度跨会话记忆：拖拽/键盘调整后写入 localStorage，双击分隔条重置。

@@ -1,11 +1,110 @@
-// ata web · 详情面板：全部 tab 的渲染与面板内事件绑定
+// ata web · 详情面板：会话上下文抽屉 + 全部 tab 的渲染与面板内事件绑定
 
     // 上一帧 body 的归属标记（行|tab），用于判断 <details> 快照能否跨重绘复用。
     let paintedDetailsKey = "";
+    let paintedCtxKey = "";
+
+    function systemRows() { return current.rows.filter(row => row.kind === "system"); }
+
+    // 会话上下文抽屉：摘要条计数取自 system 行；System tab 是版本栈（最新展开，老版本倒序折叠）。
+    function paintContext() {
+      const ctx = document.getElementById("ctx");
+      const rows = systemRows();
+      if (!current.id || !rows.length) { ctx.hidden = true; return; }
+      ctx.hidden = false;
+      const latest = rows[rows.length - 1];
+      document.getElementById("ctxSummary").textContent =
+        `${rows.length} System Prompt${rows.length > 1 ? "s" : ""} · ${(latest.toolsCatalog || []).length} Tools · ${(latest.skillsCatalog || []).length} Skills`;
+      const bar = document.getElementById("ctxBar");
+      bar.setAttribute("aria-expanded", String(ctxOpen));
+      bar.querySelector(".caret").textContent = ctxOpen ? "▾" : "▸";
+      document.getElementById("ctxPanel").hidden = !ctxOpen;
+      const body = document.getElementById("ctxBody");
+      if (!ctxOpen) return;
+      // follow 轮询每秒重绘会重置 <details> 展开态，与 dBody 同一套快照恢复。
+      const key = `${current.id}|${ctxTab}|${rows.length}`;
+      const sameCtx = key === paintedCtxKey;
+      const openDetails = sameCtx ? [...body.querySelectorAll("details")].map(d => d.open) : [];
+      document.getElementById("ctxTabs").innerHTML = ["system", "tools", "skills"].map(id =>
+        `<button class="tab" type="button" data-ctx-tab="${id}" aria-selected="${id === ctxTab}">${{ system: "System", tools: "Tools", skills: "Skills" }[id]}</button>`
+      ).join("");
+      if (ctxTab === "tools") {
+        body.innerHTML = (latest.toolsCatalog || []).map(tool =>
+          `<details class="tool-card"><summary>${esc(tool.name)}</summary><div class="inner"><p class="miss">${esc(tool.description)}</p>${tool.parameters && Object.keys(tool.parameters).length ? `<div class="tree">${jsonTree(tool.parameters)}</div>` : ""}</div></details>`
+        ).join("");
+      } else if (ctxTab === "skills") {
+        body.innerHTML = (latest.skillsCatalog || []).length ? latest.skillsCatalog.map(skill =>
+          `<details class="tool-card"><summary>${esc(skill.name || "skill")}</summary><div class="inner"><dl class="kv">${
+            Object.entries(skill).filter(([k, v]) => k !== "name" && v != null).map(([k, v]) =>
+              `<div><dt>${esc(k)}</dt><dd>${esc(typeof v === "object" ? JSON.stringify(v) : String(v))}</dd></div>`
+            ).join("")
+          }</dl></div></details>`
+        ).join("") : `<div class="sec"><p class="miss">No skills injected in this round.</p></div>`;
+      } else {
+        // 版本栈：倒序排列，最新版默认展开；Diff 作为独立折叠块插在两版之间，不展开全文也能看。
+        body.innerHTML = [...rows].reverse().map((row, i) => {
+          const name = i === 0 ? "System Prompt (latest)" : `System Prompt v${rows.length - i}`;
+          // turn 为空时用注入时间区分版本；字符数不取整，否则相邻版本看起来一样
+          const loc = row.turn != null ? `Turn ${row.turn}` : Number.isFinite(row.startedAt) ? clock(row.startedAt) : "Session start";
+          const size = `${(row.promptText || "").length.toLocaleString("en-US")} chars`;
+          const diff = row.previousPrompt
+            ? `<details class="ver-diff"><summary>Diff · ${esc(name)} vs previous</summary>${unifiedDiff(row.previousPrompt, row.promptText || "")}</details>`
+            : "";
+          return `<details class="ver${i === 0 ? " latest" : ""}"${i === 0 ? " open" : ""}>
+            <summary>${esc(name)}<small>${esc(loc)} · ${size}</small></summary>
+            <div class="inner"><div class="sec"><div class="copyable" data-copy="prompt" data-row="${row.id}">${markdown(row.promptText || "")}</div></div></div>
+          </details>${diff}`;
+        }).join("");
+      }
+      document.querySelectorAll("#ctxTabs .tab").forEach(btn => btn.addEventListener("click", () => { ctxTab = btn.dataset.ctxTab; paintInspector(); }));
+      attachCopyButtons(body);
+      const after = body.querySelectorAll("details");
+      if (sameCtx && after.length === openDetails.length) after.forEach((d, i) => { d.open = openDetails[i]; });
+      paintedCtxKey = key;
+    }
+
+    // 大块内容统一复制入口：chip 从 row 字段取原文，不从 DOM 抄
+    // （markdown 保住源码、payload 抄不出干净 JSON）。抽屉里多版本用 data-row 指定行。
+    function attachCopyButtons(root) {
+      root.querySelectorAll("[data-copy]").forEach(wrap => {
+        const copyRow = byId(wrap.dataset.row || selected?.id);
+        if (!copyRow) return;
+        const btn = document.createElement("button");
+        btn.className = "copy-chip";
+        btn.type = "button";
+        btn.title = "复制内容";
+        btn.textContent = "⧉";
+        btn.addEventListener("click", async () => {
+          const kind = wrap.dataset.copy;
+          let text = "";
+          if (kind === "payload") text = JSON.stringify(copyRow.payload ?? null, null, 2);
+          else if (kind === "raw") text = [copyRow.thinking, copyRow.outputText || copyRow.payloadText || copyRow.text].filter(Boolean).join("\n\n");
+          else if (kind === "prompt") text = copyRow.promptText || "";
+          else text = copyRow.result || copyRow.outputText || copyRow.payloadText || copyRow.text || "";
+          try {
+            await navigator.clipboard.writeText(text);
+            btn.textContent = "✓";
+          } catch {
+            btn.textContent = "✕";
+          }
+          setTimeout(() => { btn.textContent = "⧉"; }, 900);
+        });
+        wrap.appendChild(btn);
+      });
+    }
 
     function paintInspector() {
-      if (!selected) { app.dataset.inspect = ""; return; }
+      // 右栏常驻：会话打开期间不跟随选中消失；无选中时事件详情区显示空态。
+      if (!current.id) { app.dataset.inspect = ""; return; }
       app.dataset.inspect = "open";
+      app.dataset.detailsCollapsed = String(detailsCollapsed);
+      paintContext();
+      const hasSel = !!(selected && byId(selected.id));
+      document.getElementById("dHead").hidden = !hasSel;
+      document.getElementById("tabs").hidden = !hasSel;
+      document.getElementById("dBody").hidden = !hasSel;
+      document.getElementById("dEmpty").hidden = hasSel;
+      if (!hasSel) return;
       if (detailsWidth != null) details.style.width = `${detailsWidth}px`;
       else details.style.width = "";
       const tabs = tabsOf(selected);
@@ -40,7 +139,7 @@
           </dl>`;
         } else if (tab === "usage") {
           const cum = sessionUsage();
-          body.innerHTML = `<div class="sec"><div class="sec-h">This request</div>${usageCells(row.usage)}</div>
+          body.innerHTML = `<div class="sec"><div class="sec-h">This request</div>${usageStrip(row.usage)}</div>
             <div class="sec"><div class="sec-h">Session cumulative${cum ? ` · ${cum.count} request${cum.count > 1 ? "s" : ""}` : ""}</div>${cum ? usageCells(cum.usage) : `<p class="miss">No reported usage in loaded window.</p>`}</div>`;
         } else {
           body.innerHTML = `<dl class="kv">
@@ -155,32 +254,7 @@
         unixStarted = !unixStarted;
         paintInspector();
       });
-      // 大块内容统一复制入口：chip 从 row 字段取原文，不从 DOM 抄
-      // （markdown 保住源码、payload 抄不出干净 JSON）。
-      const copyRow = byId(selected.id);
-      if (copyRow) body.querySelectorAll("[data-copy]").forEach(wrap => {
-        const btn = document.createElement("button");
-        btn.className = "copy-chip";
-        btn.type = "button";
-        btn.title = "复制内容";
-        btn.textContent = "⧉";
-        btn.addEventListener("click", async () => {
-          const kind = wrap.dataset.copy;
-          let text = "";
-          if (kind === "payload") text = JSON.stringify(copyRow.payload ?? null, null, 2);
-          else if (kind === "raw") text = [copyRow.thinking, copyRow.outputText || copyRow.payloadText || copyRow.text].filter(Boolean).join("\n\n");
-          else if (kind === "prompt") text = copyRow.promptText || "";
-          else text = copyRow.result || copyRow.outputText || copyRow.payloadText || copyRow.text || "";
-          try {
-            await navigator.clipboard.writeText(text);
-            btn.textContent = "✓";
-          } catch {
-            btn.textContent = "✕";
-          }
-          setTimeout(() => { btn.textContent = "⧉"; }, 900);
-        });
-        wrap.appendChild(btn);
-      });
+      attachCopyButtons(body);
       const after = body.querySelectorAll("details");
       if (sameLayout && after.length === openDetails.length) after.forEach((d, i) => { d.open = openDetails[i]; });
       paintedDetailsKey = detailsKey;

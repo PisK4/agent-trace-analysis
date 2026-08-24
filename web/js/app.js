@@ -121,6 +121,7 @@
       paintSessions();
       paint();
       refreshToolStats();
+      refreshUsage();
       requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
     }
 
@@ -204,7 +205,7 @@
         window.alert("标注写入失败：" + err.message);
       }
     });
-    document.getElementById("close").addEventListener("click", () => { app.dataset.inspect = ""; selected = null; });
+    // 清除选中：点表格空白处即可，右栏常驻不消失（收起整栏走右缘 detailsHandle）。
     document.getElementById("assignBtn").addEventListener("click", async () => {
       if (!current.id) return;
       const runId = document.getElementById("assignRun").value;
@@ -307,8 +308,16 @@
     scroller.addEventListener("click", (event) => {
       if (event.target === scroller || event.target.tagName === "TABLE") {
         selected = null;
-        app.dataset.inspect = "";
+        paint();
       }
+    });
+    // 会话上下文抽屉：摘要条切换展开/折叠。
+    document.getElementById("ctxBar").addEventListener("click", () => { ctxOpen = !ctxOpen; paint(); });
+    // 右缘把手：折叠/展开详情栏，状态跨会话记忆。
+    document.getElementById("detailsHandle").addEventListener("click", () => {
+      detailsCollapsed = !detailsCollapsed;
+      try { localStorage.setItem("ata.detailsCollapsed", String(detailsCollapsed)); } catch {}
+      paint();
     });
     document.getElementById("themeBtn").addEventListener("click", () => {
       const dark = document.documentElement.classList.toggle("dark");
@@ -363,6 +372,7 @@
       if (!current.cursor) current.cursor = page.cursor;
       paint();
       if (toolStats.open) refreshToolStats();
+      if (usageState.open) refreshUsage();
     }
     document.getElementById("refreshBtn").addEventListener("click", () => refreshTail(true));
 

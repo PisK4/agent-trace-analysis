@@ -310,6 +310,21 @@
         ${cell("Cost", fmtCost(usage.cost), st(usage.cost))}
       </div>`;
     }
+    // sub2API 式紧凑条：↓输入 ↑输出 · 缓存徽标 · 成本，悬停展开六字段明细。
+    // cost 只在上报时显示，不查价目表补算（Droid 等方言恒缺，如实标 Missing）。
+    function usageStrip(usage) {
+      if (!usage || usage.status === "n/a") return `<p class="miss">No usage reported</p>`;
+      const seg = (label, value, cls) => value == null
+        ? `<span class="us-seg ${cls || ""} miss">${label} —</span>`
+        : `<span class="us-seg ${cls || ""}" title="${label}">${label} <b>${value}</b></span>`;
+      const est = usage.status === "estimated" ? ` <span class="us-est" title="estimated，非实测">est</span>` : "";
+      return `<div class="ustrip-wrap"><div class="ustrip ${usage.status === "reported" ? "" : "us-dim"}">
+          <span class="us-seg us-in" title="Input tokens">↓ <b>${fmtNum(usage.input) ?? "—"}</b></span>
+          <span class="us-seg us-out" title="Output tokens">↑ <b>${fmtNum(usage.output) ?? "—"}</b></span>
+          ${usage.cacheRead != null ? `<span class="us-seg us-cache" title="Cache read tokens">⛁ <b>${fmtNum(usage.cacheRead)}</b></span>` : ""}
+          ${usage.cost != null ? `<span class="us-seg us-cost" title="Cost">$${fmtCost(usage.cost)}</span>` : `<span class="us-seg us-cost miss">cost missing</span>`}
+        </div>${est}<div class="ustrip-pop">${usageCells(usage)}</div></div>`;
+    }
     function sessionUsage() {
       // Session cumulative：按已加载窗口内所有 reported 的 assistant 行累计
       // （与 dsh 的窗口投影同思路：只统计前端已到手的数据）。
