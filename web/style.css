@@ -830,6 +830,8 @@
   box-shadow: 0 12px 30px rgba(0, 0, 0, .35);
   min-width: 240px;
 }
+/* display:flex 会盖过 hidden 属性的 UA 样式，必须显式声明收起态 */
+.pop[hidden] { display: none; }
 .pop-title { font-size: 11px; color: var(--text-3, #8b93a1); text-transform: uppercase; letter-spacing: .06em; }
 .pop-row { display: flex; gap: 6px; }
 .pop .score-note, .pop select {
