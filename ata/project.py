@@ -354,8 +354,9 @@ def list_tools(recs, status=None, name=None):
         p = e["payload"]
         cid = p.get("tool_call_id")
         row = {
-            "id": cid, "turn": e.get("turn"), "name": p.get("name"),
+            "id": cid, "seq": rec["seq"], "turn": e.get("turn"), "name": p.get("name"),
             "status": p.get("status"), "duration_ms": p.get("duration_ms"),
+            "text": (p.get("text") or "")[:120] if isinstance(p.get("text"), str) else None,
             "result": p.get("result"), "started_at": e["ts"],
         }
         if latest.get(cid, {}).get("status") == "pending" or cid not in latest:
@@ -363,11 +364,35 @@ def list_tools(recs, status=None, name=None):
         else:
             latest[cid].update(row)
     rows = [latest[c] for c in sorted(latest, key=lambda c: latest[c]["started_at"])]
-    if status:
-        rows = [r for r in rows if r["status"] == status]
-    if name:
-        rows = [r for r in rows if r["name"] == name]
-    return rows
+
+    def _match(row):
+        if status and row["status"] != status:
+            return False
+        if name and name.lower() not in (row["name"] or "").lower():
+            return False
+        return True
+
+    return [r for r in rows if _match(r)]
+
+
+def summarize_tools(recs):
+    """会话级工具调用统计：按工具名分组计数，附保序调用序列供条带渲染。"""
+    tools = {}
+    order = []
+    for row in list_tools(recs):
+        g = tools.setdefault(row["name"], {"name": row["name"], "total": 0,
+                                           "failed": 0, "calls": []})
+        if not g["calls"]:
+            order.append(row["name"])
+        g["total"] += 1
+        g["failed"] += 1 if row["status"] == "failed" else 0
+        g["calls"].append({"seq": row["seq"], "ts": row["started_at"],
+                           "status": row["status"], "duration_ms": row["duration_ms"]})
+    ordered = [tools[n] for n in order]
+    calls = sum(g["total"] for g in ordered)
+    failed = sum(g["failed"] for g in ordered)
+    return {"tools": ordered,
+            "summary": {"tools": len(ordered), "calls": calls, "failed": failed}}
 
 
 def list_compactions(recs):

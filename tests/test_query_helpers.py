@@ -1,5 +1,5 @@
 import unittest
-from ata.project import summarize_usage, list_tools, list_compactions, tail_preview
+from ata.project import summarize_usage, summarize_tools, list_tools, list_compactions, tail_preview
 
 
 def ev(seq, typ, turn, payload):
@@ -64,6 +64,40 @@ class TestLists(unittest.TestCase):
         out = tail_preview("x" * 300)
         self.assertEqual(len(out), 201)
         self.assertTrue(out.startswith("…"))
+
+
+class TestSummarizeTools(unittest.TestCase):
+    def _recs(self):
+        return [
+            ev(1, "tool.upserted", 1, {"tool_call_id": "c1", "parent_message_id": "a1",
+               "name": "Bash", "status": "pending", "result": None,
+               "payload": {"cmd": "ls"}, "started_at": 100}),
+            ev(2, "tool.upserted", 1, {"tool_call_id": "c1", "parent_message_id": "a1",
+               "name": "Bash", "status": "failed", "result": "EACCES",
+               "payload": {"cmd": "ls"}, "started_at": 100}),
+            ev(3, "tool.upserted", 2, {"tool_call_id": "c2", "parent_message_id": "a2",
+               "name": "Read", "status": "completed", "result": "ok",
+               "payload": {"path": "a.md"}, "started_at": 200}),
+            ev(4, "tool.upserted", 2, {"tool_call_id": "c3", "parent_message_id": "a2",
+               "name": "Read", "status": "completed", "result": "ok",
+               "payload": {"path": "b.md"}, "started_at": 300}),
+        ]
+
+    def test_counts_dedup_order_and_summary(self):
+        out = summarize_tools(self._recs())
+        self.assertEqual(out["summary"], {"tools": 2, "calls": 3, "failed": 1})
+        bash, read = out["tools"]
+        self.assertEqual(bash["name"], "Bash")  # 按首次出现排序
+        self.assertEqual(bash["total"], 1)      # pending+failed 去重为一次
+        self.assertEqual(bash["failed"], 1)
+        self.assertEqual(read["total"], 2)
+        self.assertEqual([c["seq"] for c in read["calls"]], [3, 4])  # 保序
+        # 跳转锚点与入参预览字段在调用序列里
+        self.assertEqual(set(out["tools"][0]["calls"][0]), {"seq", "ts", "status", "duration_ms"})
+
+    def test_empty_session(self):
+        self.assertEqual(summarize_tools([]),
+                         {"tools": [], "summary": {"tools": 0, "calls": 0, "failed": 0}})
 
 
 if __name__ == "__main__":

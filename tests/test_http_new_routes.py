@@ -83,6 +83,13 @@ class TestRoutes(unittest.TestCase):
         self.assertEqual(out["turns"][0]["model"], "m")
         code, out = self.get("/api/sessions/conv/tools?status=failed")
         self.assertEqual(out["tools"][0]["result"], "EACCES")
+        code, out = self.get("/api/sessions/conv/tool-stats")
+        self.assertEqual(code, 200)
+        self.assertEqual(out["summary"], {"tools": 1, "calls": 1, "failed": 1})
+        self.assertEqual(out["tools"][0]["name"], "read")
+        self.assertEqual(out["tools"][0]["calls"][0]["status"], "failed")
+        code, out = self.get("/api/sessions/nope/tool-stats")
+        self.assertEqual(code, 404)
         code, out = self.get("/api/sessions/conv/compactions")
         self.assertEqual(out["compactions"], [])
 

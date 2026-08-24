@@ -1,18 +1,27 @@
 // ata web · 数据模型：行折叠投影 displayRecords、时间轴几何 model/domainState、焦点集、虚拟滚动窗口
 
+    let tableFilter = ""; // "" | "failed" | "tools"，Ledger 区过滤 chips
+
+    function filteredRows() {
+      if (tableFilter === "failed") return current.rows.filter(row => row.status === "failed");
+      if (tableFilter === "tools") return current.rows.filter(row => row.kind === "tool" || row.kind === "subtool");
+      return current.rows;
+    }
+
     function displayRecords() {
+      const base = filteredRows();
       const terms = searchTerms();
-      if (terms.length) return current.rows.filter(rowMatches).map(row => ({ ...row, virtual: "content" }));
+      if (terms.length) return base.filter(rowMatches).map(row => ({ ...row, virtual: "content" }));
       const turnSet = collapsedTurns;
       const out = [];
       const byTurn = new Map();
-      for (const row of current.rows) {
+      for (const row of base) {
         if (row.turn == null) continue;
         const list = byTurn.get(row.turn) || [];
         list.push(row);
         byTurn.set(row.turn, list);
       }
-      for (const row of current.rows) {
+      for (const row of base) {
         if (row.turn == null || !turnSet.has(row.turn) || row.kind === "system") {
           out.push({ ...row, virtual: "content" });
           continue;

@@ -75,6 +75,24 @@ make serve                      # 端口 8787，账本 ~/.ata/dev.sqlite，近 7
 | COMPACTED 行 | 有 `compacted` / `context_compacted` 的会话会出现 |
 | 取消 | `turn_aborted` 时该轮助手行标 Cancelled |
 
+## 会话统计面板（工具统计 / Usage / 过滤 chips）
+
+打开任一有工具调用的会话，Timeline 区有两枚折叠入口：**Tool stats** 与 **Usage**。Ledger 区新增 **Failed / Tools** 两枚过滤 chip。
+
+| 检查点 | 正常现象 |
+| --- | --- |
+| 折叠态摘要 | `N tools · M calls`；有失败时追加红色 `K failed`。M = 该会话去重后工具调用总数，与展开各方块总数之和一致 |
+| 状态条带 | 每工具一行，按首次出现顺序排；方块绿=completed、红=failed、橙=pending（进行中会话才有）。超过 40 次压缩为比例条 |
+| 失败可见性 | 有 failed 调用的会话红方块数量与 Ledger 里 TOOL 行的失败数一致 |
+| 二级钻取 | 点工具行展开调用序列：初始 5 条，点 show more 追加；每条含时间、耗时、入参预览 |
+| 跳转 | 点二级条目滚到对应 TOOL 行并打开检查器（有 payload 时直接落 payload 页签）。目标不在已加载页时也能自动拉取到达 |
+| 跳转边界 | 进行中的会话，跳转后行内容以最新投影为准，可能与点击时的统计略有出入——预期行为不是 bug |
+| Usage 面板 | 逐轮 input/output 双色条 + 元信息行（agent、轮次、token 合计）；missing turns 非零时显式红字标出而非静默 |
+| usage 盲区 | Droid 会话 Usage 面板显示 missing 计数属预期（JSONL 无 token 字段）；cache 列本地中转语料常为空（已知盲区） |
+| 过滤 chips | 点 Failed 主表只剩失败行，再点还原；Tools 同理；与搜索叠加不冲突；切换会话后自动复位 |
+| 卡片轮次 | 左侧会话卡片显示 turns 数，与会话实际轮次一致 |
+| 空会话 | 无工具调用的会话 Tool stats 展开后提示 no tool calls，不出空骨架 |
+
 ## 异常速查
 
 | 现象 | 含义 | 处理 |
@@ -84,6 +102,8 @@ make serve                      # 端口 8787，账本 ~/.ata/dev.sqlite，近 7
 | 当前页不动 | 上滚过暂停了跟随 | 点「跟随尾部」 |
 | usage 写 0 而不是 Missing | 不正常的退化 | 报 bug |
 | 会话标题是 uuid/乱码 | Claude 还没写 `ai-title` / Codex 无 `originator` | 等几秒或刷新 |
+| Tool stats 摘要数字与展开对不上 | 账本幂等或去重逻辑回归 | 报 bug，附 agent 与会话 |
+| 红方块永远不出现（确定失败过的会话也没有） | 适配器丢 failed 终态 | 报 bug，附 agent 与会话 |
 
 ## 已知边界（不是 bug）
 

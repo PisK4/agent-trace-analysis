@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from ata.plugins.pi import translate_hook
-from ata.project import list_compactions, list_tools, project_session, summarize_usage, tail_preview
+from ata.project import list_compactions, list_tools, project_session, summarize_tools, summarize_usage, tail_preview
 from ata.schema import ValidationError, parse_event
 
 
@@ -100,6 +100,9 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                     for r in rows:
                         r["result"] = r["result"] if full else tail_preview(r["result"])
                     return self._json(200, {"ok": True, "tools": rows})
+                if sub == "tool-stats":
+                    return self._json(200, {"ok": True,
+                                            **summarize_tools(ledger.read(sid))})
                 if sub == "compactions":
                     full = qs.get("full", ["false"])[0] == "true"
                     rows = list_compactions(ledger.read(sid))

@@ -41,6 +41,7 @@
       paintOverview();
       paintTable();
       paintScore();
+      paintToolStatsBar();
       paintInspector();
       requestAnimationFrame(() => {
         lastScrollTop = scroller.scrollTop;
@@ -97,6 +98,9 @@
       collapsedTurns = new Set();
       collapsedAssistants = new Set();
       searchQuery = "";
+      tableFilter = "";
+      resetSessionPanels();
+      syncFilterChips();
       document.getElementById("q").value = "";
       document.getElementById("crumb").innerHTML = next.crumb;
       const sidBox = document.getElementById("sidBox");
@@ -227,6 +231,38 @@
       collapsedAssistants = all ? new Set() : new Set(ids);
       paint();
     });
+    const syncFilterChips = () => {
+      document.getElementById("failChip").setAttribute("aria-pressed", String(tableFilter === "failed"));
+      document.getElementById("toolChip").setAttribute("aria-pressed", String(tableFilter === "tools"));
+    };
+    document.getElementById("failChip").addEventListener("click", () => {
+      tableFilter = tableFilter === "failed" ? "" : "failed";
+      syncFilterChips();
+      paint();
+    });
+    document.getElementById("toolChip").addEventListener("click", () => {
+      tableFilter = tableFilter === "tools" ? "" : "tools";
+      syncFilterChips();
+      paint();
+    });
+    document.getElementById("tstatToggle").addEventListener("click", () => toggleToolStats());
+    document.getElementById("usageBtn").addEventListener("click", () => toggleUsagePanel());
+    document.getElementById("tstatPanel").addEventListener("click", async (event) => {
+      const more = event.target.closest(".tmore");
+      if (more) {
+        toolStats.shown[more.dataset.tool] = (toolStats.shown[more.dataset.tool] || TDRILL_BATCH) + TDRILL_BATCH;
+        renderToolStats();
+        return;
+      }
+      const head = event.target.closest(".trow");
+      if (head) {
+        toolStats.expanded = toolStats.expanded === head.dataset.tool ? "" : head.dataset.tool;
+        renderToolStats();
+        return;
+      }
+      const call = event.target.closest(".tcall");
+      if (call) await jumpToSeq(call.dataset.seq);
+    });
     let lastScrollTop = 0;
     let suppressOlder = false;
     scroller.addEventListener("scroll", () => {
@@ -289,6 +325,8 @@
       current.older = page.older;
       if (!current.cursor) current.cursor = page.cursor;
       paint();
+      if (toolStats.open) refreshToolStats();
+      if (!document.getElementById("usagePanel").hidden) refreshSessionUsage();
       if (follow) scroller.scrollTop = scroller.scrollHeight;
     }, 1000);
 
