@@ -146,8 +146,9 @@
             ok: "已删除标注", fail: "删除失败"
           });
         }));
+      // stopPropagation：否则同一 click 冒泡到 document 的「点外部收起」监听器，表单刚开就被关
       document.querySelectorAll("#annoList [data-edit]").forEach(btn =>
-        btn.addEventListener("click", () => openAnnoForm(btn.dataset.edit)));
+        btn.addEventListener("click", (e) => { e.stopPropagation(); openAnnoForm(btn.dataset.edit); }));
       document.querySelectorAll("#runList [data-unassign]").forEach(btn => {
         const [sid, rid] = btn.dataset.unassign.split("|");
         btn.addEventListener("click", async () => {
@@ -172,7 +173,7 @@
       // 「+ 挂会话」：预选 run/task 打开归组表单
       document.querySelectorAll("#runList [data-addto]").forEach(btn => {
         const [tid, rid] = btn.dataset.addto.split("|");
-        btn.addEventListener("click", () => openAssignForm(tid, rid));
+        btn.addEventListener("click", (e) => { e.stopPropagation(); openAssignForm(tid, rid); });
       });
     }
 
