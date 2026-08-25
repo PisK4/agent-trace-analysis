@@ -13,6 +13,7 @@ from ata.project import audit_usage, list_compactions, list_tools, project_sessi
 from ata.schema import ValidationError, parse_event
 
 _RE_RENAME = re.compile(r"^/api/sessions/([^/]+)/title$")
+_RE_RUN_RENAME = re.compile(r"^/api/runs/([^/]+)/name$")
 
 
 def make_server(ledger, webroot, host="127.0.0.1", port=8787):
@@ -178,6 +179,13 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 })
                 ledger.append(ev)
                 return self._json(200, {"ok": True, "title": title})
+            m = _RE_RUN_RENAME.match(parsed.path)
+            if m:
+                name = (raw.get("name") or "").strip() if isinstance(raw, dict) else ""
+                # 允许清空：空组名回退显示 run_id
+                if not ledger.rename_run(m.group(1), name):
+                    return self._json(404, {"ok": False, "error": "unknown run"})
+                return self._json(200, {"ok": True, "name": name})
             if parsed.path != "/api/events":
                 return self._json(404, {"ok": False, "error": "not found"})
             items = raw.get("events") if isinstance(raw, dict) and "events" in raw else [raw]

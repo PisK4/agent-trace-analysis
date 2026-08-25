@@ -140,3 +140,42 @@ class TitleRouteTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class RunNameTest(unittest.TestCase):
+    """组名 = runs.description：可改可清空（清空回退显示 run_id），run_id 不变。"""
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp())
+        cls.led = Ledger(cls.tmp / "t.sqlite")
+        cls.led.create_run("r-abc", "旧组名")
+        cls.httpd = make_server(cls.led, cls.tmp, "127.0.0.1", 0)
+        cls.port = cls.httpd.server_address[1]
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+
+    def post(self, path, body):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=json.dumps(body).encode(), method="POST",
+            headers={"content-type": "application/json"})
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.load(r)
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, json.load(e)
+
+    def test_rename_run(self):
+        code, out = self.post("/api/runs/r-abc/name", {"name": "中文组名 English"})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.led.run("r-abc")["description"], "中文组名 English")
+
+    def test_clear_name_and_unknown_run(self):
+        code, out = self.post("/api/runs/r-abc/name", {"name": ""})
+        self.assertEqual(code, 200)  # 清空允许：回退显示 run_id
+        self.assertEqual(self.led.run("r-abc")["description"], "")
+        code, _ = self.post("/api/runs/r-nope/name", {"name": "x"})
+        self.assertEqual(code, 404)

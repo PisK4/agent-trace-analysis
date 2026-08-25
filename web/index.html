@@ -246,7 +246,12 @@
                 <div class="pop" id="assignForm" hidden>
                   <div class="pop-title">新建归组</div>
                   <select class="board-input" id="assignSession" aria-label="选择会话"></select>
-                  <select class="board-input" id="assignRun2" aria-label="选择 run"></select>
+                  <select class="board-input" id="assignRun2" aria-label="选择组"></select>
+                  <!-- 新建组：组名即 runs.description，run_id 服务端生成 -->
+                  <div class="pop-row">
+                    <input class="board-input" id="assignNewRunName" type="text" placeholder="新组名（中英文皆可）" maxlength="60" style="flex:1" />
+                    <button class="ghost" id="assignNewRun" type="button">新建</button>
+                  </div>
                   <input class="board-input" id="assignTask2" type="text" placeholder="任务 id（t-xxxx）" maxlength="40" />
                   <div class="pop-row">
                     <button class="ghost primary-btn" id="assignSave" type="button" style="flex:1;justify-content:center">归入</button>

@@ -116,11 +116,13 @@
         return `
         <div class="run">
           <div class="run-head">
-            <b>${esc(rid)}</b>
-            <span class="fp">${esc(meta.description || "")}${meta.created_ts ? ` · ${fullTime(Number(meta.created_ts))} 建` : ""}</span>
+            <b>${esc(meta.description || rid)}</b>
+            ${meta.description ? `<span class="fp">id: ${esc(rid)}</span>` : ""}
+            <span class="fp">${meta.created_ts ? `${fullTime(Number(meta.created_ts))} 建` : ""}</span>
             <span class="grow"></span>
             <span class="cnt">${byTask.size} 任务 · ${list.length} 会话</span>
             <span class="acts">
+              <button class="icon-btn" data-rrname="${esc(rid)}" data-cur="${esc(meta.description || "")}" title="重命名组（中英文皆可；run_id 不变）"><svg class="ico"><use href="#i-edit"/></svg></button>
               <button class="icon-btn danger" data-drun="${esc(rid)}" title="移出该 run 全部归组（逐条墓碑）"><svg class="ico"><use href="#i-trash"/></svg></button>
             </span>
           </div>
@@ -169,6 +171,25 @@
             });
           }
           if (list.length) toast(`已移出 ${list.length} 条归组`);
+        }));
+      // 组重命名：改 runs.description，run_id（事件引用主键）不变
+      document.querySelectorAll("#runList [data-rrname]").forEach(btn =>
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const rid = btn.dataset.rrname;
+          const next = window.prompt("重命名组（留空则回退显示 run_id）", btn.dataset.cur || "");
+          if (next == null) return;
+          const name = next.trim();
+          if (name === (btn.dataset.cur || "")) return;
+          try {
+            const res = await fetch(`${API}/api/runs/${encodeURIComponent(rid)}/name`, {
+              method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ name })
+            });
+            if (!res.ok) throw new Error((await res.json()).error || res.status);
+            toast(name ? "已重命名" : "已清空组名");
+            await reloadBoard();
+          } catch (err) { toast("重命名失败：" + err.message, "err"); }
         }));
       // 「+ 挂会话」：预选 run/task 打开归组表单
       document.querySelectorAll("#runList [data-addto]").forEach(btn => {
@@ -254,20 +275,41 @@
     });
 
     // ── 归组表单 ──
+    function fillRunSelect() {
+      const runSel = document.getElementById("assignRun2");
+      runSel.innerHTML = (boardState.runs.length ? boardState.runs : [])
+        .map(r => `<option value="${esc(r.run_id)}">${esc(r.description || r.run_id)}</option>`).join("");
+      if (!boardState.runs.length) {
+        runSel.innerHTML = `<option value="">（无组，先在下方新建）</option>`;
+      }
+    }
     function openAssignForm(preTask, preRun) {
       if (!sessions.length) { toast("暂无会话可归组", "err"); return; }
       document.getElementById("annoForm").hidden = true;
       fillSessionSelect("assignSession", current.id || null);
-      const runSel = document.getElementById("assignRun2");
-      runSel.innerHTML = (boardState.runs.length ? boardState.runs : [])
-        .map(r => `<option value="${esc(r.run_id)}">${esc(r.run_id)} · ${esc(r.description || "")}</option>`).join("");
-      if (!boardState.runs.length) {
-        runSel.innerHTML = `<option value="">（无 run，去 CLI: ata run new）</option>`;
-      }
+      fillRunSelect();
       document.getElementById("assignTask2").value = preTask || "";
-      if (preRun) runSel.value = preRun;
+      if (preRun) document.getElementById("assignRun2").value = preRun;
       document.getElementById("assignForm").hidden = false;
     }
+    // 新建组：组名 = runs.description（中英文皆可），run_id 服务端生成
+    document.getElementById("assignNewRun").addEventListener("click", async () => {
+      const name = document.getElementById("assignNewRunName").value.trim();
+      if (!name) { toast("先填组名", "err"); return; }
+      try {
+        const res = await fetch(API + "/api/runs", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ description: name })
+        });
+        if (!res.ok) throw new Error((await res.json()).error || res.status);
+        const { run_id } = await res.json();
+        toast(`已建组：${name}`);
+        await reloadBoard();
+        // 新组直接选中，接着填任务 id 就能归入
+        fillRunSelect();
+        document.getElementById("assignRun2").value = run_id;
+      } catch (err) { toast("建组失败：" + err.message, "err"); }
+    });
     document.getElementById("addAssignBtn").addEventListener("click", (e) => {
       e.stopPropagation();
       const wasHidden = document.getElementById("assignForm").hidden;

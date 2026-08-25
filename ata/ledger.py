@@ -343,6 +343,15 @@ class Ledger:
             except sqlite3.IntegrityError:
                 raise ValueError("duplicate run_id") from None
 
+    def rename_run(self, run_id: str, description: str) -> bool:
+        """组名即 runs.description；run_id 是事件引用主键，不改。"""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE runs SET description=? WHERE run_id=?",
+                (description, run_id))
+            self._conn.commit()
+            return cur.rowcount > 0
+
     def run(self, run_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
