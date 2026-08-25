@@ -95,6 +95,18 @@ class TestRoutes(unittest.TestCase):
         code, out = self.get("/api/sessions/conv/compactions")
         self.assertEqual(out["compactions"], [])
 
+    def test_timing_endpoint(self):
+        code, out = self.get("/api/sessions/conv/timing")
+        self.assertEqual(code, 200)
+        self.assertEqual(out["ok"], True)
+        self.assertEqual(out["calls"], 1)
+        self.assertEqual(out["tool_ms"], 5)
+        self.assertEqual(out["tool_quality"], "measured")
+        # assistant 行没带 duration_ms：不算实测，诚实降级
+        self.assertEqual(out["llm_quality"], "placeholder")
+        code, out = self.get("/api/sessions/nope/timing")
+        self.assertEqual(code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

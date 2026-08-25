@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 import re
 
 from ata.plugins.pi import translate_hook
-from ata.project import audit_usage, list_compactions, list_tools, project_session, summarize_tools, summarize_usage, tail_preview
+from ata.project import audit_usage, list_compactions, list_tools, project_session, summarize_timing, summarize_tools, summarize_usage, tail_preview
 from ata.schema import ValidationError, parse_event
 
 _RE_RENAME = re.compile(r"^/api/sessions/([^/]+)/title$")
@@ -128,6 +128,9 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 if sub == "tool-stats":
                     return self._json(200, {"ok": True,
                                             **summarize_tools(ledger.read(sid))})
+                if sub == "timing":
+                    return self._json(200, {"ok": True,
+                                            **summarize_timing(ledger.read(sid))})
                 if sub == "compactions":
                     full = qs.get("full", ["false"])[0] == "true"
                     rows = list_compactions(ledger.read(sid))
