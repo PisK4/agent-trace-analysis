@@ -85,8 +85,20 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                     limit = int(qs.get("limit", ["80"])[0])
                     before = qs.get("before", [None])[0]
                     before = int(before) if before not in (None, "") else None
+                    # rev 门控：last_seq 未变（无任何事件追加/幂等折叠/改名/标注）时
+                    # 跳过全量投影，返回几十字节的 unchanged；前端据此零重绘。
+                    # last_seq 随每次 append 单调递增，天然是会话级版本号。
+                    rev = qs.get("rev", [None])[0]
+                    if not before and rev not in (None, ""):
+                        try:
+                            if int(rev) == int(meta["last_seq"]):
+                                return self._json(200, {"ok": True, "unchanged": True,
+                                                        "rev": int(meta["last_seq"])})
+                        except ValueError:
+                            pass
                     recs = ledger.read(sid)
                     page = project_session(sid, meta["agent"], recs, tail=limit, before=before)
+                    page["rev"] = int(meta["last_seq"])
                     return self._json(200, page)
                 if sub == "events":
                     after = int(qs.get("after_seq", ["0"])[0])

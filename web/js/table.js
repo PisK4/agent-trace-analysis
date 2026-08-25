@@ -37,6 +37,12 @@
     }
 
     function paintTable() {
+      // tbody 内有活动文本选区时不重建行：innerHTML 换血会把选区节点销毁
+      // （选区漂移到别处）。选区点掉后下一次重绘自动跟上。
+      {
+        const sel = document.getSelection();
+        if (sel.rangeCount && !sel.isCollapsed && tbody.contains(sel.anchorNode)) return;
+      }
       const records = displayRecords();
       const focus = focusSet();
       const pack = virtualRows(records);

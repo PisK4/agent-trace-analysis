@@ -48,3 +48,10 @@
     let loadingOlder = false;
     let searchQuery = "";
     let virtualWindow = { start: 0, end: 40 };
+    // 轮询门控状态：rev 是服务端 last_seq 基线（unchanged 短路用）；pollInFlight
+    // 配合自调度 setTimeout 链防请求堆积；sidebarFingerprint 让侧栏只在列表真变时重绘。
+    // sessionEpoch 是 openSession 的请求序号，并发打开会话时只有最新点击能落地。
+    let sessionRev = 0;
+    let pollInFlight = false;
+    let sidebarFingerprint = "";
+    let sessionEpoch = 0;

@@ -45,21 +45,31 @@
       return res.json();
     }
 
+    const adoptPage = (page) => ({
+      id: page.id,
+      agent: page.agent,
+      title: page.title,
+      crumb: page.crumb,
+      rows: page.rows,
+      older: page.has_older,
+      cursor: page.cursor,
+      turns: page.turns,
+      rev: page.rev ?? 0,
+      scores: page.scores || [],
+      toolsIndex: page.tools_index || {}
+    });
+
     async function loadSession(id, query = "") {
       const sep = query ? (query.startsWith("?") ? query : "?" + query) : "";
       const page = await fetchJSON("/api/sessions/" + encodeURIComponent(id) + sep);
-      return {
-        id: page.id,
-        agent: page.agent,
-        title: page.title,
-        crumb: page.crumb,
-        rows: page.rows,
-        older: page.has_older,
-        cursor: page.cursor,
-        turns: page.turns,
-        scores: page.scores || [],
-        toolsIndex: page.tools_index || {}
-      };
+      return adoptPage(page);
+    }
+
+    // rev 门控轮询：unchanged 短路（只带版本号，无数据体）返回 null；
+    // 整页响应原地映射，绝不能拿新 rev 再发一次请求（那必然命中短路拿回空壳）。
+    async function loadSessionIfChanged(id, rev) {
+      const page = await fetchJSON("/api/sessions/" + encodeURIComponent(id) + `?rev=${rev}`);
+      return page.unchanged ? null : adoptPage(page);
     }
 
     // 归组：run 列表来自 /api/runs（低频变化，进会话页时懒加载一次）

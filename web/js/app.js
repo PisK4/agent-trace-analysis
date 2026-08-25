@@ -2,6 +2,7 @@
 
     async function boot() {
       const list = await fetchJSON("/api/sessions");
+      sidebarFingerprint = sidebarPrint(list);
       sessions = list.map(item => ({
         id: item.id,
         agent: item.agent,
@@ -33,8 +34,8 @@
       }
       annoBtn.hidden = false; assignBtn.hidden = false;
       ensureRunsLoaded();
-      // 打开会话时顺带把侧栏卡片的标注点/计数刷成最新（openSession 已合并 scores）
-      paintSessions();
+      // 侧栏卡片的标注点由 pollSessions 的指纹门控统一刷新（scores 变化会改指纹），
+      // 这里不再每次 paintScore 都重建侧栏——那会让 hover/滚动每秒死一次。
       const txt = document.getElementById("annoBadgeText");
       const dot = document.getElementById("scoreDot");
       const list = current.scores || [];
@@ -97,12 +98,22 @@
     }
 
     async function openSession(id) {
-      const next = await loadSession(id);
-      if (!next) return;
+      // epoch 守卫：openSession 可能被并发触发（快速连点两个会话），只有「最后一次
+      // 点击」的结果才允许落地。用请求序号判定，过期响应直接丢弃。
+      const epoch = ++sessionEpoch;
+      let next;
+      try {
+        next = await loadSession(id);
+      } catch (err) {
+        toast("会话加载失败：" + err.message, "err");
+        return;
+      }
+      if (epoch !== sessionEpoch || !next) return;
       const idx = sessions.findIndex(session => session.id === next.id);
       // 详情接口不返回 first_ts 等列表字段，合并保留，避免卡片时间变成 —
       if (idx >= 0) sessions[idx] = { ...sessions[idx], ...next }; else sessions.push(next);
       current = next;
+      sessionRev = next.rev || 0;
       selected = next.rows.length ? { type: "record", id: next.rows[next.rows.length - 1].id } : null;
       range = null;
       draft = null;
@@ -136,14 +147,20 @@
       if (loadingOlder || !current.older) return;
       loadingOlder = true;
       paint();
+      const sid = current.id;
       const prevHeight = scroller.scrollHeight;
       const prevTop = scroller.scrollTop;
-      const page = await loadSession(current.id, `?before=${current.cursor}&limit=36`);
+      let page;
+      try {
+        page = await loadSession(sid, `?before=${current.cursor}&limit=36`);
+      } catch { loadingOlder = false; paint(); return; }
+      if (sid !== current.id) { loadingOlder = false; return; } // epoch 守卫：已换会话
       const have = new Set(current.rows.map(r => r.id));
       const prepend = page.rows.filter(r => !have.has(r.id)).map(r => ({ ...r, _keptOlder: true }));
       current.rows = [...prepend, ...current.rows].map((row, i) => ({ ...row, index: i }));
       current.older = page.older;
       current.cursor = page.cursor;
+      sessionRev = page.rev || sessionRev;
       loadingOlder = false;
       paint();
       scroller.scrollTop = prevTop + (scroller.scrollHeight - prevHeight);
@@ -395,27 +412,68 @@
       event.preventDefault();
     });
 
-    // 单会话尾部增量刷新：轮询与手动刷新按钮共用。force 供按钮绕过 follow 开关；
-    // 只更新数据不动视口，跳尾是 follow 开关自己的职责。
-    // 手动刷新先盖一层骨架行（只动 tbody 渲染层）：选中/滚动/数据都在，回填后原样恢复。
-    let refreshSkeleton = false;
-    async function refreshTail(force) {
-      if (!current.id || loadingOlder) return;
-      if (!force && !follow) return;
-      if (force && !refreshSkeleton) {
-        refreshSkeleton = true;
-        paintSkeleton();
+    // ── 数据落地与分区重绘 ──
+    // applySessionPage 把一页投影结果 upsert 进 current（投影层是「同 id 新版本」
+    // 语义：流式增长的 assistant 文本、pending→completed 的工具行都以新 _seq 重现），
+    // 未变的行保留原对象身份，据此判断哪些分区真正需要重绘。
+    function applySessionPage(page) {
+      const report = { rowsChanged: false };
+      // 行合并：id 相同且关键字段全等 → 保留旧对象（对象身份即变更标记）；
+      // 同 id 内容变或新 id → 换新对象并标 dirty。
+      const oldById = new Map(current.rows.map(r => [r.id, r]));
+      const merged = [];
+      for (const row of page.rows) {
+        const prev = oldById.get(row.id);
+        if (prev && sameRow(prev, row)) { merged.push(prev); continue; }
+        merged.push(row);
+        report.rowsChanged = true;
+        if (selected && selected.type === "record" && selected.id === row.id) report.selectedRowChanged = true;
       }
-      const page = await loadSession(current.id);
+      // keptOlder 行：tail 页窗口外的历史行继续保留（loadOlder 攒下的）
       const tailIds = new Set(page.rows.map(r => r.id));
-      const kept = current.rows.filter(r => r._keptOlder && !tailIds.has(r.id));
-      current.rows = [...kept, ...page.rows].map((row, i) => ({ ...row, index: i, _keptOlder: row._keptOlder && !tailIds.has(row.id) }));
-      current.older = page.older;
-      if (!current.cursor) current.cursor = page.cursor;
-      refreshSkeleton = false;
-      paint();
-      if (toolStats.open) refreshToolStats();
-      if (usageState.open) refreshUsage();
+      for (const row of current.rows) {
+        if (row._keptOlder && !tailIds.has(row.id)) { row.index = -1; merged.unshift(row); }
+      }
+      merged.sort((a, b) => a._seq - b._seq);
+      merged.forEach((row, i) => { row.index = i; });
+      current.rows = merged;
+      // meta 合并：title/cursor/scores 等变了才标 dirty（驱动 paintScore 这类轻量重绘）
+      for (const k of ["title", "crumb", "older", "cursor", "turns", "scores", "toolsIndex"]) {
+        if (!sameValue(current[k], page[k])) report.metaChanged = true;
+        current[k] = page[k];
+      }
+      sessionRev = page.rev || sessionRev;
+      return report;
+    }
+    // 行级相等比较：整行结构比对（投影后处理如 turn remap / model 回填会改老行而不改
+    // _first），只剔除随页窗口变的 index。两侧都出自服务端同一序列化器，键序一致。
+    const sameRow = (a, b) => {
+      const { index: _a, ...ra } = a;
+      const { index: _b, ...rb } = b;
+      return JSON.stringify(ra) === JSON.stringify(rb);
+    };
+    const sameValue = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+    // 单会话尾部增量刷新：轮询与手动刷新按钮共用。force 供按钮绕过 rev 门控与
+    // follow 开关（重置基线）；只更新数据不动视口，跳尾是 follow 开关自己的职责。
+    async function refreshTail(force = false) {
+      const sid = current.id;
+      if (!sid || loadingOlder) return;
+      if (!force && !follow) return;
+      if (force) paintSkeleton();
+      let page;
+      try {
+        page = force ? await loadSession(sid) : await loadSessionIfChanged(sid, sessionRev);
+      } catch { pollErrorStreak += 1; return; } // 失败退避由轮询链处理，这里不堆积重试
+      if (sid !== current.id) return; // epoch 守卫：await 期间已换会话
+      if (!page) return; // unchanged：零请求投影、零重绘
+      const report = applySessionPage(page);
+      if (report.rowsChanged || force) paint();
+      else if (report.metaChanged) paintScore();
+      if (report.rowsChanged) {
+        if (toolStats.open) refreshToolStats(sid);
+        if (usageState.open) refreshUsage(sid);
+      }
     }
     // 骨架行只替换 tbody 内容，行数取虚拟窗口近似；不碰 current/selected/scroller.scrollTop。
     function paintSkeleton() {
@@ -431,21 +489,46 @@
       toast("已刷新到最新事件");
     });
 
-    setInterval(async () => {
-      if (!follow || !current.id || loadingOlder) return;
-      await refreshTail(false);
+    // ── 自调度轮询链（替代 setInterval）──
+    // setTimeout 链天然防重叠：上一拍没回来下一拍不会发；失败退避；后台标签暂停。
+    const POLL_INTERVAL_MS = 1000;
+    const POLL_BACKOFF_MS = 5000;
+    let pollErrorStreak = 0;
+    function scheduleNextPoll(ms = pollErrorStreak ? POLL_BACKOFF_MS : POLL_INTERVAL_MS) {
+      setTimeout(pollTick, ms);
+    }
+    async function pollTick() {
+      if (document.hidden || !follow || !current.id || loadingOlder || pollInFlight) {
+        scheduleNextPoll();
+        return;
+      }
+      pollInFlight = true;
+      try {
+        await refreshTail(false);
+        pollErrorStreak = 0;
+      } catch {
+        pollErrorStreak += 1;
+      } finally {
+        pollInFlight = false;
+      }
+      // 数据真变了才需要跳尾；unchanged 拍直接回原位无害
       if (follow) scroller.scrollTop = scroller.scrollHeight;
-    }, 1000);
+      scheduleNextPoll();
+    }
 
-    // 新会话出现时刷新左侧列表（只新增，不打断当前画布）。
-    setInterval(async () => {
-      if (document.hidden) return;
-      const list = await fetchJSON("/api/sessions");
-      const have = new Set(sessions.map(s => s.id));
-      const fresh = list.filter(s => !have.has(s.id));
-      if (!fresh.length) return;
-      // 服务端按最近活动倒序返回，新会话在列表前面：unshift 保持顶部。
-      for (const item of fresh.reverse()) sessions.unshift({
+    // 页面回到前台立刻补一拍，不等退避计时器走完
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && current.id) pollTick();
+    });
+
+    // ── 会话列表轮询（5s）──
+    // 指纹门控：列表没变就一个字节都不画，侧栏 hover/滚动不再被周期性打断。
+    const SIDEBAR_POLL_MS = 5000;
+    function sidebarPrint(list) {
+      return list.map(s => `${s.id}|${s.title}|${s.turns}|${s.first_ts}|${s.event_count}|${s.error_count}`).join("\n");
+    }
+    function adoptSidebarItem(item) {
+      return {
         id: item.id,
         agent: item.agent,
         title: item.title,
@@ -458,9 +541,40 @@
         eventCount: item.event_count,
         errorCount: item.error_count,
         toolsIndex: {}
-      });
-      paintTabs();
-      paintSessions();
-    }, 5000);
+      };
+    }
+    async function pollSessions() {
+      try {
+        if (!document.hidden) {
+          const sid = current.id;
+          const list = await fetchJSON("/api/sessions");
+          if (sid !== current.id) return scheduleSidebar(); // epoch 守卫
+          const print = sidebarPrint(list);
+          if (print !== sidebarFingerprint) {
+            sidebarFingerprint = print;
+            const have = new Map(sessions.map(s => [s.id, s]));
+            // 既有卡片只同步列表级字段（标题/计数会被改名、标注、新事件更新），
+            // 不动它已加载的 rows 等会话页数据
+            const next = list.map(item => have.get(item.id)
+              ? Object.assign(have.get(item.id), {
+                  title: item.title,
+                  turns: item.turns,
+                  firstTs: item.first_ts,
+                  eventCount: item.event_count,
+                  errorCount: item.error_count
+                })
+              : adoptSidebarItem(item));
+            sessions.splice(0, sessions.length, ...next);
+            paintTabs();
+            paintSessions();
+            if (current.id) paintScore();
+          }
+        }
+      } catch { /* 服务不可达：下轮再试 */ }
+      scheduleSidebar();
+    }
+    function scheduleSidebar() { setTimeout(pollSessions, SIDEBAR_POLL_MS); }
+    pollSessions();
+    scheduleNextPoll();
 
     boot();

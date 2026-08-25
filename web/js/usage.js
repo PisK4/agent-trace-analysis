@@ -22,11 +22,14 @@
         ` · ↓ ${fmtK(t.input || 0)} ↑ ${fmtK(t.output || 0)} ↓c ${fmtK(t.cache_read || 0)}`;
     }
 
-    async function refreshUsage() {
-      if (!current.id) return;
+    async function refreshUsage(sid = current.id) {
+      if (!current.id || !sid) return;
+      let data;
       try {
-        usageState.data = await fetchJSON("/api/sessions/" + encodeURIComponent(current.id) + "/usage");
-      } catch { usageState.data = null; }
+        data = await fetchJSON("/api/sessions/" + encodeURIComponent(sid) + "/usage");
+      } catch { data = null; }
+      if (sid !== current.id) return; // epoch 守卫：await 期间已换会话
+      usageState.data = data;
       paintUsageBadge();
       if (usageState.open) renderUsagePanel();
     }

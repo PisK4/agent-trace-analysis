@@ -29,12 +29,15 @@
       if (toolStats.open) await refreshToolStats();
     }
 
-    async function refreshToolStats() {
-      // 徽章数字要常驻，打开会话就拉一次；面板未开时秒级轮询不重复拉。
-      if (!current.id) return;
+    async function refreshToolStats(sid = current.id) {
+      // 徽章数字要常驻，打开会话就拉一次；面板未开时不重复拉。
+      if (!current.id || !sid) return;
+      let data;
       try {
-        toolStats.data = await fetchJSON("/api/sessions/" + encodeURIComponent(current.id) + "/tool-stats");
-      } catch { toolStats.data = null; }
+        data = await fetchJSON("/api/sessions/" + encodeURIComponent(sid) + "/tool-stats");
+      } catch { data = null; }
+      if (sid !== current.id) return; // epoch 守卫：await 期间已换会话
+      toolStats.data = data;
       renderToolStats();
       paintToolStatsBar();
     }

@@ -38,6 +38,7 @@ class LedgerTest(unittest.TestCase):
                 "agent": "pi",
                 "title": "hello",
                 "turns": 0,
+                "last_seq": 1,
                 "last_ts": 1787000000010,
                 "first_ts": 1787000000010,
                 "parent_session_id": None,

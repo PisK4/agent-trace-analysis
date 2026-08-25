@@ -1,8 +1,7 @@
 // ata web · 详情面板：会话上下文抽屉 + 全部 tab 的渲染与面板内事件绑定
-
-    // 上一帧 body 的归属标记（行|tab），用于判断 <details> 快照能否跨重绘复用。
-    let paintedDetailsKey = "";
-    let paintedCtxKey = "";
+// 轮询路径的内容门控在 app.js 的 refreshTail（rowsChanged 才 paint）；
+// 这里不再做 <details> 快照恢复——重绘只发生在数据真变或显式交互时，
+// 展开态不会被周期性重置。
 
     function systemRows() { return current.rows.filter(row => row.kind === "system"); }
 
@@ -21,10 +20,6 @@
       document.getElementById("ctxPanel").hidden = !ctxOpen;
       const body = document.getElementById("ctxBody");
       if (!ctxOpen) return;
-      // follow 轮询每秒重绘会重置 <details> 展开态，与 dBody 同一套快照恢复。
-      const key = `${current.id}|${ctxTab}|${rows.length}`;
-      const sameCtx = key === paintedCtxKey;
-      const openDetails = sameCtx ? [...body.querySelectorAll("details")].map(d => d.open) : [];
       document.getElementById("ctxTabs").innerHTML = ["system", "tools", "skills"].map(id =>
         `<button class="tab" type="button" data-ctx-tab="${id}" aria-selected="${id === ctxTab}">${{ system: "System", tools: "Tools", skills: "Skills" }[id]}</button>`
       ).join("");
@@ -58,9 +53,6 @@
       }
       document.querySelectorAll("#ctxTabs .tab").forEach(btn => btn.addEventListener("click", () => { ctxTab = btn.dataset.ctxTab; paintInspector(); }));
       attachCopyButtons(body);
-      const after = body.querySelectorAll("details");
-      if (sameCtx && after.length === openDetails.length) after.forEach((d, i) => { d.open = openDetails[i]; });
-      paintedCtxKey = key;
     }
 
     // 大块内容统一复制入口：chip 从 row 字段取原文，不从 DOM 抄
@@ -94,7 +86,6 @@
 
     function paintInspector() {
       // 右栏常驻：会话打开期间不跟随选中消失；无选中时事件详情区显示空态。
-      if (!current.id) { app.dataset.inspect = ""; return; }
       app.dataset.inspect = "open";
       app.dataset.detailsCollapsed = String(detailsCollapsed);
       paintContext();
@@ -111,11 +102,6 @@
       const tag = document.getElementById("dTag");
       const loc = document.getElementById("dLoc");
       const body = document.getElementById("dBody");
-      // follow 轮询每秒重绘会重置 DOM 里的 <details> 展开态（tool-card / jsonTree / think）。
-      // 重绘前快照；仅当行与 tab 都没换（结构大概率一致）且数量对得上才按原顺序恢复。
-      const detailsKey = `${selected.id}|${tab}`;
-      const sameLayout = detailsKey === paintedDetailsKey;
-      const openDetails = sameLayout ? [...body.querySelectorAll("details")].map(d => d.open) : [];
       if (selected.type === "request") {
         const row = byId(selected.id);
         tag.className = "kind request";
@@ -254,8 +240,5 @@
         paintInspector();
       });
       attachCopyButtons(body);
-      const after = body.querySelectorAll("details");
-      if (sameLayout && after.length === openDetails.length) after.forEach((d, i) => { d.open = openDetails[i]; });
-      paintedDetailsKey = detailsKey;
       highlightMd();
     }

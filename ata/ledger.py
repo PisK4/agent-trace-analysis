@@ -239,7 +239,7 @@ class Ledger:
     def session(self, session_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT session_id, agent_id, title, turns, last_ts, first_ts, parent_session_id FROM sessions WHERE session_id=?",
+                "SELECT session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id FROM sessions WHERE session_id=?",
                 (session_id,),
             ).fetchone()
         return None if row is None else self._session_row(row)
@@ -248,7 +248,7 @@ class Ledger:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT session_id, agent_id, title, turns, last_ts, first_ts, parent_session_id
+                SELECT session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id
                 FROM sessions
                 ORDER BY first_ts DESC, title
                 """
@@ -284,6 +284,7 @@ class Ledger:
             "agent": r["agent_id"],
             "title": r["title"],
             "turns": int(r["turns"]),
+            "last_seq": int(r["last_seq"] or 0),
             "last_ts": int(r["last_ts"] or 0),
             "first_ts": int(r["first_ts"] or 0),
             "parent_session_id": r["parent_session_id"],
@@ -292,7 +293,7 @@ class Ledger:
     def children(self, session_id: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT session_id, agent_id, title, turns, last_ts, first_ts, parent_session_id"
+                "SELECT session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id"
                 " FROM sessions WHERE parent_session_id=? ORDER BY last_ts",
                 (session_id,),
             ).fetchall()
@@ -401,7 +402,7 @@ class Ledger:
                 " ORDER BY seq").fetchall()
             metas = {
                 r["session_id"]: r for r in self._conn.execute(
-                    "SELECT s.session_id, s.agent_id, s.title, s.last_ts, s.first_ts,"
+                    "SELECT s.session_id, s.agent_id, s.title, s.last_seq, s.last_ts, s.first_ts,"
                     " COALESCE(c.event_count,0) AS event_count,"
                     " COALESCE(c.error_count,0) AS error_count"
                     " FROM sessions s LEFT JOIN ("
