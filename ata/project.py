@@ -480,6 +480,79 @@ def summarize_tools(recs):
                         "mounted": mounted, "usage_rate": usage_rate}}
 
 
+# claude/codex/droid 适配器的「耗时未知」占位约定：第一方转录不带耗时统一写 1。
+PLACEHOLDER_MS = 1
+
+
+def summarize_timing(recs):
+    """会话级时间拆解（DSH 统计栏同思路）：墙钟跨度内 LLM 生成 vs 工具执行。
+
+    duration_ms=1 或缺失视为未测量：不计入总量并把 quality 降级为
+    placeholder——与 usage 的 Missing 同一诚实语义，宁缺勿假。
+    同 id 多次 upsert 字典 last-wins，end 行的真实耗时覆盖 start 行的 None。
+    """
+    first_ts = last_ts = None
+    msgs = {}   # message_id -> (turn, duration_ms)
+    tools = {}  # tool_call_id -> (turn, duration_ms)
+    for rec in recs:
+        e = rec["event"]
+        ts = e["ts"]
+        first_ts = ts if first_ts is None else min(first_ts, ts)
+        last_ts = ts if last_ts is None else max(last_ts, ts)
+        p = e["payload"]
+        if e["type"] == "message.upserted" and p.get("role") == "assistant":
+            msgs[str(p.get("message_id"))] = (e.get("turn"), p.get("duration_ms"))
+        elif e["type"] == "tool.upserted":
+            tools[str(p.get("tool_call_id"))] = (e.get("turn"), p.get("duration_ms"))
+
+    per_turn = {}
+
+    def _cell(turn):
+        return per_turn.setdefault(
+            turn, {"turn": turn, "llm_ms": 0, "tool_ms": 0, "steps": 0, "calls": 0})
+
+    llm_ms = tool_ms = 0
+    llm_measured = tool_measured = False
+    for turn, dur in msgs.values():
+        if turn is not None:
+            _cell(turn)["steps"] += 1
+        if isinstance(dur, (int, float)) and dur > PLACEHOLDER_MS:
+            llm_ms += dur
+            llm_measured = True
+            if turn is not None:
+                _cell(turn)["llm_ms"] += dur
+    for turn, dur in tools.values():
+        if turn is not None:
+            _cell(turn)["calls"] += 1
+        if isinstance(dur, (int, float)) and dur > PLACEHOLDER_MS:
+            tool_ms += dur
+            tool_measured = True
+            if turn is not None:
+                _cell(turn)["tool_ms"] += dur
+
+    def _quality(measured, count):
+        if not count:
+            return "n/a"
+        return "measured" if measured else "placeholder"
+
+    span_ms = max(0, last_ts - first_ts) if first_ts is not None else 0
+    turn_set = {t for t, _ in msgs.values() if t is not None}
+    return {
+        "span_ms": span_ms,
+        "first_ts": first_ts,
+        "last_ts": last_ts,
+        "turns": len(turn_set),
+        "steps": len(msgs),
+        "calls": len(tools),
+        "llm_ms": llm_ms,
+        "tool_ms": tool_ms,
+        "other_ms": max(0, span_ms - llm_ms - tool_ms),
+        "llm_quality": _quality(llm_measured, len(msgs)),
+        "tool_quality": _quality(tool_measured, len(tools)),
+        "per_turn": [per_turn[t] for t in sorted(per_turn)],
+    }
+
+
 def list_compactions(recs):
     rows = []
     for rec in recs:
