@@ -8,6 +8,7 @@ import { SessionTable } from './SessionTable'
 import { StatsBadges } from './StatsPanel'
 import { UsageBadges, UsagePanel } from './UsagePanel'
 import { Timeline } from './Timeline'
+import { TopBar } from './TopBar'
 import { Inspector } from './Inspector'
 
 interface Props {
@@ -20,6 +21,10 @@ export function SessionView({ sessionId }: Props) {
   const [usageOpen, setUsageOpen] = useState(false)
   // Timeline 选区：null 无聚焦；聚焦时表格里不在焦点集的行变暗
   const [range, setRange] = useState<Viewport | null>(null)
+  // 跟随尾部与全局搜索提升到本层：TopBar 是开关，SessionTable 是消费方
+  const [follow, setFollow] = useState(true)
+  const [search, setSearch] = useState('')
+  const [titleOverride, setTitleOverride] = useState<{ title: string; crumb: string } | null>(null)
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   // loadOlder 前插后补偿滚动差，视觉位置不跳
   const scrollBeforeLoad = useRef<{ height: number; top: number } | null>(null)
@@ -70,18 +75,32 @@ export function SessionView({ sessionId }: Props) {
 
   // 焦点集在 SessionTable 内部由 focusRange 计算（需要行序号几何）
 
+  // 换会话清掉标题覆盖与搜索（旧版 openSession 的状态重置同义）
+  const [prevSid, setPrevSid] = useState(sessionId)
+  if (prevSid !== sessionId) {
+    setPrevSid(sessionId)
+    setTitleOverride(null)
+    setSearch('')
+    setRange(null)
+  }
+
   if (error) return <div className="board-empty">加载失败：{error}</div>
   if (!data) return <div className="home-empty">加载中…</div>
 
+  const viewData = titleOverride ? { ...data, title: titleOverride.title, crumb: titleOverride.crumb } : data
+
   return (
     <>
-      <header className="top">
-        {/* crumb 是服务端拼好的 HTML 片段（标题已转义），与旧版 innerHTML 同语义 */}
-        <div className="crumb" dangerouslySetInnerHTML={{ __html: data.crumb || data.title }} />
-        <button type="button" className="ghost" title="重新拉取当前会话的最新数据" onClick={refresh}>
-          刷新
-        </button>
-      </header>
+      <TopBar
+        sessionId={sessionId}
+        data={viewData}
+        follow={follow}
+        onFollowChange={setFollow}
+        search={search}
+        onSearchChange={setSearch}
+        onRenamed={(title, crumb) => setTitleOverride({ title, crumb })}
+        onRefresh={refresh}
+      />
       <section className="overview">
         <div className="zone-bar">
           <span className="zone-name">Timeline</span>
@@ -130,12 +149,15 @@ export function SessionView({ sessionId }: Props) {
             <span className="hint">{data.rows.length} 行 · T{Math.max(data.turns, 0)} 轮</span>
           </div>
           <SessionTable
-            data={data}
+            data={viewData}
             selectedId={selectedId}
             onSelect={setSelectedId}
             onLoadOlder={handleLoadOlder}
             loadingOlder={false}
             focusRange={range}
+            follow={follow}
+            onFollowChange={setFollow}
+            search={search}
             scrollerRef={scrollerRef}
           />
         </div>

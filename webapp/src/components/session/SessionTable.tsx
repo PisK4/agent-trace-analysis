@@ -21,21 +21,23 @@ interface Props {
   loadingOlder: boolean
   /** Timeline 选区：非 null 时不在区间内的行变暗（旧版 focusSet 同义） */
   focusRange?: Viewport | null
+  /** 跟随尾部开关归 TopBar 管（旧版同源状态）；贴底自动恢复跟随也走它 */
+  follow?: boolean
+  onFollowChange?: (v: boolean) => void
+  /** 全局搜索（顶栏 Search 输入），过滤正文 / 工具名 */
+  search?: string
   /** 外层要读滚动位置（loadOlder 补偿 / 跳转定位），共享同一个滚动容器 */
   scrollerRef?: React.RefObject<HTMLDivElement | null>
 }
 
-export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingOlder, focusRange, scrollerRef: outerRef }: Props) {
+export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingOlder, focusRange, follow = true, onFollowChange, search = '', scrollerRef: outerRef }: Props) {
   const [filter, setFilter] = useState<TableFilter>('')
-  const [search, setSearch] = useState('')
   const [collapsedTurns, setCollapsedTurns] = useState<Set<number>>(new Set())
   const [collapsedAssistants, setCollapsedAssistants] = useState<Set<string>>(new Set())
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportHeight, setViewportHeight] = useState(600)
   const innerRef = useRef<HTMLDivElement>(null)
   const scrollerRef = outerRef ?? innerRef
-  // 数据落地后是否自动跳尾（跟随模式）
-  const [follow, setFollow] = useState(true)
   const lastRowsRef = useRef(data.rows)
 
   const display = useMemo(
@@ -86,9 +88,9 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
     const el = scrollerRef.current
     if (!el) return
     setScrollTop(el.scrollTop)
-    // 用户上滚离开底部 → 关跟随；贴底 → 开
+    // 用户上滚离开底部 → 关跟随；贴底 → 开（开关状态归外层 TopBar 管）
     const atBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - 24
-    setFollow(atBottom)
+    if (atBottom !== follow) (onFollowChange ?? (() => {}))(atBottom)
   }
 
   const toggleTurn = (turn: number) =>
@@ -151,14 +153,7 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
         >
           tools
         </button>
-        <input
-          className="board-input"
-          type="text"
-          placeholder="搜索正文 / 工具名"
-          style={{ width: 160 }}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+        {/* 全局搜索入口在顶栏（旧版同布局），这里不再重复 */}
       </div>
       <div className="table-wrap" ref={scrollerRef} onScroll={onScroll}>
         <table>

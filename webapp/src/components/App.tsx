@@ -20,7 +20,7 @@ type View = 'sessions' | 'board'
 export function App() {
   const [sessions, setSessions] = useState<SessionMeta[]>([])
   const [agentFilter, setAgentFilter] = useState<string | null>(null)
-  const [view, setView] = useState<View>('board')
+  const [view, setView] = useState<View>('sessions')
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
