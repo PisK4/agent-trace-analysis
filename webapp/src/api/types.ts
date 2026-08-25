@@ -93,3 +93,44 @@ export type SessionResponse = SessionPage | Unchanged
 export function isUnchanged(res: SessionResponse): res is Unchanged {
   return 'unchanged' in res && res.unchanged === true
 }
+
+// ── 标注板（board）──
+
+export interface ScoreEntry {
+  session_id: string
+  value: string
+  note: string | null
+  ts: number
+  seq: number
+  agent: string | null
+  title: string | null
+  event_count: number
+  error_count: number
+}
+
+export interface AssignmentEntry {
+  session_id: string
+  run_id: string | null
+  task_id: string | null
+  ts: number
+  seq: number
+  agent: string | null
+  title: string | null
+  event_count: number
+  error_count: number
+}
+
+// GET /api/annotations（ledger.annotations：latest-wins 折叠墓碑后）
+export interface AnnotationsPage {
+  ok: true
+  scores: ScoreEntry[]
+  assignments: AssignmentEntry[]
+}
+
+export interface RunInfo {
+  run_id: string
+  description: string
+  taskset_fingerprint: string | null
+  created_ts: number
+  assignment_count?: number
+}

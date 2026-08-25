@@ -1,4 +1,4 @@
-import type { SessionMeta, SessionResponse } from './types'
+import type { AnnotationsPage, RunInfo, SessionMeta, SessionResponse } from './types'
 
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(path)
@@ -29,4 +29,27 @@ export const api = {
 
   renameSession: (id: string, title: string) =>
     postJSON<{ ok: true; title: string }>(`/api/sessions/${encodeURIComponent(id)}/title`, { title }),
+
+  annotations: () => getJSON<AnnotationsPage>('/api/annotations'),
+  runs: () => getJSON<RunInfo[]>('/api/runs'),
+  appendEvent: (event: Record<string, unknown>) =>
+    postJSON<{ ok: true; seq: number }>('/api/events', event),
+  createRun: (description: string) =>
+    postJSON<{ ok: true; run_id: string }>('/api/runs', { description }),
+  renameRun: (runId: string, name: string) =>
+    postJSON<{ ok: true; name: string }>(`/api/runs/${encodeURIComponent(runId)}/name`, { name }),
+}
+
+// v1 事件信封：标注/归组等前端写入的统一组装（与 schema.parse_event 对齐）
+export function eventEnvelope(agentId: string | null, sessionId: string, type: string, payload: Record<string, unknown>) {
+  return {
+    v: 1 as const,
+    id: crypto.randomUUID().replace(/-/g, ''),
+    agent_id: agentId ?? 'unknown',
+    session_id: sessionId,
+    ts: Date.now(),
+    type,
+    turn: null,
+    payload,
+  }
 }
