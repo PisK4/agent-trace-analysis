@@ -168,3 +168,29 @@ export interface UsageSummary {
   audit: { findings: UsageAuditFinding[]; reported_turns: number; expected_turns: number }
   compactions: Array<{ turn: number | null; seq: number }>
 }
+
+// ── 会话时间拆解（GET /api/sessions/{id}/timing，project.py summarize_timing）──
+
+export interface TimingTurn {
+  turn: number
+  llm_ms: number
+  tool_ms: number
+  steps: number
+  calls: number
+}
+
+export interface TimingSummary {
+  ok: true
+  span_ms: number
+  first_ts: number | null
+  last_ts: number | null
+  turns: number
+  steps: number
+  calls: number
+  llm_ms: number
+  tool_ms: number
+  other_ms: number
+  llm_quality: 'measured' | 'placeholder' | 'n/a'
+  tool_quality: 'measured' | 'placeholder' | 'n/a'
+  per_turn: TimingTurn[]
+}

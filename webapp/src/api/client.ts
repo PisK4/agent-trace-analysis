@@ -1,4 +1,4 @@
-import type { AnnotationsPage, RunInfo, SessionMeta, SessionResponse, UsageSummary } from './types'
+import type { AnnotationsPage, RunInfo, SessionMeta, SessionResponse, TimingSummary, UsageSummary } from './types'
 
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(path)
@@ -35,6 +35,9 @@ export const api = {
 
   usage: (id: string) =>
     getJSON<UsageSummary>(`/api/sessions/${encodeURIComponent(id)}/usage`),
+
+  timing: (id: string) =>
+    getJSON<TimingSummary>(`/api/sessions/${encodeURIComponent(id)}/timing`),
 
   renameSession: (id: string, title: string) =>
     postJSON<{ ok: true; title: string }>(`/api/sessions/${encodeURIComponent(id)}/title`, { title }),
