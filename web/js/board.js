@@ -65,7 +65,7 @@
       document.getElementById("assignSecCnt").textContent =
         `${new Set(assigns.map(a => a.run_id)).size} runs · 按任务聚合`;
 
-      // ── 标注列表 ──
+      // ── 标注列表 ──（备注独占一行；列表限高约 5 行，超出滚动）
       document.getElementById("annoList").innerHTML = scores.length ? scores.map(s => {
         const sid = esc(s.session_id);
         return `
@@ -73,11 +73,13 @@
           <span class="adot" data-v="${esc(s.value)}"></span>
           <span class="vchip" data-v="${esc(s.value)}">${esc(s.value)}</span>
           <span class="who">
-            <button class="t" type="button" data-open="${sid}">${esc(s.title || s.session_id)}</button>
+            <span class="trow">
+              <button class="t" type="button" data-open="${sid}">${esc(s.title || s.session_id)}</button>
+              <span class="ts">${fullTime(Number(s.ts))}</span>
+            </span>
             <span class="sub">${esc(AGENT_LABELS[s.agent] || s.agent || "?")} · ${Number(s.event_count ?? 0)} evts${Number(s.error_count ?? 0) ? ` · ${Number(s.error_count)} failed` : ""} · ${shortTime(Number(s.ts))}</span>
+            <span class="note">${s.note ? esc(s.note) : "<i>（无备注）</i>"}</span>
           </span>
-          <span class="note">${s.note ? esc(s.note) : "<i>（无备注）</i>"}</span>
-          <span class="ts">${fullTime(Number(s.ts))}</span>
           <span class="acts">
             <button class="icon-btn" data-edit="${sid}" title="编辑标注"><svg class="ico"><use href="#i-edit"/></svg></button>
             <button class="icon-btn danger" data-clear="${sid}" title="删除标注（追加 cleared 墓碑，历史可追溯）"><svg class="ico"><use href="#i-trash"/></svg></button>
@@ -92,6 +94,8 @@
         byRun.get(a.run_id).push(a);
       }
       const runMeta = new Map(boardState.runs.map(r => [r.run_id, r]));
+      // 归组默认折叠，只显示组标题；展开状态记内存（不持久化）
+      const folded = rid => !(boardState.openRuns || []).includes(rid);
       document.getElementById("runList").innerHTML = byRun.size ? [...byRun.entries()].map(([rid, list]) => {
         const meta = runMeta.get(rid) || {};
         const byTask = new Map();
@@ -103,19 +107,27 @@
           <div class="task">
             <span class="task-id">${esc(tid)}</span>
             <div class="task-sessions">
-              ${sess.map(a => `
+              ${sess.map(a => {
+                const score = boardState.scores.find(x => x.session_id === a.session_id);
+                return `
               <div class="tsess">
-                <button class="t" type="button" data-open="${esc(a.session_id)}">${esc(a.title || a.session_id)}</button>
-                <span class="adot" ${sValueOf(a.session_id)}></span>
-                <span class="meta">${esc(AGENT_LABELS[a.agent] || a.agent || "?")} · ${Number(a.event_count ?? 0)} evts · ${shortTime(Number(a.ts))}</span>
+                <span class="arow-l">
+                  <span class="arow-l1">
+                    <button class="t" type="button" data-open="${esc(a.session_id)}">${esc(a.title || a.session_id)}</button>
+                    <span class="adot" ${sValueOf(a.session_id)}></span>
+                    <span class="meta">${esc(AGENT_LABELS[a.agent] || a.agent || "?")} · ${Number(a.event_count ?? 0)} evts · ${shortTime(Number(a.ts))}</span>
+                  </span>
+                  ${score ? `<span class="arow-l2"><span class="vchip" data-v="${esc(score.value)}">${esc(score.value)}</span>${score.note ? esc(score.note) : ""}</span>` : ""}
+                </span>
                 <button class="icon-btn danger" data-unassign="${esc(a.session_id)}|${esc(rid)}" title="移出归组（追加 unassigned 墓碑）"><svg class="ico"><use href="#i-x"/></svg></button>
-              </div>`).join("")}
+              </div>`; }).join("")}
               <button class="add-sess" type="button" data-addto="${esc(tid)}|${esc(rid)}">+ 挂会话</button>
             </div>
           </div>`).join("");
         return `
         <div class="run">
           <div class="run-head">
+            <button class="icon-btn fold" data-rfold="${esc(rid)}" title="展开/折叠归组"><svg class="ico"><use href="#${folded ? "i-unfold" : "i-fold"}"/></svg></button>
             <b>${esc(meta.description || rid)}</b>
             ${meta.description ? `<span class="fp">id: ${esc(rid)}</span>` : ""}
             <span class="fp">${meta.created_ts ? `${fullTime(Number(meta.created_ts))} 建` : ""}</span>
@@ -126,7 +138,7 @@
               <button class="icon-btn danger" data-drun="${esc(rid)}" title="移出该 run 全部归组（逐条墓碑）"><svg class="ico"><use href="#i-trash"/></svg></button>
             </span>
           </div>
-          <div class="run-body">${tasks}</div>
+          ${folded(rid) ? "" : `<div class="run-body">${tasks}</div>`}
         </div>`;
       }).join("") : `<div class="board-empty">暂无归组 —— 在会话页「归组」或点右上「新建归组」</div>`;
 
@@ -171,6 +183,16 @@
             });
           }
           if (list.length) toast(`已移出 ${list.length} 条归组`);
+        }));
+      // 归组折叠开关：默认收起，点头部图标展开
+      document.querySelectorAll("#runList [data-rfold]").forEach(btn =>
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const rid = btn.dataset.rfold;
+          const open = new Set(boardState.openRuns || []);
+          open.has(rid) ? open.delete(rid) : open.add(rid);
+          boardState.openRuns = [...open];
+          paintBoard();
         }));
       // 组重命名：改 runs.description，run_id（事件引用主键）不变
       document.querySelectorAll("#runList [data-rrname]").forEach(btn =>
