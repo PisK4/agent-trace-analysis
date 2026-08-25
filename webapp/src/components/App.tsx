@@ -50,7 +50,7 @@ export function App() {
 
   return (
     <ToastProvider>
-      <div className="shell" data-view={view}>
+      <div className="shell" data-view={view} data-inspect="open">
         <aside className="nav">
           <button type="button" className="brand" onClick={() => setView('sessions')}>
             <i className="mark" /><b>Atatrace</b><em>ledger</em>

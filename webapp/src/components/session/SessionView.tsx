@@ -1,12 +1,14 @@
-// 会话页：顶栏（crumb / 刷新）+ overview 区（统计 / Usage 徽章 + Timeline 占位）
-// + Ledger 表格。数据走 useSession（rev 门控轮询 + loadOlder 前插）。
-// Timeline 拖拽聚焦与右侧 inspector 属后续阶段迁移，本版先留占位。
+// 会话页：顶栏（crumb / 刷新）+ overview 区（统计 / Usage 徽章 / Timeline）
+// + Ledger 表格 + 右侧 Inspector。数据走 useSession（rev 门控轮询 + loadOlder 前插）。
 import { useCallback, useRef, useState } from 'react'
 import { CONTENT_ROW_HEIGHT } from '../../lib/tableModel'
+import type { Viewport } from '../../lib/timelineModel'
 import { useSession } from '../../api/useSession'
 import { SessionTable } from './SessionTable'
 import { StatsBadges } from './StatsPanel'
 import { UsageBadges, UsagePanel } from './UsagePanel'
+import { Timeline } from './Timeline'
+import { Inspector } from './Inspector'
 
 interface Props {
   sessionId: string
@@ -16,6 +18,8 @@ export function SessionView({ sessionId }: Props) {
   const { data, error, refresh, loadOlder } = useSession(sessionId)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [usageOpen, setUsageOpen] = useState(false)
+  // Timeline 选区：null 无聚焦；聚焦时表格里不在焦点集的行变暗
+  const [range, setRange] = useState<Viewport | null>(null)
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   // loadOlder 前插后补偿滚动差，视觉位置不跳
   const scrollBeforeLoad = useRef<{ height: number; top: number } | null>(null)
@@ -49,6 +53,23 @@ export function SessionView({ sessionId }: Props) {
   const jumpToSeq = useCallback((seq: number) => jumpToRow((r) => r._seq === seq), [jumpToRow])
   const jumpToId = useCallback((id: string) => jumpToRow((r) => r.id === id), [jumpToRow])
 
+  // Timeline 点击 span → 表格滚到该行（旧版 selectRecord 的 scrollIntoView 同义）
+  const selectFromTimeline = useCallback(
+    (id: string) => {
+      setSelectedId(id)
+      const rows = data?.rows
+      const el = scrollerRef.current
+      if (!rows || !el) return
+      const row = rows.find((r) => r.id === id)
+      if (!row) return
+      const olderH = data.hasOlder ? CONTENT_ROW_HEIGHT : 0
+      el.scrollTop = Math.max(0, olderH + CONTENT_ROW_HEIGHT * row.index - el.clientHeight / 2)
+    },
+    [data],
+  )
+
+  // 焦点集在 SessionTable 内部由 focusRange 计算（需要行序号几何）
+
   if (error) return <div className="board-empty">加载失败：{error}</div>
   if (!data) return <div className="home-empty">加载中…</div>
 
@@ -79,8 +100,17 @@ export function SessionView({ sessionId }: Props) {
           onClose={() => setUsageOpen(false)}
         />
         <div className="plot">
-          {/* Timeline 拖拽/缩放视图属下一阶段迁移；占位保持布局高度 */}
-          <div className="track" aria-label="Timeline overview" style={{ minHeight: 56 }} />
+          <div className="labels" aria-hidden="true"><span>Input</span><span>Model</span><span>Tools</span></div>
+          <Timeline
+            rows={data.rows}
+            hasOlder={data.hasOlder}
+            loadingOlder={false}
+            selectedId={selectedId}
+            range={range}
+            onRangeChange={setRange}
+            onSelect={selectFromTimeline}
+            onLoadOlder={handleLoadOlder}
+          />
         </div>
       </section>
       <section className="ledger">
@@ -105,11 +135,18 @@ export function SessionView({ sessionId }: Props) {
             onSelect={setSelectedId}
             onLoadOlder={handleLoadOlder}
             loadingOlder={false}
+            focusRange={range}
             scrollerRef={scrollerRef}
           />
         </div>
+        <Inspector
+          rows={data.rows}
+          toolsIndex={data.toolsIndex}
+          sessionId={sessionId}
+          selectedId={selectedId}
+          onJump={jumpToId}
+        />
       </section>
     </>
   )
 }
-

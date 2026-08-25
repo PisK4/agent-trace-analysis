@@ -1,7 +1,8 @@
-// Ledger 表格：虚拟滚动 + 折叠 SUMMARY + 选中/悬停，行高定值（30/20）。
+// Ledger 表格：虚拟滚动 + 折叠 SUMMARY + 选中/悬停 + Timeline 选区聚焦变暗。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectedRow } from '../../api/types'
 import type { SessionData } from '../../api/merge'
+import type { Viewport } from '../../lib/timelineModel'
 import {
   collapsibleAssistants,
   collapsibleTurns,
@@ -18,11 +19,13 @@ interface Props {
   onSelect: (id: string) => void
   onLoadOlder: () => void
   loadingOlder: boolean
+  /** Timeline 选区：非 null 时不在区间内的行变暗（旧版 focusSet 同义） */
+  focusRange?: Viewport | null
   /** 外层要读滚动位置（loadOlder 补偿 / 跳转定位），共享同一个滚动容器 */
   scrollerRef?: React.RefObject<HTMLDivElement | null>
 }
 
-export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingOlder, scrollerRef: outerRef }: Props) {
+export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingOlder, focusRange, scrollerRef: outerRef }: Props) {
   const [filter, setFilter] = useState<TableFilter>('')
   const [search, setSearch] = useState('')
   const [collapsedTurns, setCollapsedTurns] = useState<Set<number>>(new Set())
@@ -46,6 +49,18 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
 
   const turns = useMemo(() => collapsibleTurns(data.rows), [data.rows])
   const assistants = useMemo(() => collapsibleAssistants(data.rows), [data.rows])
+
+  // 焦点集：Timeline 选区覆盖的行（按行序几何：行 i 占 [i, i+1]）。
+  // range 为空或无命中时全部正常显示；命中时窗口外行 data-focus="out" 变暗。
+  const focusIds = useMemo(() => {
+    if (!focusRange) return null
+    const ids = new Set<string>()
+    for (const r of data.rows) {
+      const i = r.index
+      if (i <= focusRange.end && i + 1 >= focusRange.start) ids.add(r.id)
+    }
+    return ids.size ? ids : null
+  }, [focusRange, data.rows])
 
   // 跟随尾部：行数据变化且 follow 开着时贴底。用行数组引用变化判断，
   // unchanged 拍不产生新数组，不会无谓跳滚动。
@@ -179,6 +194,7 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
                   row={r}
                   rows={data.rows}
                   selected={selectedId === r.id}
+                  dimmed={focusIds != null && !focusIds.has(r.id)}
                   onSelect={onSelect}
                   onDblClick={() => {
                     if (r.kind === 'assistant' && assistants.includes(r.id)) toggleAssistant(r.id)
@@ -195,10 +211,11 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
   )
 }
 
-function TableRow({ row, rows, selected, onSelect, onDblClick }: {
+function TableRow({ row, rows, selected, dimmed, onSelect, onDblClick }: {
   row: ProjectedRow
   rows: ProjectedRow[]
   selected: boolean
+  dimmed: boolean
   onSelect: (id: string) => void
   onDblClick: () => void
 }) {
@@ -207,6 +224,7 @@ function TableRow({ row, rows, selected, onSelect, onDblClick }: {
     <tr
       data-id={row.id}
       data-selected={selected}
+      data-focus={dimmed ? 'out' : undefined}
       data-error={row.status === 'failed' || row.status === 'cancelled'}
       data-pending={row.status === 'pending'}
       data-turn-start={row.start ? 'true' : undefined}

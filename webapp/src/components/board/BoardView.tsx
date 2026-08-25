@@ -194,7 +194,7 @@ export function BoardView({ sessions, onOpenSession }: Props) {
           <div className="board-sec-head"><b>标注</b><span className="cnt">{scores.length} 条 · 按时间倒序</span></div>
           <div id="annoList">
             {scores.length ? scores.map((s) => (
-              <div key={s.seq} className="arow" data-sid={s.session_id}>
+              <div key={`${s.seq}-${s.session_id}`} className="arow" data-sid={s.session_id}>
                 <span className="adot" data-v={s.value} />
                 <span className="vchip" data-v={s.value}>{s.value}</span>
                 <span className="who">
