@@ -1222,3 +1222,20 @@
     .timing-kv dt { color: var(--ink-2); }
     .timing-kv dd { margin: 0; font-family: "JetBrains Mono", ui-monospace, monospace; }
     .timing-kv .q { color: var(--ink-3); font-size: 11px; font-family: inherit; }
+
+    /* ── Ledger 对话/轨迹切换 ── */
+    .seg-toggle { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; }
+    .seg-toggle button { border: 0; background: transparent; padding: 2px 10px; font-size: 12px; color: var(--ink-2); cursor: pointer; }
+    .seg-toggle button[aria-pressed="true"] { background: var(--accent-tint); color: var(--accent-ink); font-weight: 600; }
+
+    /* ── 对话视图 ── */
+    .conv-wrap { overflow-y: auto; height: 100%; padding: 12px 16px 24px; }
+    .conv-older { margin: 0 auto 12px; display: block; }
+    .conv-msg { max-width: 860px; margin: 0 auto 14px; padding: 10px 14px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+    .conv-msg.user { background: var(--accent-tint); border-color: transparent; }
+    .conv-who { display: block; font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--ink-3); margin-bottom: 4px; }
+    .conv-body :first-child { margin-top: 0; }
+    .conv-tools { max-width: 860px; margin: 0 auto 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .conv-tool-chip { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--field); color: var(--ink-2); cursor: pointer; }
+    .conv-tool-chip[data-error="true"] { border-color: var(--red); color: var(--red); }
+    .conv-compact { max-width: 860px; margin: 0 auto 12px; font-size: 12px; color: var(--ink-3); }

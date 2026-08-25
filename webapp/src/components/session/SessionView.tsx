@@ -12,6 +12,7 @@ import { Timeline } from './Timeline'
 import { TopBar } from './TopBar'
 import { Inspector } from './Inspector'
 import { TimeBadge } from './TimeBadge'
+import { ConversationView } from './ConversationView'
 
 interface Props {
   sessionId: string
@@ -21,6 +22,8 @@ export function SessionView({ sessionId }: Props) {
   const { data, error, refresh, loadOlder } = useSession(sessionId)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [usageOpen, setUsageOpen] = useState(false)
+  // Ledger 双视图：trace 是既有账本表格，chat 是只看对话的渲染视图
+  const [ledgerView, setLedgerView] = useState<'trace' | 'chat'>('trace')
   // Timeline 选区：null 无聚焦；聚焦时表格里不在焦点集的行变暗
   const [range, setRange] = useState<Viewport | null>(null)
   // 跟随尾部与全局搜索提升到本层：TopBar 是开关，SessionTable 是消费方
@@ -66,6 +69,25 @@ export function SessionView({ sessionId }: Props) {
     [jumpToRow],
   )
 
+  // 对话视图点工具 chip → 切回轨迹视图并选中该行；rAF 等 SessionTable
+  // 重新挂载拿到 scroller 再滚动定位
+  const inspectFromChat = useCallback(
+    (id: string) => {
+      setLedgerView('trace')
+      setSelectedId(id)
+      requestAnimationFrame(() => {
+        const el = scrollerRef.current
+        const rows = data?.rows
+        if (!el || !rows) return
+        const row = rows.find((r) => r.id === id)
+        if (!row) return
+        const olderH = data.hasOlder ? CONTENT_ROW_HEIGHT : 0
+        el.scrollTop = Math.max(0, olderH + CONTENT_ROW_HEIGHT * row.index - el.clientHeight / 2)
+      })
+    },
+    [data],
+  )
+
   // Timeline 点击 span → 表格滚到该行（旧版 selectRecord 的 scrollIntoView 同义）
   const selectFromTimeline = useCallback(
     (id: string) => {
@@ -90,6 +112,7 @@ export function SessionView({ sessionId }: Props) {
     setTitleOverride(null)
     setSearch('')
     setRange(null)
+    setLedgerView('trace')
   }
 
   if (error) return <div className="board-empty">加载失败：{error}</div>
@@ -155,20 +178,33 @@ export function SessionView({ sessionId }: Props) {
               复制 id
             </button>
             <div className="grow" />
+            <div className="seg-toggle" role="group" aria-label="Ledger 视图">
+              <button type="button" aria-pressed={ledgerView === 'trace'} onClick={() => setLedgerView('trace')}>轨迹</button>
+              <button type="button" aria-pressed={ledgerView === 'chat'} onClick={() => setLedgerView('chat')}>对话</button>
+            </div>
             <span className="hint">{data.rows.length} 行 · T{Math.max(data.turns, 0)} 轮</span>
           </div>
-          <SessionTable
-            data={viewData}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onLoadOlder={handleLoadOlder}
-            loadingOlder={false}
-            focusRange={range}
-            follow={follow}
-            onFollowChange={setFollow}
-            search={search}
-            scrollerRef={scrollerRef}
-          />
+          {ledgerView === 'trace' ? (
+            <SessionTable
+              data={viewData}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              onLoadOlder={handleLoadOlder}
+              loadingOlder={false}
+              focusRange={range}
+              follow={follow}
+              onFollowChange={setFollow}
+              search={search}
+              scrollerRef={scrollerRef}
+            />
+          ) : (
+            <ConversationView
+              data={viewData}
+              onInspect={inspectFromChat}
+              onLoadOlder={handleLoadOlder}
+              loadingOlder={false}
+            />
+          )}
         </div>
         <Inspector
           rows={data.rows}
