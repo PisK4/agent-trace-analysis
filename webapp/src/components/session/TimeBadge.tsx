@@ -11,18 +11,21 @@ interface Props {
 }
 
 export function TimeBadge({ sessionId, onJumpTurn }: Props) {
-  const [data, setData] = useState<TimingSummary | null>(null)
+  // dataFor 记录 data 归属的会话：换会话的过渡期渲染期直接判 null，
+  // 不在 effect 里同步置空（避免级联 render，lint 同款告警在 UsagePanel 已有先例）
+  const [state, setState] = useState<{ dataFor: string; data: TimingSummary | null }>({ dataFor: '', data: null })
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
     let alive = true
-    setData(null)
     api.timing(sessionId)
-      .then((d) => { if (alive) setData(d) })
-      .catch(() => { if (alive) setData(null) })
+      .then((d) => { if (alive) setState({ dataFor: sessionId, data: d }) })
+      .catch(() => { if (alive) setState({ dataFor: sessionId, data: null }) })
     return () => { alive = false }
   }, [sessionId])
+
+  const data = state.dataFor === sessionId ? state.data : null
 
   // 点外面收起（与 StatsBadges 弹层同策略）
   useEffect(() => {
