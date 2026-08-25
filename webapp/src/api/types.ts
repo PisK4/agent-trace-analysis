@@ -56,6 +56,8 @@ export interface ProjectedRow {
   toolsCatalog?: Array<{ name: string; description?: string; parameters?: object }>
   skillsCatalog?: Array<Record<string, unknown>>
   note?: string | null
+  // 客户端标记（服务端不下发）：loadOlder 攒下的 tail 窗口外历史行
+  keptOlder?: boolean
 }
 
 export interface ToolSchema {

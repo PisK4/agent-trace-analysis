@@ -1,12 +1,9 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-
-function App() {
-  return <main className="boot-empty">ATA</main>
-}
+import { BootPlaceholder } from './components/BootPlaceholder'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <BootPlaceholder sessionId={null} />
   </StrictMode>,
 )

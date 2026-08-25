@@ -1,0 +1,92 @@
+// 会话页数据源：rev 门控轮询 + 按行合并的 React 化。
+//
+// 轮询形态沿用旧版已验证的设计（web/js/app.js 自调度链）：setTimeout 链
+// 天然防重叠；unchanged 响应零 setState；失败退避；后台标签暂停；epoch
+// 守卫消灭「await 期间换会话」脏写。
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { api } from './client'
+import { applySessionPage, emptySessionData, type SessionData } from './merge'
+import { isUnchanged } from './types'
+
+const POLL_INTERVAL_MS = 1000
+const POLL_BACKOFF_MS = 5000
+
+export interface UseSessionResult {
+  data: SessionData | null
+  error: string | null
+  /** 手动全量刷新：绕过 rev 门控重置基线 */
+  refresh: () => void
+}
+
+export function useSession(id: string | null): UseSessionResult {
+  const [sessionData, setSessionData] = useState<SessionData | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  // 无 id（首页态）时直接派生空数据，不进轮询
+  const data = id ? sessionData : null
+  // force 拍标记：置位后下一拍不带 rev 拉整页（rev 基线作废）
+  const forceRef = useRef(false)
+
+  const refresh = useCallback(() => {
+    forceRef.current = true
+  }, [])
+
+  useEffect(() => {
+    if (!id) return
+    // epoch 守卫：await 回来后 effect 已因换会话重建（epoch 不符）即丢弃结果
+    const sid = id
+    let alive = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let inFlight = false
+    let errorStreak = 0
+
+    function schedule(ms: number) {
+      timer = setTimeout(run, ms)
+    }
+
+    async function run() {
+      if (!alive || inFlight) return schedule(POLL_INTERVAL_MS)
+      if (document.hidden) return schedule(POLL_INTERVAL_MS)
+      inFlight = true
+      try {
+        // force 拍不带 rev；正常拍带当前基线 rev（0 = 基线未建立），命中 unchanged 返回短响应
+        const force = forceRef.current
+        forceRef.current = false
+        const baseline = dataRef.current.rev
+        const res = await api.session(sid, !force && baseline > 0 ? baseline : undefined)
+        if (!alive) return
+        if (!isUnchanged(res)) {
+          const page = res
+          const next = applySessionPage(dataRef.current ?? emptySessionData(page.id), page).next
+          dataRef.current = next
+          setSessionData(next)
+        }
+        errorStreak = 0
+        setError(null)
+      } catch (err) {
+        errorStreak += 1
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        inFlight = false
+      }
+      schedule(errorStreak ? POLL_BACKOFF_MS : POLL_INTERVAL_MS)
+    }
+    // dataRef 与 effect 同生命周期：换会话即重置，不跨会话复用
+    const dataRef = { current: emptySessionData(sid) }
+    run()
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [id])
+
+  // 页面回前台立刻补一拍，不等退避计时器走完
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refresh()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [refresh])
+
+  return { data, error, refresh }
+}
