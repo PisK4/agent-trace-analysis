@@ -1,6 +1,7 @@
 // 会话页：顶栏（crumb / 刷新）+ overview 区（统计 / Usage 徽章 / Timeline）
 // + Ledger 表格 + 右侧 Inspector。数据走 useSession（rev 门控轮询 + loadOlder 前插）。
 import { useCallback, useRef, useState } from 'react'
+import type { ProjectedRow } from '../../api/types'
 import { CONTENT_ROW_HEIGHT } from '../../lib/tableModel'
 import type { Viewport } from '../../lib/timelineModel'
 import { useSession } from '../../api/useSession'
@@ -10,6 +11,7 @@ import { UsageBadges, UsagePanel } from './UsagePanel'
 import { Timeline } from './Timeline'
 import { TopBar } from './TopBar'
 import { Inspector } from './Inspector'
+import { TimeBadge } from './TimeBadge'
 
 interface Props {
   sessionId: string
@@ -44,7 +46,7 @@ export function SessionView({ sessionId }: Props) {
   // usage 曲线红点 / 统计面板入口跳转轨迹现场：定位到行，滚到可见并选中。
   // 行高定值（30/20）+ hasOlder 头部预留一格，index 可直接换算偏移；
   // 折叠态下有偏差，可接受——目标是行进入视窗。
-  const jumpToRow = useCallback((match: (r: { id: string; _seq: number }) => boolean) => {
+  const jumpToRow = useCallback((match: (r: ProjectedRow) => boolean) => {
     const rows = data?.rows
     if (!rows || !scrollerRef.current) return
     const row = rows.find(match)
@@ -57,6 +59,12 @@ export function SessionView({ sessionId }: Props) {
 
   const jumpToSeq = useCallback((seq: number) => jumpToRow((r) => r._seq === seq), [jumpToRow])
   const jumpToId = useCallback((id: string) => jumpToRow((r) => r.id === id), [jumpToRow])
+
+  // 时间拆解弹层点某轮 → 跳到该轮起始行（user 行 start=true）
+  const jumpToTurn = useCallback(
+    (turn: number) => jumpToRow((r) => r.start === true && r.turn === turn),
+    [jumpToRow],
+  )
 
   // Timeline 点击 span → 表格滚到该行（旧版 selectRecord 的 scrollIntoView 同义）
   const selectFromTimeline = useCallback(
@@ -105,6 +113,7 @@ export function SessionView({ sessionId }: Props) {
         <div className="zone-bar">
           <span className="zone-name">Timeline</span>
           <div className="grow" />
+          <TimeBadge sessionId={sessionId} onJumpTurn={jumpToTurn} />
           <StatsBadges rows={data.rows} onJump={jumpToId} />
           <UsageBadges
             sessionId={sessionId}

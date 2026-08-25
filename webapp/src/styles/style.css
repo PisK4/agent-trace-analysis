@@ -1214,3 +1214,11 @@
 .tsess .arow-l2 .vchip { height: 16px; padding: 0 6px; font-size: 9.5px; }
 .add-sess { color: var(--ink-3); font-size: 11px; height: 20px; padding: 0 6px; border-radius: 5px; align-self: flex-start; }
 .add-sess:hover { background: var(--hover-2); color: var(--ink); }
+
+    /* ── 时间拆解徽章（DSH 统计栏同思路）── */
+    .timing-pop { min-width: 320px; max-height: 60vh; overflow: auto; }
+    .timing-kv { margin: 0; padding: 4px 12px 8px; }
+    .timing-kv div { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+    .timing-kv dt { color: var(--ink-2); }
+    .timing-kv dd { margin: 0; font-family: "JetBrains Mono", ui-monospace, monospace; }
+    .timing-kv .q { color: var(--ink-3); font-size: 11px; font-family: inherit; }
