@@ -179,7 +179,9 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
         duration = None if status == "pending" else 1
         if role == "assistant" and name == "message_end":
             m_start = state.get("msg_start_ts", {}).get(mid)
-            duration = max(int(ts) - int(m_start), 0) if m_start else 0
+            # 会话重放（session.opened 后补历史）没有 message_start，
+            # 耗时不可得时写 None（未测量）而非 0（会被当成实测零毫秒）。
+            duration = max(int(ts) - int(m_start), 0) if m_start else None
             state.setdefault("msg_dur", {})[mid] = duration
         out.append(_ev(
             f"{session_id}:msg:{mid}:{name}", agent_id, session_id, ts,
@@ -230,7 +232,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
         args = state.get("tool_args", {}).get(cid) or {}
         result = _tool_result(event.get("result"))
         start_ts = state.get("tool_start_ts", {}).pop(cid, None)
-        duration = max(int(ts) - int(start_ts), 0) if start_ts else 0
+        duration = max(int(ts) - int(start_ts), 0) if start_ts else None
         out.append(_ev(
             f"{session_id}:tool:{cid}:end", agent_id, session_id, ts,
             "tool.upserted", state.get("turn") or 1,
