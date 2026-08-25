@@ -1081,6 +1081,7 @@
 .shell[data-view="board"] .follow-toggle,
 .shell[data-view="board"] #renameBtn { display: none; }
 .shell[data-view="board"] .home-empty { display: none; }
+.shell[data-view="sessions"] .board-view { display: none; }
 
 .primary-btn { background: var(--accent); color: #fff; font-weight: 500; }
 .primary-btn:hover { background: var(--accent-ink); color: #fff; }

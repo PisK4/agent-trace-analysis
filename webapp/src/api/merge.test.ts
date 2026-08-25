@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applySessionPage, emptySessionData, type SessionData } from './merge'
+import { applySessionPage, emptySessionData, prependOlderPage, type SessionData } from './merge'
 import type { ProjectedRow, SessionPage } from './types'
 
 function row(overrides: Partial<ProjectedRow>): ProjectedRow {
@@ -91,5 +91,53 @@ describe('applySessionPage', () => {
   it('carries rev forward for the next gated poll', () => {
     const { next } = applySessionPage(emptySessionData('s1'), page([row({})], { rev: 42 }))
     expect(next.rev).toBe(42)
+  })
+})
+
+describe('prependOlderPage', () => {
+  it('prepends unseen rows marked keptOlder and advances anchor', () => {
+    const tail = row({ id: 't', _seq: 100 })
+    const current: SessionData = {
+      ...applySessionPage(emptySessionData('s1'), page([tail], { rev: 5 })).next,
+      hasOlder: true, cursor: 100,
+    }
+    const older = page([row({ id: 'o1', _seq: 40 }), row({ id: 'o2', _seq: 60 })],
+      { has_older: true, cursor: 40, rev: 6 })
+    const next = prependOlderPage(current, older)
+    expect(next.rows.map((r) => r.id)).toEqual(['o1', 'o2', 't'])
+    expect(next.rows[0].keptOlder).toBe(true)
+    expect(next.rows[0].index).toBe(0)
+    expect(next.rows[2].index).toBe(2)
+    expect(next.hasOlder).toBe(true)
+    expect(next.cursor).toBe(40)
+    expect(next.rev).toBe(6)
+  })
+
+  it('does not duplicate rows already in the tail window', () => {
+    const tail = row({ id: 't', _seq: 100 })
+    const current: SessionData = {
+      ...applySessionPage(emptySessionData('s1'), page([tail])).next,
+      hasOlder: true, cursor: 100,
+    }
+    // before=cursor 的页理论上不含 tail 行，但重叠窗口下防御一下
+    const older = page([tail], { has_older: false, cursor: 90, rev: 7 })
+    const next = prependOlderPage(current, older)
+    expect(next.rows.filter((r) => r.id === 't')).toHaveLength(1)
+    expect(next.rows[0].keptOlder).toBeUndefined()
+    expect(next.hasOlder).toBe(false)
+  })
+
+  it('survives a subsequent tail merge keeping the prepended prefix', () => {
+    const o = row({ id: 'o', _seq: 10 })
+    const t = row({ id: 't', _seq: 100 })
+    const current: SessionData = {
+      ...applySessionPage(emptySessionData('s1'), page([t], { rev: 5 })).next,
+      hasOlder: true, cursor: 100,
+    }
+    const withPrefix = prependOlderPage(current, page([o], { has_older: false, cursor: 10, rev: 6 }))
+    // 新 tail 拍只含 t；前缀行必须活下来
+    const { next } = applySessionPage(withPrefix, page([t], { rev: 7 }))
+    expect(next.rows.map((r) => r.id)).toEqual(['o', 't'])
+    expect(next.rows[0].keptOlder).toBe(true)
   })
 })

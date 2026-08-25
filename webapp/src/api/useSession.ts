@@ -5,7 +5,7 @@
 // 守卫消灭「await 期间换会话」脏写。
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './client'
-import { applySessionPage, emptySessionData, type SessionData } from './merge'
+import { applySessionPage, emptySessionData, prependOlderPage, type SessionData } from './merge'
 import { isUnchanged } from './types'
 
 const POLL_INTERVAL_MS = 1000
@@ -16,6 +16,11 @@ export interface UseSessionResult {
   error: string | null
   /** 手动全量刷新：绕过 rev 门控重置基线 */
   refresh: () => void
+  /**
+   * 拉取更早历史并前插。返回是否真的拉了（锚点缺失/已在加载时为 false）。
+   * rev 基线随 older 页的 rev 推进，后续轮询照常命中门控。
+   */
+  loadOlder: () => Promise<boolean>
 }
 
 export function useSession(id: string | null): UseSessionResult {
@@ -29,6 +34,29 @@ export function useSession(id: string | null): UseSessionResult {
   const refresh = useCallback(() => {
     forceRef.current = true
   }, [])
+
+  // loadOlder 需要读改 dataRef（轮询 effect 的私有状态），经 ref 转发出来。
+  // dataRef 在 effect 内创建，这里存它的最新实例。
+  const dataRefOuter = useRef<{ current: SessionData } | null>(null)
+  const loadingOlderRef = useRef(false)
+
+  const loadOlder = useCallback(async (): Promise<boolean> => {
+    const ref = dataRefOuter.current
+    if (!ref || loadingOlderRef.current || !ref.current.hasOlder) return false
+    const sid = id
+    if (!sid) return false
+    loadingOlderRef.current = true
+    try {
+      const page = await api.session(sid, { before: ref.current.cursor, limit: 36 })
+      if (!isUnchanged(page) && sid === id) {
+        ref.current = prependOlderPage(ref.current, page)
+        setSessionData({ ...ref.current })
+      }
+      return true
+    } finally {
+      loadingOlderRef.current = false
+    }
+  }, [id])
 
   useEffect(() => {
     if (!id) return
@@ -52,7 +80,7 @@ export function useSession(id: string | null): UseSessionResult {
         const force = forceRef.current
         forceRef.current = false
         const baseline = dataRef.current.rev
-        const res = await api.session(sid, !force && baseline > 0 ? baseline : undefined)
+        const res = await api.session(sid, { rev: !force && baseline > 0 ? baseline : undefined })
         if (!alive) return
         if (!isUnchanged(res)) {
           const page = res
@@ -72,10 +100,12 @@ export function useSession(id: string | null): UseSessionResult {
     }
     // dataRef 与 effect 同生命周期：换会话即重置，不跨会话复用
     const dataRef = { current: emptySessionData(sid) }
+    dataRefOuter.current = dataRef
     run()
     return () => {
       alive = false
       clearTimeout(timer)
+      if (dataRefOuter.current === dataRef) dataRefOuter.current = null
     }
   }, [id])
 
@@ -88,5 +118,5 @@ export function useSession(id: string | null): UseSessionResult {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [refresh])
 
-  return { data, error, refresh }
+  return { data, error, refresh, loadOlder }
 }

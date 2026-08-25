@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import type { SessionMeta } from '../api/types'
 import { shortTime } from '../lib/format'
 import { BoardView } from './board/BoardView'
+import { SessionView } from './session/SessionView'
 import { ToastProvider } from './ToastProvider'
 
 const AGENT_LABELS: Record<string, string> = {
@@ -81,7 +82,7 @@ export function App() {
                 type="button"
                 className={`item ${AGENT_CLASS[s.agent] ?? ''}`}
                 aria-current={s.id === currentId}
-                onClick={() => setCurrentId(s.id)}
+                onClick={() => { setCurrentId(s.id); setView('sessions') }}
               >
                 <span className="t">{s.title}</span>
                 <span className="meta">
@@ -98,7 +99,13 @@ export function App() {
           </div>
         </aside>
         <main className="stage">
-          <BoardView sessions={sessionOptions} onOpenSession={(sid) => setCurrentId(sid)} />
+          {view === 'board' ? (
+            <BoardView sessions={sessionOptions} onOpenSession={(sid) => { setCurrentId(sid); setView('sessions') }} />
+          ) : currentId ? (
+            <SessionView sessionId={currentId} />
+          ) : (
+            <div className="home-empty">选择一条会话</div>
+          )}
         </main>
       </div>
     </ToastProvider>

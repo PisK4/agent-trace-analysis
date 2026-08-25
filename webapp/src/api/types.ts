@@ -31,7 +31,7 @@ export interface ProjectedRow {
   _first?: number
   index: number
   turn: number | null
-  kind: 'user' | 'assistant' | 'context' | 'system' | 'tool' | 'compacted'
+  kind: 'user' | 'assistant' | 'context' | 'system' | 'tool' | 'subtool' | 'compacted'
   tag: string
   text: string
   startedAt: number
@@ -133,4 +133,38 @@ export interface RunInfo {
   taskset_fingerprint: string | null
   created_ts: number
   assignment_count?: number
+}
+
+// ── Usage 全周期（GET /api/sessions/{id}/usage，project.py summarize_usage/audit_usage）──
+
+// 逐轮 usage：context 是方言感知的上下文占用（后端算好）
+export interface UsageTurn {
+  turn: number
+  seq: number
+  agent: string
+  model: string | null
+  effort: string | null
+  status: 'reported' | 'missing' | 'estimated'
+  input: number | null
+  output: number | null
+  cache_read: number | null
+  cache_write: number | null
+  total_tokens: number | null
+  cost: number | null
+  context: number | null
+}
+
+export interface UsageAuditFinding {
+  rule: 'missing' | 'placeholder' | 'duplicate' | 'cliff'
+  turn: number
+  detail: string
+}
+
+export interface UsageSummary {
+  ok: true
+  turns: UsageTurn[]
+  total: { input: number; output: number; cache_read: number; cache_write: number; total_tokens: number }
+  missing_turns: number
+  audit: { findings: UsageAuditFinding[]; reported_turns: number; expected_turns: number }
+  compactions: Array<{ turn: number | null; seq: number }>
 }

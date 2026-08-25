@@ -102,3 +102,28 @@ export function applySessionPage(current: SessionData, page: SessionPage): {
     report,
   }
 }
+
+/**
+ * loadOlder 的前缀页合并：把 before=cursor 拉到的更早历史标 keptOlder
+ * 前插进当前行集，并推进 hasOlder/cursor/rev。tail 窗口内的同 id 行
+ * 不重复前插（去重靠 id 集合）。
+ */
+export function prependOlderPage(current: SessionData, page: SessionPage): SessionData {
+  const tailIds = new Set(current.rows.map((r) => r.id))
+  const prepend = page.rows
+    .filter((r) => !tailIds.has(r.id))
+    .map((r) => ({ ...r, keptOlder: true }))
+  if (!prepend.length && !sameValue(current.hasOlder, page.has_older)) {
+    // 没有新行但历史锚点变了（has_older 翻 false）：只更新锚点元数据
+    return { ...current, hasOlder: page.has_older, cursor: page.cursor, rev: page.rev }
+  }
+  const merged = [...prepend, ...current.rows].map((row, i) =>
+    row.index === i ? row : { ...row, index: i })
+  return {
+    ...current,
+    rows: merged,
+    hasOlder: page.has_older,
+    cursor: page.rows.length ? page.cursor : current.cursor,
+    rev: page.rev,
+  }
+}

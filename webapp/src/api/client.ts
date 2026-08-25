@@ -1,4 +1,4 @@
-import type { AnnotationsPage, RunInfo, SessionMeta, SessionResponse } from './types'
+import type { AnnotationsPage, RunInfo, SessionMeta, SessionResponse, UsageSummary } from './types'
 
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(path)
@@ -23,9 +23,18 @@ export const api = {
   listSessions: () => getJSON<SessionMeta[]>('/api/sessions'),
 
   // rev 门控轮询的唯一入口：命中 unchanged 返回 Unchanged，零投影成本；
-  // 未命中返回整页 + 新 rev。
-  session: (id: string, rev?: number) =>
-    getJSON<SessionResponse>(`/api/sessions/${encodeURIComponent(id)}${rev != null ? `?rev=${rev}` : ''}`),
+  // 未命中返回整页 + 新 rev。before+limit 走同一端点拉更早历史（loadOlder）。
+  session: (id: string, opts: { rev?: number; before?: number; limit?: number } = {}) => {
+    const qs = new URLSearchParams()
+    if (opts.rev != null) qs.set('rev', String(opts.rev))
+    if (opts.before != null) qs.set('before', String(opts.before))
+    if (opts.limit != null) qs.set('limit', String(opts.limit))
+    const q = qs.size ? `?${qs}` : ''
+    return getJSON<SessionResponse>(`/api/sessions/${encodeURIComponent(id)}${q}`)
+  },
+
+  usage: (id: string) =>
+    getJSON<UsageSummary>(`/api/sessions/${encodeURIComponent(id)}/usage`),
 
   renameSession: (id: string, title: string) =>
     postJSON<{ ok: true; title: string }>(`/api/sessions/${encodeURIComponent(id)}/title`, { title }),
