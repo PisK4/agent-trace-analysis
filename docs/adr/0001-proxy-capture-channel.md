@@ -34,3 +34,17 @@ claude transcript 侧永久缺失 SYSTEM 快照、tools 目录、每轮 usage
 - 两条采集通道写同一 session，靠幂等键收敛；代理刻意不发 message/tool
   行以避免 natural-key 写序竞态。
 - OpenAI 族解析（codex 可用）暂缓，ata/wire 的注册表 seam 已预留。
+
+### 已知限制
+
+- **轮次口径可能漂移**：代理侧轮次号是对请求上下文的静态计数
+  （count_real_user_turns），transcript 侧是流式递增计数器
+  （bump_turn_if_real_user）。两者对齐的前提是「每次请求带全量历史」；
+  宿主做 context 编辑 / microcompact（不落盘）裁掉早期用户消息时，
+  代理算出的轮次会小于真实轮次，该轮 usage 挂错位置。幂等键收敛不了
+  口径漂移。缓解路径：轮次推导以 transcript 侧已开的最大轮为下限，
+  但那需要跨通道读账本状态——等真实数据里观察到漂移再上。
+- **新会话可见性空窗**：代理通道从不发 session.opened（sid 是宿主真 id，
+  发 opened 会与 transcript 适配器的 opened 抢同键）。刚开的会话里代理
+  事件已入账、sessions 列表却还没有行——要等 transcript tail 扫到文件
+  才浮出。这是裁决内行为，不是 bug。

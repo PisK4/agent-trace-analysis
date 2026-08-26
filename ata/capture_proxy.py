@@ -17,7 +17,8 @@ from urllib.parse import urlsplit
 
 MAX_CAPTURE_BYTES = 8 * 1024 * 1024
 _CHUNK = 65536
-# 只转发不留档的头（record 不含 headers 原文，这是第二道保险）。
+# 认证头物理隔离的两道闸之一：这些 hop 头不透传；转发头白名单只放行
+# x-claude-* 与 content-type，record 的 request_headers 同样只收 x-claude-*。
 _HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding"}
 
 

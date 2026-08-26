@@ -15,6 +15,10 @@ from __future__ import annotations
 import hashlib
 import json
 
+from ata.plugins.common import usage_from_counts
+from ata.wire import parse_request as _wire_req
+from ata.wire import parse_response as _wire_resp
+
 # 各家宿主携带会话 id 的请求头（小写）。cue/pi 若走代理，加行即可。
 _SESSION_HEADERS = {
     "claude": ("x-claude-code-session-id",),
@@ -62,10 +66,6 @@ def count_real_user_turns(messages):
         count += 1
     return count
 
-
-from ata.plugins.common import usage_from_counts
-from ata.wire import parse_request as _wire_req
-from ata.wire import parse_response as _wire_resp
 
 #: record 形状的唯一声明（shell 与 HTTP 端点共同遵守）。
 RECORD_KEYS = frozenset({
