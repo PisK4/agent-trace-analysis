@@ -140,6 +140,17 @@ class Ledger:
         )
         self._conn.commit()
 
+    # 侧栏卡片 meta 行要事件数与失败工具数。json_extract 走 event_json 单行扫描；
+    # sessions() 与 annotations() 各引一份此片段，口径改动只动这里。
+    _COUNTS_SQL = """
+        SELECT session_id,
+               COUNT(*) AS event_count,
+               SUM(CASE WHEN type='tool.upserted'
+                         AND json_extract(event_json,'$.payload.status')='failed'
+                    THEN 1 ELSE 0 END) AS error_count
+        FROM events GROUP BY session_id
+    """
+
     def append(self, event: dict) -> int:
         with self._lock:
             seq = self._append_locked(event)
@@ -241,19 +252,8 @@ class Ledger:
                 ORDER BY first_ts DESC, title
                 """
             ).fetchall()
-            # 侧栏卡片 meta 行要事件数与失败工具数：json_extract 走 event_json，
-            # 单行扫描；会话量大时这里仍是 O(全部事件)，可接受（本机账本量级）。
-            counts = self._conn.execute(
-                """
-                SELECT session_id,
-                       COUNT(*) AS event_count,
-                       SUM(CASE WHEN type='tool.upserted'
-                                 AND json_extract(event_json,'$.payload.status')='failed'
-                            THEN 1 ELSE 0 END) AS error_count
-                FROM events
-                GROUP BY session_id
-                """
-            ).fetchall()
+            # 口径见 _COUNTS_SQL（与 annotations() 共用同一片段）。
+            counts = self._conn.execute(self._COUNTS_SQL).fetchall()
         by_sid = {r["session_id"]: r for r in counts}
         out = []
         for r in rows:
@@ -393,12 +393,7 @@ class Ledger:
                     "SELECT s.session_id, s.agent_id, s.title, s.last_seq, s.last_ts, s.first_ts,"
                     " COALESCE(c.event_count,0) AS event_count,"
                     " COALESCE(c.error_count,0) AS error_count"
-                    " FROM sessions s LEFT JOIN ("
-                    "   SELECT session_id, COUNT(*) AS event_count,"
-                    "   SUM(CASE WHEN type='tool.upserted'"
-                    "              AND json_extract(event_json,'$.payload.status')='failed'"
-                    "            THEN 1 ELSE 0 END) AS error_count"
-                    "   FROM events GROUP BY session_id) c"
+                    f" FROM sessions s LEFT JOIN ({self._COUNTS_SQL}) c"
                     " ON c.session_id = s.session_id").fetchall()
             }
         scores: dict[str, dict] = {}
