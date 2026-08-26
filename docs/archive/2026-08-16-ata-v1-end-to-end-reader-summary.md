@@ -1,4 +1,12 @@
-# ATA v1 首段 · 交付总结
+# ATA v1 首段 · 交付总结（归档）
+
+> **状态：归档**。本文是 2026-08-16 的 v1 交付快照；代码已经过 envelope 工厂化、`fold_session_meta` 提取、common.py 共享翻译内核、`bbfb06b` 加深候选二轮八候选重构等多轮修改。当前架构说明以 [`../features/canonical-event-ledger.md`](../features/canonical-event-ledger.md) 与 [`../features/adapters-and-shared-kernel.md`](../features/adapters-and-shared-kernel.md) 为准。
+>
+> 文中描述的代码路径（独立 `ata/plugins/pi.py` 形态、单 writer 路径、文末指向不存在的 `feat/v1-end-to-end-reader` 分支）只对归档当时成立。
+>
+> 原文以下为历史内容，未做修改。
+
+---
 
 - **日期**：2026-08-16
 - **性质**：`repos/ata` v1 首段（Atatrace 阅读器 + Pi 参考插件 + Droid 适配器）落地结果的归档。本文只总结已交付并验证过的事实，不改写 spec / plan 的合同。配套修订（字段名冻结回填、SYSTEM 快照发射正式化）已写进这两份文档的未提交改动

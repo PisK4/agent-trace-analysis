@@ -1,4 +1,12 @@
-# ATA · System Prompt 与 Tools 目录的来源边界与落地计划
+# ATA · System Prompt 与 Tools 目录的来源边界与落地计划（归档）
+
+> **状态：归档**。本文是 2026-08-17 对四家宿主的核验记录与 Codex 适配器修复计划。Codex 取 `base_instructions` 文本的修复早已合入 `ata/plugins/codex.py`。
+>
+> 数据边界本身（每家宿主能拿到什么 SYSTEM / tools / usage / model / title）以 [`../features/session-data-sources.md`](../features/session-data-sources.md) 为准。代理通道在 SYSTEM 边界上的扩展见 [`../features/proxy-capture-channel.md`](../features/proxy-capture-channel.md) 与 [`../adr/0001-proxy-capture-channel.md`](../adr/0001-proxy-capture-channel.md)。
+>
+> 原文以下为历史内容，未做修改。
+
+---
 
 - **日期**：2026-08-17
 - **性质**：对照 dsh Trajectory 的 SYSTEM 行（System Prompt / Tools 页签），核四家语料能不能拿出真实数据；能修的写进本轮计划，拿不到的保持空态，不造假行。

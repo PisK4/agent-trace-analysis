@@ -1,7 +1,15 @@
-# ATA v2 · 展示层对标 dsh Trajectory 的差距清单与落地记录
+# ATA v2 · 展示层对标 dsh Trajectory 的差距清单与落地记录（归档）
+
+> **状态：归档**。本文是 2026-08-16 当天的一次性差距清单与合入动作；所有「本轮落地」项早已合入主干，文末描述的"临时端口 8788 + 临时账本"等口径已无效。
+>
+> 当前展示层能力以 [`../features/viewer-presentation.md`](../features/viewer-presentation.md) 为准。复用决策见 [`../adr/0000-dsh-ui-reuse.md`](../adr/0000-dsh-ui-reuse.md)。
+>
+> 原文以下为历史内容，未做修改。
+
+---
 
 - **日期**：2026-08-16
-- **性质**：以 dsh（DeepSeek Harness，检出 @ `47f943859b`）Trajectory 为规格，逐项核对 ATA 阅读器展示层的差距、本轮落地与保留的语料边界。复用决策本身见同目录 ADR《2026-08-16-adr-dsh-ui-reuse》。
+- **性质**：以 dsh（DeepSeek Harness，检出 @ `47f943859b`）Trajectory 为规格，逐项核对 ATA 阅读器展示层的差距、本轮落地与保留的语料边界。复用决策见 [`../adr/0000-dsh-ui-reuse.md`](../adr/0000-dsh-ui-reuse.md)。
 - **改动范围**：`web/index.html`、`web/vendor/`、`ata/project.py`、`ata/plugins/droid.py`、`ata/plugins/claude.py`、`tests/`、`README.md`
 
 ## 一句话

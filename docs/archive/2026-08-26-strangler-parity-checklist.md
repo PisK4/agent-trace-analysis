@@ -1,4 +1,12 @@
-# 绞杀者收尾 · React 版与 legacy 前端 parity 清单
+# 绞杀者收尾 · React 版与 legacy 前端 parity 清单（归档）
+
+> **状态：归档**。本文是 2026-08-26 的一次性合规检查表，结论「无 ❌ 缺失项」已生效，legacy `web/js/` 已在 `chore(web) 076b3f5` 删除。
+>
+> 当前 React 前端切分、视觉单一事实源与组件落点以 [`../features/webapp-strangler-restyle.md`](../features/webapp-strangler-restyle.md) 为准。
+>
+> 原文以下为历史内容，未做修改。
+
+---
 
 > Task 9 产出。Task 10 删除 `web/js/` 前逐项核对：每项标注 legacy 出处、React 版出处与覆盖状态。
 > 状态：✅ 覆盖 / ⚠️ 有差距（已补齐）/ ➖ 刻意不带（附理由）。
