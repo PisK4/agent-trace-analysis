@@ -15,8 +15,7 @@ if [ -d "$HOME/.codex/sessions" ]; then ARGS+=(--codex-path "$HOME/.codex/sessio
 if [ -d "$HOME/.factory/sessions" ]; then ARGS+=(--droid-path "$HOME/.factory/sessions"); fi
 
 mkdir -p "$HOME/.ata"
-# React 版（webapp build 产物）已接管 17877 前端；旧版 web/ 退役前保留在原目录。
-# ATA_WEB 可回切旧版：ATA_WEB=web 复原。
-WEB="${ATA_WEB:-web/dist}"
+# React 版（webapp build 产物）是唯一前端。
+WEB="web/dist"
 python3 -m ata serve --port "$PORT" --ledger "$LEDGER" --web "$WEB" \
   --tail-max-age-days "$AGE" "${ARGS[@]}" "$@"

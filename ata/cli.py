@@ -11,6 +11,8 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from ata.schema import envelope
+
 DEFAULT_URL = "http://127.0.0.1:8787"
 REGRESSION_DIR = Path.home() / ".ata" / "regression"
 TASKS_FILE = REGRESSION_DIR / "tasks.jsonl"
@@ -123,6 +125,8 @@ def main(argv):
 
 
 def _rate_main(argv):
+    # 「标注」专指人类来源的主观真值（T9）；机器检测的失败信号是另一路，
+    # 不得复用 session.scored 的「标注」称谓。词汇定义见仓库根 CONTEXT.md。
     p = argparse.ArgumentParser(prog="ata rate")
     p.add_argument("sid")
     p.add_argument("--value", required=True, choices=["good", "bad", "partial"])
@@ -148,9 +152,7 @@ def build_score_event(agent_id, session_id, value, note=None):
     payload = {"value": value}
     if note:
         payload["note"] = note
-    return {"v": 1, "id": uuid.uuid4().hex, "agent_id": agent_id,
-            "session_id": str(session_id), "ts": int(time.time() * 1000),
-            "type": "session.scored", "turn": None, "payload": payload}
+    return envelope(agent_id, session_id, "session.scored", payload)
 
 
 def post_json(base, path, body):
@@ -228,34 +230,34 @@ def _run_main(argv):
     print(json.dumps(result, ensure_ascii=False))
 
 
-def collect_task_score(proj):
-    """投影 → 单会话的 score 记录。缺数据记 None（missing），永不当作 0。"""
-    rows = proj.get("rows", [])
-    tools = [r for r in rows if r.get("kind") == "tool"]
-    fails = sum(1 for r in tools if r.get("status") == "failed")
-    asst = [r for r in rows if r.get("kind") == "assistant"]
-    reported = [r["usage"]["totalTokens"] for r in asst
-                if (r.get("usage") or {}).get("status") == "reported"
-                and r["usage"].get("totalTokens") is not None]
-    missing = sum(1 for r in asst
-                  if (r.get("usage") or {}).get("status") != "reported")
-    scores = proj.get("scores") or []
-    starts = [r["startedAt"] for r in rows if r.get("startedAt")]
-    ends = [(r.get("startedAt") or 0) + (r.get("durationMs") or 0)
-            for r in rows if r.get("startedAt")]
-    duration = round((max(ends) - min(starts)) / 1000, 1) if len(starts) > 1 else None
+def collect_task_score(usage_resp, tools_resp, timing_resp, human_score, turns):
+    """便捷层响应 → 单会话 score 记录。缺数据记 None（missing），永不当作 0。
+
+    口径全部来自便捷层（spec 定稿端点）：fail_rate 出 /tools，tokens 出
+    /usage 逐轮 reported 合计，duration 出 /timing 的 span_ms（占位排除
+    已在其内部完成）。compare 不再自己重推一遍平行口径。
+    """
+    tools = tools_resp.get("tools") or []
+    fails = sum(1 for t in tools if t.get("status") == "failed")
+    turn_rows = usage_resp.get("turns") or []
+    reported = [r.get("total_tokens") for r in turn_rows
+                if r.get("status") == "reported" and r.get("total_tokens") is not None]
+    span_ms = timing_resp.get("span_ms")
     return [
-        {"name": "human_score", "value": scores[-1]["value"] if scores else None,
+        {"name": "human_score", "value": human_score,
          "type": "categorical", "source": "human"},
-        {"name": "turns", "value": proj.get("turns"), "type": "number", "source": "machine"},
+        {"name": "turns", "value": turns, "type": "number", "source": "machine"},
         {"name": "tool_fail_rate",
          "value": round(fails / len(tools), 4) if tools else None,
          "type": "number", "source": "machine"},
         {"name": "tokens_reported", "value": sum(reported) if reported else None,
          "type": "number", "source": "machine"},
-        {"name": "usage_missing_turns", "value": missing if asst else None,
+        {"name": "usage_missing_turns",
+         "value": usage_resp.get("missing_turns") if turn_rows else None,
          "type": "number", "source": "machine"},
-        {"name": "duration_s", "value": duration, "type": "number", "source": "machine"},
+        {"name": "duration_s",
+         "value": round(span_ms / 1000, 1) if isinstance(span_ms, (int, float)) and span_ms > 0 else None,
+         "type": "number", "source": "machine"},
     ]
 
 
@@ -301,9 +303,17 @@ def _compare_main(argv):
     rb = get_json(base, f"/api/runs/{a.run_b}")
 
     def fetch_scores(run):
+        base_path = "/api/sessions"
         out = {}
         for task_id, sid in _latest_by_task(run["assignments"]).items():
-            out[task_id] = (sid, collect_task_score(get_json(base, f"/api/sessions/{sid}")))
+            usage = get_json(base, f"{base_path}/{sid}/usage")
+            tools = get_json(base, f"{base_path}/{sid}/tools")
+            timing = get_json(base, f"{base_path}/{sid}/timing")
+            proj = get_json(base, f"{base_path}/{sid}")
+            score_events = proj.get("scores") or []
+            human = score_events[-1]["value"] if score_events else None
+            out[task_id] = (sid, collect_task_score(
+                usage, tools, timing, human, proj.get("turns")))
         return out
 
     sa, sb = fetch_scores(ra), fetch_scores(rb)

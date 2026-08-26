@@ -9,8 +9,9 @@ from urllib.parse import parse_qs, urlparse
 import re
 
 from ata.plugins.pi import translate_hook
+from ata.projection_cache import ProjectionCache
 from ata.project import audit_usage, list_compactions, list_tools, project_session, summarize_timing, summarize_tools, summarize_usage, tail_preview
-from ata.schema import ValidationError, parse_event
+from ata.schema import ValidationError, envelope, parse_event
 
 _RE_RENAME = re.compile(r"^/api/sessions/([^/]+)/title$")
 _RE_RUN_RENAME = re.compile(r"^/api/runs/([^/]+)/name$")
@@ -18,6 +19,18 @@ _RE_RUN_RENAME = re.compile(r"^/api/runs/([^/]+)/name$")
 
 def make_server(ledger, webroot, host="127.0.0.1", port=8787):
     webroot = Path(webroot)
+    cache = ProjectionCache()
+
+    def cached_summary(sid, kind):
+        """便捷层统一入口：rev 门控 + read。rev 取自 session 行，
+        调用前已确保会话存在；缓存的是事件记录，body 组装每请求执行。"""
+        meta = ledger.session(sid)
+        return cache.get_or_compute(sid, int(meta["last_seq"]), kind,
+                                    lambda: ledger.read(sid))
+
+    def summary_response(sid, kind, fn):
+        recs = cached_summary(sid, kind)
+        return fn(recs)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
@@ -111,26 +124,29 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                                             "ancestors": ledger.ancestry(sid),
                                             "children": ledger.children(sid)})
                 if sub == "usage":
-                    recs = ledger.read(sid)
-                    compactions = [{"turn": r["event"].get("turn"), "seq": r["seq"]}
-                                   for r in recs if r["event"]["type"] == "compaction.boundary"]
-                    return self._json(200, {"ok": True, **summarize_usage(recs),
-                                            "audit": audit_usage(recs),
-                                            "compactions": compactions})
+                    def usage_body(recs):
+                        compactions = [{"turn": r["event"].get("turn"), "seq": r["seq"]}
+                                       for r in recs if r["event"]["type"] == "compaction.boundary"]
+                        return {"ok": True, **summarize_usage(recs),
+                                "audit": audit_usage(recs),
+                                "compactions": compactions}
+                    return self._json(200, summary_response(sid, "usage", usage_body))
                 if sub == "tools":
                     full = qs.get("full", ["false"])[0] == "true"
-                    rows = list_tools(ledger.read(sid),
-                                      qs.get("status", [None])[0],
-                                      qs.get("name", [None])[0])
-                    for r in rows:
-                        r["result"] = r["result"] if full else tail_preview(r["result"])
-                    return self._json(200, {"ok": True, "tools": rows})
+                    def tools_body(recs):
+                        rows = list_tools(recs,
+                                          qs.get("status", [None])[0],
+                                          qs.get("name", [None])[0])
+                        for r in rows:
+                            r["result"] = r["result"] if full else tail_preview(r["result"])
+                        return {"ok": True, "tools": rows}
+                    return self._json(200, summary_response(sid, "tools", tools_body))
                 if sub == "tool-stats":
-                    return self._json(200, {"ok": True,
-                                            **summarize_tools(ledger.read(sid))})
+                    return self._json(200, summary_response(sid, "tool-stats",
+                                                            lambda recs: {"ok": True, **summarize_tools(recs)}))
                 if sub == "timing":
-                    return self._json(200, {"ok": True,
-                                            **summarize_timing(ledger.read(sid))})
+                    return self._json(200, summary_response(sid, "timing",
+                                                            lambda recs: {"ok": True, **summarize_timing(recs)}))
                 if sub == "compactions":
                     full = qs.get("full", ["false"])[0] == "true"
                     rows = list_compactions(ledger.read(sid))
@@ -141,7 +157,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
             if path in ("/", "/index.html"):
                 target = webroot / "index.html"
                 if not target.exists():
-                    return self._bytes(404, b"missing web/index.html", "text/plain")
+                    return self._bytes(404, b"missing web/dist/index.html (run: cd webapp && npm run build)", "text/plain")
                 return self._bytes(200, target.read_bytes(), "text/html; charset=utf-8")
             target = (webroot / path.lstrip("/")).resolve()
             if webroot.resolve() not in target.parents and target != webroot.resolve():
@@ -186,12 +202,8 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 meta = ledger.session(sid)
                 if meta is None:
                     return self._json(404, {"ok": False, "error": "unknown session"})
-                ev = parse_event({
-                    "v": 1, "id": uuid.uuid4().hex, "agent_id": meta["agent"],
-                    "session_id": sid, "ts": int(time.time() * 1000),
-                    "type": "session.renamed", "turn": None,
-                    "payload": {"title": title},
-                })
+                ev = parse_event(envelope(
+                    meta["agent"], sid, "session.renamed", {"title": title}))
                 ledger.append(ev)
                 return self._json(200, {"ok": True, "title": title})
             m = _RE_RUN_RENAME.match(parsed.path)

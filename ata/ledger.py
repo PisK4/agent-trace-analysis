@@ -6,9 +6,11 @@ import threading
 import time
 from pathlib import Path
 
+from ata.fold import REAL_TS_FLOOR, fold_session_meta
+
 # 毫秒时间戳低于此值的视为脏数据（历史推送端写过 ts=1 的 opened 事件），
-# 不参与创建时间的判定。
-_REAL_TS_FLOOR = 10 ** 12
+# 不参与创建时间的判定。阈值定义在 ata/fold.py（折叠规则唯一归属地）。
+_REAL_TS_FLOOR = REAL_TS_FLOOR
 
 
 def _dedupe_key(event: dict) -> str | None:
@@ -68,6 +70,8 @@ class Ledger:
                 UNIQUE (session_id, seq)
             );
             CREATE INDEX IF NOT EXISTS idx_events_session_seq ON events(session_id, seq);
+            -- run = 一次实验运行（干预后对同一版任务集重跑），永不译作「轮次」；
+            -- 「轮次」专指对话的 turn。见仓库根 CONTEXT.md。
             CREATE TABLE IF NOT EXISTS runs (
                 run_id TEXT PRIMARY KEY,
                 description TEXT NOT NULL,
@@ -136,6 +140,17 @@ class Ledger:
         )
         self._conn.commit()
 
+    # 侧栏卡片 meta 行要事件数与失败工具数。json_extract 走 event_json 单行扫描；
+    # sessions() 与 annotations() 各引一份此片段，口径改动只动这里。
+    _COUNTS_SQL = """
+        SELECT session_id,
+               COUNT(*) AS event_count,
+               SUM(CASE WHEN type='tool.upserted'
+                         AND json_extract(event_json,'$.payload.status')='failed'
+                    THEN 1 ELSE 0 END) AS error_count
+        FROM events GROUP BY session_id
+    """
+
     def append(self, event: dict) -> int:
         with self._lock:
             seq = self._append_locked(event)
@@ -162,47 +177,31 @@ class Ledger:
             (sid,),
         ).fetchone()
         seq = (int(row["last_seq"]) if row else 0) + 1
-        title = (row["title"] if row else sid)
-        renamed = title != sid and bool(row) and self._has_renamed(sid)
-        turns = int(row["turns"]) if row else 0
-        last_ts = int(event["ts"])
+        existing = None
         if row:
-            last_ts = max(int(row["last_ts"] or 0), last_ts)
-        # 创建时间取最早的真实事件 ts；异常小值（如 1）不参与，避免显示成 1970 年，
-        # 已存在的异常存量值也一并设防。
-        first_ts = int(event["ts"]) if int(event["ts"]) > _REAL_TS_FLOOR else 0
-        if row:
-            existing_first = int(row["first_ts"] or 0)
-            if existing_first > _REAL_TS_FLOOR:
-                first_ts = min(existing_first, first_ts) if first_ts else existing_first
-        # 非 opened 事件必须保留已有父引用，否则后续 UPDATE 会把血缘抹成 NULL。
-        parent = row["parent_session_id"] if row else None
-        if event["type"] == "session.opened":
-            # 用户改过名（renamed）后，opened 的标题只做兜底，不再覆盖
-            if not renamed:
-                title = event["payload"].get("title") or title
-            parent = event["payload"].get("parent_session")
-        elif event["type"] == "session.renamed":
-            # 用户改名：与 opened 同走投影索引 latest-wins，后续 opened 不再覆盖
-            title = event["payload"].get("title") or title
-            renamed = True
-        elif event["type"] == "session.renamed":
-            # 用户改名：与 opened 同走投影索引 latest-wins，后续 opened 不再覆盖
-            # （opened 只在 title 为空时兜底，见上）。
-            title = event["payload"].get("title") or title
-        turn = event.get("turn")
-        if isinstance(turn, int) and turn > turns:
-            turns = turn
+            existing = {
+                "title": row["title"],
+                # 改名权威判定：现 title 非 sid 且流里有 renamed 即视为已改名
+                "renamed": row["title"] != sid and self._has_renamed(sid),
+                "turns": int(row["turns"]),
+                "last_ts": int(row["last_ts"] or 0),
+                "first_ts": int(row["first_ts"] or 0),
+                "parent_session_id": row["parent_session_id"],
+            }
+        folded = fold_session_meta(existing, event)
         if row:
             self._conn.execute(
                 "UPDATE sessions SET agent_id=?, title=?, turns=?, last_seq=?, last_ts=?, first_ts=?, parent_session_id=? WHERE session_id=?",
-                (event["agent_id"], title, turns, seq, last_ts, first_ts, parent, sid),
+                (event["agent_id"], folded["title"], folded["turns"], seq,
+                 folded["last_ts"], folded["first_ts"], folded["parent_session_id"], sid),
             )
         else:
             self._conn.execute(
                 "INSERT INTO sessions(session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id) VALUES (?,?,?,?,?,?,?,?)",
-                (sid, event["agent_id"], title, turns, seq, last_ts, first_ts, parent),
+                (sid, event["agent_id"], folded["title"], folded["turns"], seq,
+                 folded["last_ts"], folded["first_ts"], folded["parent_session_id"]),
             )
+        turn = event.get("turn")
         dk = _dedupe_key(event)
         existed = None
         if dk:
@@ -253,19 +252,8 @@ class Ledger:
                 ORDER BY first_ts DESC, title
                 """
             ).fetchall()
-            # 侧栏卡片 meta 行要事件数与失败工具数：json_extract 走 event_json，
-            # 单行扫描；会话量大时这里仍是 O(全部事件)，可接受（本机账本量级）。
-            counts = self._conn.execute(
-                """
-                SELECT session_id,
-                       COUNT(*) AS event_count,
-                       SUM(CASE WHEN type='tool.upserted'
-                                 AND json_extract(event_json,'$.payload.status')='failed'
-                            THEN 1 ELSE 0 END) AS error_count
-                FROM events
-                GROUP BY session_id
-                """
-            ).fetchall()
+            # 口径见 _COUNTS_SQL（与 annotations() 共用同一片段）。
+            counts = self._conn.execute(self._COUNTS_SQL).fetchall()
         by_sid = {r["session_id"]: r for r in counts}
         out = []
         for r in rows:
@@ -405,12 +393,7 @@ class Ledger:
                     "SELECT s.session_id, s.agent_id, s.title, s.last_seq, s.last_ts, s.first_ts,"
                     " COALESCE(c.event_count,0) AS event_count,"
                     " COALESCE(c.error_count,0) AS error_count"
-                    " FROM sessions s LEFT JOIN ("
-                    "   SELECT session_id, COUNT(*) AS event_count,"
-                    "   SUM(CASE WHEN type='tool.upserted'"
-                    "              AND json_extract(event_json,'$.payload.status')='failed'"
-                    "            THEN 1 ELSE 0 END) AS error_count"
-                    "   FROM events GROUP BY session_id) c"
+                    f" FROM sessions s LEFT JOIN ({self._COUNTS_SQL}) c"
                     " ON c.session_id = s.session_id").fetchall()
             }
         scores: dict[str, dict] = {}

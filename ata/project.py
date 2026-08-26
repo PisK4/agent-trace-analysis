@@ -1,5 +1,9 @@
 import json
 
+from ata.fold import fold_session_meta
+# 占位时长约定的唯一归属地在 plugins/common.py（适配器写入侧同源），此处只消费。
+from ata.plugins.common import PLACEHOLDER_MS
+
 NA = {
     "status": "n/a", "input": None, "output": None,
     "cacheRead": None, "cacheWrite": None, "totalTokens": None, "cost": None,
@@ -73,7 +77,10 @@ def _tool_preview(name, payload, fallback=""):
 
 
 def project_session(session_id, agent, recs, *, tail=None, before=None):
-    title = session_id
+    # 标题折叠与账本索引同吃 fold_session_meta（唯一规则归属地）：用户改名后
+    # 后到的 opened 只做兜底不再覆盖。此前投影侧缺守卫，droid 的标题补写
+    # opened 晚于用户改名时详情页会把标题打回自动名。
+    meta_folded = None
     entities = {}
     order = []
     scores = []
@@ -86,12 +93,8 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
         ev = rec["event"]
         seq = rec["seq"]
         p = ev["payload"]
-        if ev["type"] == "session.opened":
-            title = p.get("title") or title
-            continue
-        if ev["type"] == "session.renamed":
-            # 用户改名权威：与账本索引同规则，后到的 opened 不覆盖
-            title = p.get("title") or title
+        if ev["type"] in ("session.opened", "session.renamed"):
+            meta_folded = fold_session_meta(meta_folded, ev)
             continue
         if ev["type"] == "session.scored":
             scores.append({"value": p.get("value"), "note": p.get("note"), "ts": ev["ts"]})
@@ -287,6 +290,7 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
         cursor = rows[0]["_seq"]
     for i, row in enumerate(rows):
         row["index"] = i
+    title = meta_folded["title"] if meta_folded else session_id
     return {
         "id": session_id,
         "agent": agent,
@@ -479,9 +483,6 @@ def summarize_tools(recs):
             "summary": {"tools": len(ordered), "calls": calls, "failed": failed,
                         "mounted": mounted, "usage_rate": usage_rate}}
 
-
-# claude/codex/droid 适配器的「耗时未知」占位约定：第一方转录不带耗时统一写 1。
-PLACEHOLDER_MS = 1
 
 # 毫秒时间戳低于此值视为脏数据（历史推送端写过 ts=1 的行），不参与墙钟
 # 跨度——否则 span 被拉成 50+ 年。与 ledger._REAL_TS_FLOOR 同一约定。

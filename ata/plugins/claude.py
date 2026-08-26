@@ -2,6 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from ata.plugins.common import (
+    PLACEHOLDER_MS,
+    bump_turn_if_real_user,
+    make_ev,
+    tool_end_payload,
+    tool_start_payload,
+    usage_from_counts,
+    usage_missing,
+)
 from ata.plugins.jsonl import translate_file as _jfile
 from ata.project import is_context_text
 
@@ -16,14 +25,14 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
     out = []
     if not state.get("opened"):
         state["opened"] = True
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:opened", agent_id, session_id, ts,
             "session.opened", None, {"title": session_id},
         ))
     if typ == "ai-title":
         title = str(raw.get("aiTitle") or "").strip()
         if title:
-            out.append(_ev(
+            out.append(make_ev(
                 f"{session_id}:opened:title", agent_id, session_id, ts,
                 "session.opened", None, {"title": title[:80]},
             ))
@@ -49,14 +58,9 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         if role == "user" and not is_context_text(texts):
             # Claude transcript 没有显式 turn 事件：轮次按真实用户消息递增（同 droid）。
             # CONTEXT 注入（system-reminder / Skill）不另开一轮。
-            state["turn"] = int(state.get("turn") or 0) + 1
-            turn = state["turn"]
-            if turn not in state.setdefault("started_turns", set()):
-                state["started_turns"].add(turn)
-                out.append(_ev(
-                    f"{session_id}:turn:{turn}:start", agent_id, session_id, ts,
-                    "turn.started", turn, {},
-                ))
+            bump_turn_if_real_user(state, texts, agent_id, session_id, ts,
+                                   lambda e: out.append(e))
+            turn = state.get("turn") or 1
             state["last_assistant_id"] = None
         else:
             turn = state.get("turn") or 1
@@ -69,7 +73,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         model = msg.get("model") if isinstance(msg, dict) else None
         if isinstance(model, str) and (not model or model.startswith("<")):
             model = None
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:msg:{mid}", agent_id, session_id, ts,
             "message.upserted", state.get("turn") or 1,
             {
@@ -80,7 +84,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 "request_no": state.get("request_no") if role == "assistant" else None,
                 "usage": usage,
                 "started_at": ts,
-                "duration_ms": 1,
+                "duration_ms": PLACEHOLDER_MS,
                 "output_text": texts if role == "assistant" else None,
                 "thinking": thinking or None,
                 "model": model,
@@ -93,20 +97,12 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 continue
             name = block.get("name") or "tool"
             args = block.get("input") if isinstance(block.get("input"), dict) else {}
-            payload = {
-                "tool_call_id": cid,
-                "parent_message_id": state.get("last_assistant_id"),
-                "name": name,
-                "text": _tool_text(name, args),
-                "status": "pending",
-                "payload": args,
-                "result": None,
-                "started_at": ts,
-                "duration_ms": None,
-            }
+            payload = tool_start_payload(
+                cid, state.get("last_assistant_id"), name, args,
+                _tool_text(name, args), ts)
             state.setdefault("tools", {})[cid] = payload
             # 与 droid / pi 同款：start/end 拆两个 event id，幂等账本才收得到完成态。
-            out.append(_ev(
+            out.append(make_ev(
                 f"{session_id}:tool:{cid}:start", agent_id, session_id, ts,
                 "tool.upserted", state.get("turn") or 1,
                 payload,
@@ -117,20 +113,11 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 continue
             result = _result_text(block.get("content"))
             prev = state.setdefault("tools", {}).get(cid, {})
-            out.append(_ev(
+            end_payload = tool_end_payload(prev, cid, state.get("last_assistant_id"), result, ts)
+            out.append(make_ev(
                 f"{session_id}:tool:{cid}:end", agent_id, session_id, ts,
                 "tool.upserted", state.get("turn") or 1,
-                {
-                    "tool_call_id": cid,
-                    "parent_message_id": prev.get("parent_message_id") or state.get("last_assistant_id"),
-                    "name": block.get("name") or prev.get("name") or "tool",
-                    "text": prev.get("text") or (result[:200] if result else cid),
-                    "status": "completed",
-                    "payload": prev.get("payload"),
-                    "result": result,
-                    "started_at": prev.get("started_at") or ts,
-                    "duration_ms": 1,
-                },
+                end_payload,
             ))
     return out
 
@@ -147,7 +134,7 @@ def _system_line(raw, state, ts, out):
     if sub == "compact_boundary":
         meta = raw.get("compactMetadata") if isinstance(raw.get("compactMetadata"), dict) else {}
         cid = str(raw.get("uuid") or ts)
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:compact:{cid}", "claude", session_id, ts,
             "compaction.boundary", turn,
             {
@@ -168,7 +155,7 @@ def _system_line(raw, state, ts, out):
         if attempt is not None and max_r is not None:
             bits.append(f"retry {attempt}/{max_r}")
         mid = str(raw.get("uuid") or f"{session_id}:api-error:{turn}:{ts}")
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:msg:{mid}", "claude", session_id, ts,
             "message.upserted", turn,
             {
@@ -179,25 +166,12 @@ def _system_line(raw, state, ts, out):
                 "request_no": None,
                 "usage": None,
                 "started_at": ts,
-                "duration_ms": 1,
+                "duration_ms": PLACEHOLDER_MS,
                 "output_text": " · ".join(bits),
                 "thinking": None,
             },
         ))
     return out
-
-
-def _ev(eid, agent_id, session_id, ts, typ, turn, payload):
-    return {
-        "v": 1,
-        "id": eid,
-        "agent_id": agent_id,
-        "session_id": session_id,
-        "ts": int(ts),
-        "type": typ,
-        "turn": turn,
-        "payload": payload,
-    }
 
 
 def _ts(raw, state):
@@ -278,35 +252,14 @@ def _tool_text(name, args):
 def _usage(msg):
     """assistant message.usage（官方 API 驼峰）→ ATA 蛇形 usage。
 
-    缺失或全 0 标 missing；total_tokens 与 cost 在 Claude usage 里没有，写 null。
+    total_tokens 与 cost 在 Claude usage 里没有，写 null。
     """
     raw = (msg or {}).get("usage")
     if not isinstance(raw, dict) or not raw:
-        return {
-            "status": "missing",
-            "input": None, "output": None,
-            "cache_read": None, "cache_write": None,
-            "total_tokens": None, "cost": None,
-        }
-    counts = (
+        return usage_missing()
+    return usage_from_counts(
         int(raw.get("input_tokens") or 0),
         int(raw.get("output_tokens") or 0),
         int(raw.get("cache_read_input_tokens") or 0),
         int(raw.get("cache_creation_input_tokens") or 0),
     )
-    if counts == (0, 0, 0, 0):
-        return {
-            "status": "missing",
-            "input": None, "output": None,
-            "cache_read": None, "cache_write": None,
-            "total_tokens": None, "cost": None,
-        }
-    return {
-        "status": "reported",
-        "input": raw.get("input_tokens"),
-        "output": raw.get("output_tokens"),
-        "cache_read": raw.get("cache_read_input_tokens"),
-        "cache_write": raw.get("cache_creation_input_tokens"),
-        "total_tokens": None,
-        "cost": None,
-    }

@@ -1,5 +1,7 @@
 # ATA （Agent Trace Analysis） 实现项目约束
 
+领域词汇（会话/轮次/run/标注/任务项等）以仓库根 [`CONTEXT.md`](CONTEXT.md) 为准；命名与文档用语与其冲突时先对照再动笔。
+
 ## 1. 编码工作流
 
 在 `repos/ata/` 内创建、修改、重构或删除生产代码前，优先使用以下 skill：
@@ -38,5 +40,5 @@
 ## 4. 前端编码规范（webapp/ React 栈）
 
 - **注释只写「读代码得不到的信息」**：为什么这样做、踩过什么坑、外部约束来源。禁止写阶段性/临时性注释（如「脚手架占位」「Phase X 起填充」「TODO 重构」）——计划与进度记录放任务系统或 docs/plans，不进代码；代码合入时它描述的状态已成历史，只剩噪音。
-- 视觉体系单一事实源：React 版复用 `web/style.css` 的既有样式（构建期引入），不为同一视觉规则建立第二份 CSS。
+- 视觉体系单一事实源：React 版的样式在 `webapp/src/styles/`（`ata.css` 引入 `style.css` 拷贝，legacy `web/style.css` 已随绞杀者收尾删除），不为同一视觉规则建立第二份 CSS；样式改动只落 `webapp/src/styles/`。
 - 组件库（beautiful.dev 等）只用于标准控件（按钮/弹层/表单/下拉）的局部增强，不作为设计系统底座；引入新 UI 依赖前按第 2 节复用阶梯走 ADR。

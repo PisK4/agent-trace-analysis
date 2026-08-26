@@ -1,10 +1,8 @@
 /*
- * 视觉体系单一事实源入口：内容即旧版 web/style.css 的拷贝。
+ * 视觉体系单一事实源入口。
  *
- * 为什么是拷贝而不是直接 import 旧文件：Vite dev/build 以 webapp/ 为根，
- * 跨出 webapp/ 引用 ../web/style.css 会让构建依赖目录外布局，且旧版在
- * 绞杀者迁移期间仍要独立运行、可能继续改样式，两版共享一个文件会互相牵动。
- * 约定（AGENTS.md 第 4 节）：React 版的样式改动只落在本文件；旧版退役时
- * 删除 web/style.css，本文件改名顶上，避免长期双份。
+ * 历史约定：本文件曾是旧版 web/style.css 的拷贝包装（Vite 以 webapp/ 为根，
+ * 构建不能依赖目录外文件）。绞杀者收尾删除 legacy 后，React 版是唯一前端，
+ * 样式改动只落本目录；web/style.css 不复存在，不存在双份同步问题。
  */
 @import "./style.css";

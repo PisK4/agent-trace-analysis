@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './client'
 import { applySessionPage, emptySessionData, prependOlderPage, type SessionData } from './merge'
+import { nudgeSummaries } from './useSummary'
 import { isUnchanged } from './types'
 
 const POLL_INTERVAL_MS = 1000
@@ -84,9 +85,12 @@ export function useSession(id: string | null): UseSessionResult {
         if (!alive) return
         if (!isUnchanged(res)) {
           const page = res
-          const next = applySessionPage(dataRef.current ?? emptySessionData(page.id), page).next
+          const { next, report } = applySessionPage(dataRef.current ?? emptySessionData(page.id), page)
           dataRef.current = next
           setSessionData(next)
+          // live tailing 检测到变化即广播：所有 useSummary 消费者统一重拉，
+          // 修复派生面板（usage/timing）在轮询期间静默过期。
+          if (report.rowsChanged || report.metaChanged) nudgeSummaries()
         }
         errorStreak = 0
         setError(null)

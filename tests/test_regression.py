@@ -68,51 +68,55 @@ class TestRuns(unittest.TestCase):
         self.assertEqual(got, {("s1", "r-1", "t-1"), ("s2", "r-2", "t-9")})
 
 
-class TestCollectTaskScore(unittest.TestCase):
-    def proj(self, rows, turns=3, scores=None):
-        return {"rows": rows, "turns": turns, "scores": scores or []}
+class TestCollectTaskScoreFromConvenienceLayer(unittest.TestCase):
+    """compare 的指标推导改吃便捷层端点（spec 定稿形状）。
 
-    def row(self, kind, status="completed", usage=None, started=0, dur=0):
-        r = {"kind": kind, "status": status, "startedAt": started,
-             "durationMs": dur}
-        if kind == "assistant":
-            r["usage"] = usage
-        return r
+    旧实现抓整页主投影在客户端重推 tool_fail_rate/tokens/duration，与
+    summarize_* 的口径漂移（duration 含占位 1ms 行、tokens 行级 vs 逐轮）。
+    新实现直接消费 /usage /tools /timing 的响应，口径纪律只在便捷层一份。
+    """
 
-    def names(self, records):
-        return {r["name"]: r["value"] for r in records}
+    def collect(self, *, tools=None, usage=None, timing=None, scores=None, turns=3):
+        return {
+            r["name"]: r["value"]
+            for r in collect_task_score(
+                usage if usage is not None else {"turns": [], "total": {}, "missing_turns": 0},
+                tools if tools is not None else {"tools": []},
+                timing if timing is not None else {},
+                (scores or [{"value": None}])[-1].get("value"),
+                turns,
+            )
+        }
 
-    def test_full_data(self):
-        rows = [
-            self.row("tool", status="failed"),
-            self.row("tool"),
-            self.row("assistant", usage={"status": "reported", "totalTokens": 120},
-                     started=1000, dur=500),
-            self.row("assistant", usage={"status": "reported", "totalTokens": 80},
-                     started=2000, dur=700),
-        ]
-        vals = self.names(collect_task_score(
-            self.proj(rows, scores=[{"value": "bad"}])))
-        self.assertEqual(vals["human_score"], "bad")
-        self.assertEqual(vals["turns"], 3)
+    def test_fail_rate_and_tokens_from_convenience_shapes(self):
+        vals = self.collect(
+            tools={"tools": [{"status": "failed"}, {"status": "completed"}]},
+            usage={"turns": [
+                {"status": "reported", "total_tokens": 120},
+                {"status": "reported", "total_tokens": 80},
+            ], "total": {}, "missing_turns": 0},
+        )
         self.assertEqual(vals["tool_fail_rate"], 0.5)
         self.assertEqual(vals["tokens_reported"], 200)
         self.assertEqual(vals["usage_missing_turns"], 0)
-        self.assertEqual(vals["duration_s"], 1.7)
 
     def test_missing_stays_missing_not_zero(self):
-        rows = [self.row("assistant", usage={"status": "missing"})]
-        vals = self.names(collect_task_score(self.proj(rows)))
-        self.assertIsNone(vals["tokens_reported"])   # 缺失不当 0
+        vals = self.collect(
+            usage={"turns": [{"status": "missing"}], "total": {}, "missing_turns": 1},
+        )
+        self.assertIsNone(vals["tokens_reported"])
         self.assertEqual(vals["usage_missing_turns"], 1)
         self.assertIsNone(vals["human_score"])
-        self.assertIsNone(vals["tool_fail_rate"])    # 无工具调用即 missing
-        self.assertIsNone(vals["duration_s"])        # 单行无法算时长
+        self.assertIsNone(vals["tool_fail_rate"])   # 无工具调用即 missing
 
-    def test_empty_projection(self):
-        vals = self.names(collect_task_score(self.proj([])))
-        for name in ("turns", "tokens_reported", "usage_missing_turns"):
-            self.assertIn(name, vals)
+    def test_duration_excludes_placeholder_rows(self):
+        # span 来自 summarize_timing（已排除占位），不再客户端拼 startedAt±durationMs
+        vals = self.collect(timing={"span_ms": 1700})
+        self.assertEqual(vals["duration_s"], 1.7)
+
+    def test_span_missing_gives_none(self):
+        vals = self.collect(timing={})
+        self.assertIsNone(vals["duration_s"])
 
 
 if __name__ == "__main__":

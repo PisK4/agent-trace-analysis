@@ -1,3 +1,6 @@
+import time
+import uuid
+
 ALLOWED_TYPES = {
     "session.opened",
     "turn.started",
@@ -99,3 +102,22 @@ def _check_usage(u):
     for k in USAGE_KEYS:
         if k not in u:
             raise ValidationError(f"usage missing {k}")
+
+
+def envelope(agent_id, session_id, type_, payload, turn=None, ts=None, eid=None):
+    """v1 事件信封的唯一构造入口。
+
+    账本的写入方（CLI 标注、HTTP 改名、适配器补写）都组同一个七键 dict；
+    此前各处手搓，漏键要到 parse_event 才报「missing xxx」。工厂只负责
+    形状与默认值（ts=now），不做校验——校验职责仍在 parse_event。
+    """
+    return {
+        "v": 1,
+        "id": eid if eid is not None else uuid.uuid4().hex,
+        "agent_id": agent_id,
+        "session_id": str(session_id),
+        "ts": int(ts if ts is not None else time.time() * 1000),
+        "type": type_,
+        "turn": turn,
+        "payload": payload,
+    }
