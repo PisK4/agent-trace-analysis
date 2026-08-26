@@ -20,18 +20,57 @@ from ata.schema import envelope
 from ata.wire import parse_request as _wire_req
 from ata.wire import parse_response as _wire_resp
 
-# 各家宿主携带会话 id 的请求头（小写）。cue/pi 若走代理，加行即可。
-_SESSION_HEADERS = {
+# 各家宿主携带会话 id 的请求头（小写）。cue/pi/droid 若走代理，按此表头加行。
+# 头名匹配大小写不敏感；命中即返回（不再走 body 路径）。
+_SESSION_HEADERS: dict[str, tuple[str, ...]] = {
     "claude": ("x-claude-code-session-id",),
 }
 
+# 各家宿主把会话 id 放在请求体字段（按 JSON 嵌套路径定位）。
+# codex 走 OpenAI Responses API，session_id 在 metadata.session_id。
+# droid 路径占位（具体字段名待真实流量回填——若 droid 用 body metadata，
+# 在此加；若是 header，移到 _SESSION_HEADERS）。
+_BODY_SESSION_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "codex": (("metadata", "session_id"),),
+}
 
-def resolve_session_id(headers, agent_id):
-    low = {str(k).lower(): v for k, v in (headers or {}).items()}
+
+def _dig(payload, path):
+    """按嵌套路径取 dict 值；任一环不是 dict 或缺 key 返回 None。"""
+    cur = payload
+    for key in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(key)
+        if cur is None:
+            return None
+    return cur
+
+
+def resolve_session_id(rec, agent_id):
+    """从 record 恢复宿主 sessionId；找不到返回 None（调用方丢弃该次采集）。
+
+    优先 headers 路径（claude 走此），回退 body 路径（codex 走 OpenAI
+    Responses API 的 metadata.session_id）。两条路径都未声明 = 暂未支持。
+    """
+    headers = (rec or {}).get("request_headers") or {}
+    low = {str(k).lower(): v for k, v in headers.items()}
     for name in _SESSION_HEADERS.get(agent_id, ()):
         sid = low.get(name)
         if isinstance(sid, str) and sid.strip():
             return sid.strip()
+    body_paths = _BODY_SESSION_FIELDS.get(agent_id, ())
+    if body_paths:
+        try:
+            payload = json.loads(
+                (rec.get("request_body") or b"").decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            return None
+        if isinstance(payload, dict):
+            for path in body_paths:
+                v = _dig(payload, path)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
     return None
 
 
@@ -172,9 +211,8 @@ def ingest_capture(ledger, rec):
     """
     from ata.schema import parse_event
 
-    headers = rec.get("request_headers") or {}
     agent_id = rec.get("agent_id") or "claude"
-    sid = resolve_session_id(headers, agent_id)
+    sid = resolve_session_id(rec, agent_id)
     if not sid:
         raise ValueError("capture: no host session id; dropping (no orphan sessions)")
     state = state_bucket(ledger, sid)

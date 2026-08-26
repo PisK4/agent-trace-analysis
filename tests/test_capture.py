@@ -22,16 +22,69 @@ def wire_item(text):
 
 class ResolveSessionTest(unittest.TestCase):
     def test_claude_header_case_insensitive(self):
-        h = {"x-claude-code-session-id": "abc-123"}
-        self.assertEqual(resolve_session_id(h, "claude"), "abc-123")
+        rec = {"request_headers": {"x-claude-code-session-id": "abc-123"}}
+        self.assertEqual(resolve_session_id(rec, "claude"), "abc-123")
 
     def test_missing_header_returns_none(self):
-        self.assertIsNone(resolve_session_id({}, "claude"))
-        self.assertIsNone(resolve_session_id({"user-agent": "claude-cli"}, "claude"))
+        self.assertIsNone(resolve_session_id(
+            {"request_headers": {}}, "claude"))
+        self.assertIsNone(resolve_session_id(
+            {"request_headers": {"user-agent": "claude-cli"}}, "claude"))
 
-    def test_none_safe(self):
+    def test_none_rec_safe(self):
         self.assertIsNone(resolve_session_id({}, "claude"))
         self.assertIsNone(resolve_session_id({"request_headers": None}, "claude"))
+
+
+class CodexBodyPathTest(unittest.TestCase):
+    def test_metadata_session_id(self):
+        body = json.dumps({"metadata": {"session_id": "codex-s-1"}}).encode()
+        rec = {"request_headers": {}, "request_body": body}
+        self.assertEqual(resolve_session_id(rec, "codex"), "codex-s-1")
+
+    def test_nested_metadata_deep(self):
+        # plan 里的占位 deep 路径 metadata.user.session_id 不在声明里——
+        # 计划只声明 metadata.session_id 一条。此测试验证 _dig 在该声明
+        # 下的实际可达深度（两层）。
+        body = json.dumps({
+            "metadata": {"session_id": "deep-1", "extra": "x"}
+        }).encode()
+        rec = {"request_headers": {}, "request_body": body}
+        self.assertEqual(resolve_session_id(rec, "codex"), "deep-1")
+
+    def test_header_takes_precedence_over_body(self):
+        # headers 路径优先（claude 走 headers；codex 走 body 但 headers 命中也算）
+        rec = {
+            "request_headers": {"x-codex-window-id": "win-1"},
+            "request_body": json.dumps({"metadata": {"session_id": "codex-s-1"}}).encode(),
+        }
+        # codex 暂未在 _SESSION_HEADERS 声明 x-codex-window-id；body 路径胜出
+        self.assertEqual(resolve_session_id(rec, "codex"), "codex-s-1")
+
+    def test_missing_metadata_returns_none(self):
+        body = json.dumps({"metadata": {"other": "x"}}).encode()
+        rec = {"request_headers": {}, "request_body": body}
+        self.assertIsNone(resolve_session_id(rec, "codex"))
+
+    def test_garbage_body_returns_none(self):
+        rec = {"request_headers": {}, "request_body": b"\xff\xfe"}
+        self.assertIsNone(resolve_session_id(rec, "codex"))
+
+    def test_empty_body_returns_none(self):
+        rec = {"request_headers": {}, "request_body": b""}
+        self.assertIsNone(resolve_session_id(rec, "codex"))
+
+
+class DroidNamespaceTest(unittest.TestCase):
+    def test_droid_returns_none_for_now(self):
+        # droid 走代理：headers 路径未声明（待真实流量回填具体头名），
+        # body 路径未声明（droid 是否用 body metadata 未知）。
+        # 暂返回 None → 走 ingest_capture 的 ValueError 路径被吞掉。
+        rec = {
+            "request_headers": {"x-droid-trace-id": "d-1"},
+            "request_body": b'{"some": "json"}',
+        }
+        self.assertIsNone(resolve_session_id(rec, "droid"))
 
 
 class CountTurnsTest(unittest.TestCase):
