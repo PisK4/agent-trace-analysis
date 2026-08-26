@@ -28,6 +28,16 @@ python3 -m ata serve --port 8787 --ledger ~/.ata/dev.sqlite \
 
 Pi 不需要路径参数：它的 extension 经 `POST /api/pi-hooks` 实时推送。
 
+### 代理采集通道（可选）
+
+transcript 采不到的事实（claude 的系统提示、工具目录、每轮 token）可以从流量侧补：
+
+    python3 -m ata serve --proxy-port 8319
+
+把 agent 的 API base 指向 `http://127.0.0.1:8319`（上游默认
+api.anthropic.com，可用 `--proxy-upstream` 改）。代理只记录解析后的
+事实，认证头不留档；无法识别所属会话的流量直接放行不采集。
+
 ## 支持的 agent
 
 | Agent | 数据通道 | 会话标题 | SYSTEM 快照 | 每轮 usage |
