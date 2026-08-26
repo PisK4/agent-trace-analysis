@@ -1,9 +1,9 @@
 // Usage 全周期面板：占用/缓存命中率双层曲线 + 体检发现 + 轮级跳转。
 // 数据来自 GET /api/sessions/{id}/usage（后端纯派生视图）。
 // SVG 绘制语义平移自旧版 web/js/usage.js renderUsagePanel。
-import { useEffect, useMemo, useState } from 'react'
-import { api } from '../../api/client'
+import { useMemo, useState } from 'react'
 import type { UsageSummary, UsageTurn } from '../../api/types'
+import { useSummary } from '../../api/useSummary'
 import { fmtNum } from '../../lib/format'
 
 // 大数缩写（曲线轴帽）：12.3K / 123K，旧版 fmtK
@@ -24,17 +24,9 @@ interface UsageBadgesProps {
 }
 
 export function UsageBadges({ sessionId, open, onToggle }: UsageBadgesProps) {
-  const [data, setData] = useState<UsageSummary | null>(null)
-
-  // epoch 守卫：await 期间换会话即丢弃（与旧版 refreshUsage 同策略）
-  useEffect(() => {
-    if (!sessionId) return
-    let alive = true
-    api.usage(sessionId)
-      .then((d) => { if (alive) setData(d) })
-      .catch(() => { if (alive) setData(null) })
-    return () => { alive = false }
-  }, [sessionId])
+  const { data } = useSummary<UsageSummary>(
+    sessionId ? `/api/sessions/${encodeURIComponent(sessionId)}/usage` : null,
+  )
 
   const total = data?.total
   return (
@@ -63,15 +55,9 @@ export function UsagePanel({ sessionId, onJump, open, onClose }: {
   open: boolean
   onClose: () => void
 }) {
-  const [data, setData] = useState<UsageSummary | null>(null)
-  useEffect(() => {
-    if (!sessionId) return
-    let alive = true
-    api.usage(sessionId)
-      .then((d) => { if (alive) setData(d) })
-      .catch(() => { if (alive) setData(null) })
-    return () => { alive = false }
-  }, [sessionId])
+  const { data } = useSummary<UsageSummary>(
+    sessionId ? `/api/sessions/${encodeURIComponent(sessionId)}/usage` : null,
+  )
 
   if (!open || !data) return null
   return (

@@ -2,7 +2,7 @@
 // 全量数据来自 /timing 端点（不受前端尾窗分页限制），与 Usage 徽章同款懒加载。
 import { useEffect, useRef, useState } from 'react'
 import type { TimingSummary } from '../../api/types'
-import { api } from '../../api/client'
+import { useSummary } from '../../api/useSummary'
 import { fmtDur, fmtDurQ, QUALITY_LABEL } from '../../lib/timing'
 
 interface Props {
@@ -11,21 +11,11 @@ interface Props {
 }
 
 export function TimeBadge({ sessionId, onJumpTurn }: Props) {
-  // dataFor 记录 data 归属的会话：换会话的过渡期渲染期直接判 null，
-  // 不在 effect 里同步置空（避免级联 render，lint 同款告警在 UsagePanel 已有先例）
-  const [state, setState] = useState<{ dataFor: string; data: TimingSummary | null }>({ dataFor: '', data: null })
+  const { data } = useSummary<TimingSummary>(
+    sessionId ? `/api/sessions/${encodeURIComponent(sessionId)}/timing` : null,
+  )
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLSpanElement>(null)
-
-  useEffect(() => {
-    let alive = true
-    api.timing(sessionId)
-      .then((d) => { if (alive) setState({ dataFor: sessionId, data: d }) })
-      .catch(() => { if (alive) setState({ dataFor: sessionId, data: null }) })
-    return () => { alive = false }
-  }, [sessionId])
-
-  const data = state.dataFor === sessionId ? state.data : null
 
   // 点外面收起（与 StatsBadges 弹层同策略）
   useEffect(() => {
