@@ -6,9 +6,11 @@ import threading
 import time
 from pathlib import Path
 
+from ata.fold import REAL_TS_FLOOR, fold_session_meta
+
 # 毫秒时间戳低于此值的视为脏数据（历史推送端写过 ts=1 的 opened 事件），
-# 不参与创建时间的判定。
-_REAL_TS_FLOOR = 10 ** 12
+# 不参与创建时间的判定。阈值定义在 ata/fold.py（折叠规则唯一归属地）。
+_REAL_TS_FLOOR = REAL_TS_FLOOR
 
 
 def _dedupe_key(event: dict) -> str | None:
@@ -164,47 +166,31 @@ class Ledger:
             (sid,),
         ).fetchone()
         seq = (int(row["last_seq"]) if row else 0) + 1
-        title = (row["title"] if row else sid)
-        renamed = title != sid and bool(row) and self._has_renamed(sid)
-        turns = int(row["turns"]) if row else 0
-        last_ts = int(event["ts"])
+        existing = None
         if row:
-            last_ts = max(int(row["last_ts"] or 0), last_ts)
-        # 创建时间取最早的真实事件 ts；异常小值（如 1）不参与，避免显示成 1970 年，
-        # 已存在的异常存量值也一并设防。
-        first_ts = int(event["ts"]) if int(event["ts"]) > _REAL_TS_FLOOR else 0
-        if row:
-            existing_first = int(row["first_ts"] or 0)
-            if existing_first > _REAL_TS_FLOOR:
-                first_ts = min(existing_first, first_ts) if first_ts else existing_first
-        # 非 opened 事件必须保留已有父引用，否则后续 UPDATE 会把血缘抹成 NULL。
-        parent = row["parent_session_id"] if row else None
-        if event["type"] == "session.opened":
-            # 用户改过名（renamed）后，opened 的标题只做兜底，不再覆盖
-            if not renamed:
-                title = event["payload"].get("title") or title
-            parent = event["payload"].get("parent_session")
-        elif event["type"] == "session.renamed":
-            # 用户改名：与 opened 同走投影索引 latest-wins，后续 opened 不再覆盖
-            title = event["payload"].get("title") or title
-            renamed = True
-        elif event["type"] == "session.renamed":
-            # 用户改名：与 opened 同走投影索引 latest-wins，后续 opened 不再覆盖
-            # （opened 只在 title 为空时兜底，见上）。
-            title = event["payload"].get("title") or title
-        turn = event.get("turn")
-        if isinstance(turn, int) and turn > turns:
-            turns = turn
+            existing = {
+                "title": row["title"],
+                # 改名权威判定：现 title 非 sid 且流里有 renamed 即视为已改名
+                "renamed": row["title"] != sid and self._has_renamed(sid),
+                "turns": int(row["turns"]),
+                "last_ts": int(row["last_ts"] or 0),
+                "first_ts": int(row["first_ts"] or 0),
+                "parent_session_id": row["parent_session_id"],
+            }
+        folded = fold_session_meta(existing, event)
         if row:
             self._conn.execute(
                 "UPDATE sessions SET agent_id=?, title=?, turns=?, last_seq=?, last_ts=?, first_ts=?, parent_session_id=? WHERE session_id=?",
-                (event["agent_id"], title, turns, seq, last_ts, first_ts, parent, sid),
+                (event["agent_id"], folded["title"], folded["turns"], seq,
+                 folded["last_ts"], folded["first_ts"], folded["parent_session_id"], sid),
             )
         else:
             self._conn.execute(
                 "INSERT INTO sessions(session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id) VALUES (?,?,?,?,?,?,?,?)",
-                (sid, event["agent_id"], title, turns, seq, last_ts, first_ts, parent),
+                (sid, event["agent_id"], folded["title"], folded["turns"], seq,
+                 folded["last_ts"], folded["first_ts"], folded["parent_session_id"]),
             )
+        turn = event.get("turn")
         dk = _dedupe_key(event)
         existed = None
         if dk:
