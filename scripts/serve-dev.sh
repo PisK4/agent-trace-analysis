@@ -5,15 +5,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PORT="${ATA_PORT:-8787}"
+PORT="${ATA_PORT:-17877}"
 LEDGER="${ATA_LEDGER:-$HOME/.ata/dev.sqlite}"
 AGE="${ATA_TAIL_MAX_AGE_DAYS:-7}"
-# 代理采集通道：设了 ATA_PROXY_PORT 才开（如 17878），agent 的 API base 指向它即可补采
-PROXY_ARGS=()
-if [ -n "${ATA_PROXY_PORT:-}" ]; then
-  PROXY_ARGS+=(--proxy-port "$ATA_PROXY_PORT")
-  [ -n "${ATA_PROXY_UPSTREAM:-}" ] && PROXY_ARGS+=(--proxy-upstream "$ATA_PROXY_UPSTREAM")
-fi
+# 代理采集通道：默认开 17878（agent 的 API base 指过来就补采）；设 ATA_PROXY_PORT=0 关闭
+PROXY_PORT="${ATA_PROXY_PORT:-17878}"
+PROXY_ARGS=(--proxy-port "$PROXY_PORT")
+[ -n "${ATA_PROXY_UPSTREAM:-}" ] && PROXY_ARGS+=(--proxy-upstream "$ATA_PROXY_UPSTREAM")
 
 ARGS=()
 if [ -d "$HOME/.claude/projects" ]; then ARGS+=(--claude-path "$HOME/.claude/projects"); fi
