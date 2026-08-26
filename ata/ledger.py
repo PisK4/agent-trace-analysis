@@ -68,6 +68,8 @@ class Ledger:
                 UNIQUE (session_id, seq)
             );
             CREATE INDEX IF NOT EXISTS idx_events_session_seq ON events(session_id, seq);
+            -- run = 一次实验运行（干预后对同一版任务集重跑），永不译作「轮次」；
+            -- 「轮次」专指对话的 turn。见仓库根 CONTEXT.md。
             CREATE TABLE IF NOT EXISTS runs (
                 run_id TEXT PRIMARY KEY,
                 description TEXT NOT NULL,

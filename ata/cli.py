@@ -123,6 +123,8 @@ def main(argv):
 
 
 def _rate_main(argv):
+    # 「标注」专指人类来源的主观真值（T9）；机器检测的失败信号是另一路，
+    # 不得复用 session.scored 的「标注」称谓。词汇定义见仓库根 CONTEXT.md。
     p = argparse.ArgumentParser(prog="ata rate")
     p.add_argument("sid")
     p.add_argument("--value", required=True, choices=["good", "bad", "partial"])

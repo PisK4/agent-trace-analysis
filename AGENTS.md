@@ -1,5 +1,7 @@
 # ATA （Agent Trace Analysis） 实现项目约束
 
+领域词汇（会话/轮次/run/标注/任务项等）以仓库根 [`CONTEXT.md`](CONTEXT.md) 为准；命名与文档用语与其冲突时先对照再动笔。
+
 ## 1. 编码工作流
 
 在 `repos/ata/` 内创建、修改、重构或删除生产代码前，优先使用以下 skill：
