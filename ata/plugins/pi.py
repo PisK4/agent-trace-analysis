@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 
+from ata.plugins.common import make_ev, usage_missing
+
 
 ZERO = (0, 0, 0, 0)
 
@@ -17,15 +19,7 @@ def usage_from_assistant(message: dict):
         int(raw.get("cacheWrite") or 0),
     )
     if stop in {"error", "aborted"} and counts == ZERO:
-        return {
-            "status": "missing",
-            "input": None,
-            "output": None,
-            "cache_read": None,
-            "cache_write": None,
-            "total_tokens": None,
-            "cost": None,
-        }
+        return usage_missing()
     if not raw:
         return None
     return {
@@ -86,7 +80,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
             payload["tools_catalog"] = catalog
             payload["skills_catalog"] = skills
         state["catalog_fp"] = fp
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:system:{n}", agent_id, session_id, ts,
             "system.upserted", None, payload,
         ))
@@ -111,7 +105,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                     "child_agent": lin.get("PI_SUBAGENT_CHILD_AGENT"),
                     "depth": lin.get("PI_SUBAGENT_PARENT_DEPTH"),
                 }
-            out.append(_ev(
+            out.append(make_ev(
                 f"{session_id}:opened", agent_id, session_id, ts,
                 "session.opened", None, payload,
             ))
@@ -133,7 +127,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 state["last_assistant_id"] = None
                 if int(state.get("turn_started") or 0) < state["turn"]:
                     state["turn_started"] = state["turn"]
-                    out.append(_ev(
+                    out.append(make_ev(
                         f"{session_id}:turn:{state['turn']}:start", agent_id, session_id, ts,
                         "turn.started", state["turn"], {},
                     ))
@@ -142,7 +136,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                     first = _message_text(msg)
                     if first:
                         state["title_set"] = True
-                        out.append(_ev(
+                        out.append(make_ev(
                             f"{session_id}:opened:title", agent_id, session_id, ts,
                             "session.opened", None, {"title": first[:80]},
                         ))
@@ -183,7 +177,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
             # 耗时不可得时写 None（未测量）而非 0（会被当成实测零毫秒）。
             duration = max(int(ts) - int(m_start), 0) if m_start else None
             state.setdefault("msg_dur", {})[mid] = duration
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:msg:{mid}:{name}", agent_id, session_id, ts,
             "message.upserted", turn,
             {
@@ -208,7 +202,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
         args = event.get("args") if isinstance(event.get("args"), dict) else {}
         state.setdefault("tool_args", {})[cid] = args
         state.setdefault("tool_start_ts", {})[cid] = ts
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:tool:{cid}:start", agent_id, session_id, ts,
             "tool.upserted", state.get("turn") or 1,
             {
@@ -233,7 +227,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
         result = _tool_result(event.get("result"))
         start_ts = state.get("tool_start_ts", {}).pop(cid, None)
         duration = max(int(ts) - int(start_ts), 0) if start_ts else None
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:tool:{cid}:end", agent_id, session_id, ts,
             "tool.upserted", state.get("turn") or 1,
             {
@@ -267,7 +261,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 if not state.get("last_assistant_id"):
                     state["asst_no"] = int(state.get("asst_no") or 0) + 1
                     state["last_assistant_id"] = mid
-                out.append(_ev(
+                out.append(make_ev(
                     f"{session_id}:msg:{mid}:end", agent_id, session_id, ts,
                     "message.upserted", turn,
                     {
@@ -294,7 +288,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
         }
         if status:
             ended_payload["status"] = status
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:turn:{turn}:end", agent_id, session_id, ts,
             "turn.ended", turn, ended_payload,
         ))
@@ -302,19 +296,6 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
     # agent_end / agent_settled / 其他：不做收尾。以前把 agent_end 当会话结束，
     # 会在自动重试/续跑的下一次 agent run 之前提前关闭会话。
     return out
-
-
-def _ev(eid, agent_id, session_id, ts, typ, turn, payload):
-    return {
-        "v": 1,
-        "id": eid,
-        "agent_id": agent_id,
-        "session_id": session_id,
-        "ts": int(ts),
-        "type": typ,
-        "turn": turn,
-        "payload": payload,
-    }
 
 
 def _message_text(msg):

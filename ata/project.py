@@ -1,5 +1,8 @@
 import json
 
+# 占位时长约定的唯一归属地在 plugins/common.py（适配器写入侧同源），此处只消费。
+from ata.plugins.common import PLACEHOLDER_MS
+
 NA = {
     "status": "n/a", "input": None, "output": None,
     "cacheRead": None, "cacheWrite": None, "totalTokens": None, "cost": None,
@@ -479,9 +482,6 @@ def summarize_tools(recs):
             "summary": {"tools": len(ordered), "calls": calls, "failed": failed,
                         "mounted": mounted, "usage_rate": usage_rate}}
 
-
-# claude/codex/droid 适配器的「耗时未知」占位约定：第一方转录不带耗时统一写 1。
-PLACEHOLDER_MS = 1
 
 # 毫秒时间戳低于此值视为脏数据（历史推送端写过 ts=1 的行），不参与墙钟
 # 跨度——否则 span 被拉成 50+ 年。与 ledger._REAL_TS_FLOOR 同一约定。

@@ -5,6 +5,13 @@ import json
 import time
 from pathlib import Path
 
+from ata.plugins.common import (
+    PLACEHOLDER_MS,
+    bump_turn_if_real_user,
+    make_ev,
+    tool_end_payload,
+    tool_start_payload,
+)
 from ata.project import is_context_text
 from ata.schema import envelope
 
@@ -73,7 +80,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         if not state.get("opened"):
             state["opened"] = True
             title = str(raw.get("title") or session_id).strip()[:80] or session_id
-            out.append(_ev(
+            out.append(make_ev(
                 f"{session_id}:opened", agent_id, session_id, ts,
                 "session.opened", None, {"title": title},
             ))
@@ -82,7 +89,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         return out
     if not state.get("opened"):
         state["opened"] = True
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:opened", agent_id, session_id, ts,
             "session.opened", None, {"title": session_id},
         ))
@@ -92,7 +99,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         summary = str(raw.get("summaryText") or "").strip()
         if not summary:
             summary = "Provider switch serialization" if kind == "provider_switch_serialization" else "Context compacted"
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:compact:{raw.get('id') or ts}", agent_id, session_id, ts,
             "compaction.boundary", turn,
             {
@@ -113,7 +120,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         eid = f"{session_id}:turn:{turn}:end"
         if status:
             eid = f"{eid}:{status}"
-        out.append(_ev(
+        out.append(make_ev(
             eid, agent_id, session_id, ts,
             "turn.ended", turn, payload,
         ))
@@ -135,14 +142,9 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         is_tool_only = role == "user" and texts == "" and _has_tool_result(content)
         if not is_tool_only:
             if role == "user" and not is_context_text(texts):
-                state["turn"] = int(state.get("turn") or 0) + 1
-                turn = state["turn"]
-                if turn not in state.setdefault("started_turns", set()):
-                    state["started_turns"].add(turn)
-                    out.append(_ev(
-                        f"{session_id}:turn:{turn}:start", agent_id, session_id, ts,
-                        "turn.started", turn, {},
-                    ))
+                bump_turn_if_real_user(state, texts, agent_id, session_id, ts,
+                                       lambda e: out.append(e))
+                turn = state.get("turn") or 1
             else:
                 turn = state.get("turn") or 1
                 state["turn"] = turn
@@ -151,7 +153,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 state["last_assistant_id"] = mid
                 state["request_no"] = int(state.get("request_no") or 0) + 1
             text = texts or ""
-            out.append(_ev(
+            out.append(make_ev(
                 f"{session_id}:msg:{mid}", agent_id, session_id, ts,
                 "message.upserted", turn,
                 {
@@ -162,7 +164,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                     "request_no": state.get("request_no") if role == "assistant" else None,
                     "usage": None,
                     "started_at": ts,
-                    "duration_ms": 1,
+                    "duration_ms": PLACEHOLDER_MS,
                     "output_text": text if role == "assistant" else None,
                     "thinking": thinking or None,
                 },
@@ -176,22 +178,14 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                     continue
                 name = block.get("name") or "tool"
                 args = block.get("input") if isinstance(block.get("input"), dict) else {}
-                payload = {
-                    "tool_call_id": cid,
-                    "parent_message_id": state.get("last_assistant_id"),
-                    "name": name,
-                    "text": _tool_text(name, args),
-                    "status": "pending",
-                    "payload": args,
-                    "result": None,
-                    "started_at": ts,
-                    "duration_ms": None,
-                }
+                payload = tool_start_payload(
+                    cid, state.get("last_assistant_id"), name, args,
+                    _tool_text(name, args), ts)
                 state.setdefault("tools", {})[cid] = payload
                 # 与 Pi 插件同款修法（见 plugins/pi.py）：start/end 拆成两个 event id，
                 # 否则幂等账本（重复 id 只认第一条）会吞掉 tool_result 的完成态，
                 # 工具行永远 pending。投影层按 tool_call_id 合并，后写覆盖前写。
-                out.append(_ev(
+                out.append(make_ev(
                     f"{session_id}:tool:{cid}:start", agent_id, session_id, ts,
                     "tool.upserted", state.get("turn") or 1,
                     payload,
@@ -202,20 +196,11 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                     continue
                 result = _result_text(block.get("content"))
                 prev = state.setdefault("tools", {}).get(cid, {})
-                out.append(_ev(
+                end_payload = tool_end_payload(prev, cid, state.get("last_assistant_id"), result, ts)
+                out.append(make_ev(
                     f"{session_id}:tool:{cid}:end", agent_id, session_id, ts,
                     "tool.upserted", state.get("turn") or 1,
-                    {
-                        "tool_call_id": cid,
-                        "parent_message_id": prev.get("parent_message_id") or state.get("last_assistant_id"),
-                        "name": block.get("name") or prev.get("name") or "tool",
-                        "text": prev.get("text") or (result[:200] if result else cid),
-                        "status": "completed",
-                        "payload": prev.get("payload"),
-                        "result": result,
-                        "started_at": prev.get("started_at") or ts,
-                        "duration_ms": 1,
-                    },
+                    end_payload,
                 ))
     return out
 
@@ -224,19 +209,6 @@ def translate_file(path: Path, offset: int = 0):
     # 增量 JSONL 读取/半行容错/坏行跳过统一在 plugins/jsonl.py（与 claude/codex 共用）。
     from ata.plugins.jsonl import translate_file as _jfile
     return _jfile(path, translate_line, offset)
-
-
-def _ev(eid, agent_id, session_id, ts, typ, turn, payload):
-    return {
-        "v": 1,
-        "id": eid,
-        "agent_id": agent_id,
-        "session_id": session_id,
-        "ts": int(ts),
-        "type": typ,
-        "turn": turn,
-        "payload": payload,
-    }
 
 
 def _blocks(content):

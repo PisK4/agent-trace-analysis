@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from ata.plugins.common import (
+    PLACEHOLDER_MS,
+    make_ev,
+    tool_end_payload,
+    tool_start_payload,
+    usage_from_counts,
+)
 from ata.plugins.jsonl import iso_to_ms, translate_file as _jfile
 
 
@@ -16,13 +23,13 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         if not state.get("opened"):
             state["opened"] = True
             title = str(payload.get("originator") or session_id).strip()[:80] or session_id
-            out.append(_ev(
+            out.append(make_ev(
                 f"{session_id}:opened", agent_id, session_id, ts,
                 "session.opened", None, {"title": title},
             ))
         instructions = payload.get("base_instructions")
         if instructions:
-            out.append(_ev(
+            out.append(make_ev(
                 f"{session_id}:system:1", agent_id, session_id, ts,
                 "system.upserted", None,
                 {"prompt_text": str(instructions), "previous_prompt": None, "tools_catalog": []},
@@ -40,7 +47,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         turn = state.get("turn") or 1
         window = payload.get("window_number")
         summary = f"Context compacted · window {window}" if window is not None else "Context compacted"
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:compact:{payload.get('window_id') or ts}", agent_id, session_id, ts,
             "compaction.boundary", turn,
             {"summary": summary, "trigger": "compacted"},
@@ -62,7 +69,7 @@ def _ensure_opened(state, ts, out):
     if not state.get("opened"):
         state["opened"] = True
         session_id = state["session_id"]
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:opened", "codex", session_id, ts,
             "session.opened", None, {"title": session_id},
         ))
@@ -79,7 +86,7 @@ def _turn_for(state, turn_id, ts, out):
         turn = int(state.get("turn") or 0) + 1
         mapping[str(turn_id)] = turn
         state["turn"] = turn
-        out.append(_ev(
+        out.append(make_ev(
             f"{state['session_id']}:turn:{turn}:start", "codex", state["session_id"], ts,
             "turn.started", turn, {},
         ))
@@ -99,7 +106,7 @@ def _event_msg(payload, state, ts, out):
         turn = state.get("turn") or 1
         usage = state.get("last_token_usage")
         usage = _usage(usage) if usage is not None else None
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:turn:{turn}:end", "codex", session_id, ts,
             "turn.ended", turn, {"usage": usage},
         ))
@@ -107,7 +114,7 @@ def _event_msg(payload, state, ts, out):
     if etype == "turn_aborted":
         turn_id = payload.get("turn_id")
         turn = _turn_for(state, turn_id, ts, out) if turn_id is not None else (state.get("turn") or 1)
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:turn:{turn}:end:cancelled", "codex", session_id, ts,
             "turn.ended", turn,
             {
@@ -119,7 +126,7 @@ def _event_msg(payload, state, ts, out):
         return out
     if etype == "context_compacted":
         turn = state.get("turn") or 1
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:compact:ctx:{ts}", "codex", session_id, ts,
             "compaction.boundary", turn,
             {"summary": "Context compacted", "trigger": "context_compacted"},
@@ -156,7 +163,7 @@ def _response_item(payload, state, ts, out):
             state["request_no"] = int(state.get("request_no") or 0) + 1
         text = _texts(payload.get("content"))
         mid = str(payload.get("id") or f"{session_id}:{role}:{ts}")
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:msg:{mid}", "codex", session_id, ts,
             "message.upserted", state.get("turn") or 1,
             {
@@ -167,7 +174,7 @@ def _response_item(payload, state, ts, out):
                 "request_no": state.get("request_no") if role == "assistant" else None,
                 "usage": None,
                 "started_at": ts,
-                "duration_ms": 1,
+                "duration_ms": PLACEHOLDER_MS,
                 "output_text": text if role == "assistant" else None,
                 "model": state.get("model") if role == "assistant" else None,
                 "effort": state.get("effort") if role == "assistant" else None,
@@ -182,19 +189,11 @@ def _response_item(payload, state, ts, out):
             return out
         name = payload.get("name") or "tool"
         args = _args(payload.get("arguments") if rtype == "function_call" else payload.get("input"))
-        pld = {
-            "tool_call_id": cid,
-            "parent_message_id": state.get("last_assistant_id"),
-            "name": name,
-            "text": _tool_text(name, args),
-            "status": "pending",
-            "payload": args,
-            "result": None,
-            "started_at": ts,
-            "duration_ms": None,
-        }
+        pld = tool_start_payload(
+            cid, state.get("last_assistant_id"), name, args,
+            _tool_text(name, args), ts)
         state.setdefault("tools", {})[cid] = pld
-        out.append(_ev(
+        out.append(make_ev(
             f"{session_id}:tool:{cid}:start", "codex", session_id, ts,
             "tool.upserted", state.get("turn") or 1,
             pld,
@@ -206,37 +205,15 @@ def _response_item(payload, state, ts, out):
             return out
         result = _result_text(payload.get("output"))
         prev = state.setdefault("tools", {}).get(cid, {})
-        out.append(_ev(
+        end_payload = tool_end_payload(prev, cid, state.get("last_assistant_id"), result, ts)
+        out.append(make_ev(
             f"{session_id}:tool:{cid}:end", "codex", session_id, ts,
             "tool.upserted", state.get("turn") or 1,
-            {
-                "tool_call_id": cid,
-                "parent_message_id": prev.get("parent_message_id") or state.get("last_assistant_id"),
-                "name": prev.get("name") or "tool",
-                "text": prev.get("text") or (result[:200] if result else cid),
-                "status": "completed",
-                "payload": prev.get("payload"),
-                "result": result,
-                "started_at": prev.get("started_at") or ts,
-                "duration_ms": 1,
-            },
+            end_payload,
         ))
         return out
     # reasoning / agent_message / web_search_call 等：跳过
     return out
-
-
-def _ev(eid, agent_id, session_id, ts, typ, turn, payload):
-    return {
-        "v": 1,
-        "id": eid,
-        "agent_id": agent_id,
-        "session_id": session_id,
-        "ts": int(ts),
-        "type": typ,
-        "turn": turn,
-        "payload": payload,
-    }
 
 
 def _blocks(content):
@@ -291,26 +268,11 @@ def _tool_text(name, args):
 
 
 def _usage(last: dict):
-    """last_token_usage（TokenUsage）→ ATA usage。全 0 标 missing。"""
-    counts = (
+    """last_token_usage（TokenUsage）→ ATA usage。「全 0 计 missing」判定在 common。"""
+    return usage_from_counts(
         int(last.get("input_tokens") or 0),
         int(last.get("output_tokens") or 0),
         int(last.get("cached_input_tokens") or 0),
         int(last.get("cache_write_input_tokens") or 0),
+        total_tokens=last.get("total_tokens"),
     )
-    if counts == (0, 0, 0, 0):
-        return {
-            "status": "missing",
-            "input": None, "output": None,
-            "cache_read": None, "cache_write": None,
-            "total_tokens": None, "cost": None,
-        }
-    return {
-        "status": "reported",
-        "input": last.get("input_tokens"),
-        "output": last.get("output_tokens"),
-        "cache_read": last.get("cached_input_tokens"),
-        "cache_write": last.get("cache_write_input_tokens"),
-        "total_tokens": last.get("total_tokens"),
-        "cost": None,
-    }
