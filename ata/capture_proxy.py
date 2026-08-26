@@ -17,8 +17,9 @@ from urllib.parse import urlsplit
 
 MAX_CAPTURE_BYTES = 8 * 1024 * 1024
 _CHUNK = 65536
-# 认证头物理隔离的两道闸之一：这些 hop 头不透传；转发头白名单只放行
-# x-claude-* 与 content-type，record 的 request_headers 同样只收 x-claude-*。
+# 转发头黑名单（hop-by-hop）：其余头（含认证头）原样透传给上游——红线是
+# 「认证头不落账本」而不是「不转发」，上游网关需要客户端的 key。
+# record 的 request_headers 只收 x-claude-*，这是落档侧的那道闸。
 _HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding"}
 
 
@@ -40,10 +41,10 @@ def start_capture_proxy(host, port, upstream, agent_id, ingest):
             content_type = ""
             buf = bytearray()
             try:
-                # 只转发会话识别需要的头，认证头（x-api-key 等）不出代理进程。
+                # 除 hop-by-hop 外全量透传（认证头要能到上游网关）；
+                # 留档侧另有白名单，x-api-key/authorization 不进 record。
                 fwd = {k: v for k, v in self.headers.items()
-                       if k.lower().startswith("x-claude")
-                       or k.lower() == "content-type"}
+                       if k.lower() not in _HOP_HEADERS}
                 conn.request(self.command, self.path, body=body, headers=fwd)
                 resp = conn.getresponse()
                 content_type = resp.getheader("Content-Type") or ""

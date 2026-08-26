@@ -17,6 +17,10 @@ UPSTREAM_RESP = {
 }
 
 
+#: 假上游收到的头（模块级，测试断言转发侧契约用）。
+SEEN_HEADERS = {}
+
+
 def make_upstream(responses):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -24,6 +28,8 @@ def make_upstream(responses):
         def do_POST(self):
             length = int(self.headers.get("Content-Length") or 0)
             self.rfile.read(length)
+            SEEN_HEADERS.update(
+                {k.lower(): v for k, v in self.headers.items()})
             body = json.dumps(responses[0]).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -93,6 +99,10 @@ class CaptureProxyTest(unittest.TestCase):
             self.assertIn("hello", resp.read().decode())
         recs = self._wait_ledger("prox-1")
         types = sorted(r["event"]["type"] for r in recs)
+        # 转发侧契约：认证头必须能到上游（上游网关靠它鉴权）；
+        # 落档侧红线：认证头不进 record（sk-secret 断言在下方）。
+        self.assertEqual(SEEN_HEADERS.get("x-api-key"),
+                         "sk-secret-must-not-leak")
         self.assertEqual(types, ["system.upserted", "turn.ended"])
         dumped = json.dumps(recs)
         self.assertNotIn("sk-secret", dumped)
