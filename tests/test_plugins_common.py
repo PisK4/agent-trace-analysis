@@ -3,17 +3,19 @@ import unittest
 from ata.plugins.common import (
     PLACEHOLDER_MS,
     bump_turn_if_real_user,
-    make_ev,
     tool_start_payload,
     tool_end_payload,
     usage_from_counts,
     usage_missing,
 )
+from ata.schema import envelope
 
 
-class MakeEvTest(unittest.TestCase):
+class EnvelopeTest(unittest.TestCase):
     def test_seven_keys(self):
-        ev = make_ev("s:t1:start", "claude", "s1", 1000, "turn.started", 1, {})
+        ev = envelope(
+            agent_id="claude", session_id="s1", type_="turn.started",
+            payload={}, turn=1, ts=1000, eid="s:t1:start")
         self.assertEqual(ev, {
             "v": 1, "id": "s:t1:start", "agent_id": "claude",
             "session_id": "s1", "ts": 1000, "type": "turn.started",

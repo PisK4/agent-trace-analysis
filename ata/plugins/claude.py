@@ -6,13 +6,13 @@ from ata.plugins.common import (
     PLACEHOLDER_MS,
     bump_turn_if_real_user,
     is_context_text,
-    make_ev,
     tool_end_payload,
     tool_start_payload,
     usage_from_counts,
     usage_missing,
 )
 from ata.plugins.jsonl import translate_file as _jfile
+from ata.schema import envelope
 
 
 def translate_line(raw: dict, state: dict) -> list[dict]:
@@ -25,16 +25,26 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
     out = []
     if not state.get("opened"):
         state["opened"] = True
-        out.append(make_ev(
-            f"{session_id}:opened", agent_id, session_id, ts,
-            "session.opened", None, {"title": session_id},
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=session_id,
+            type_="session.opened",
+            payload={"title": session_id},
+            turn=None,
+            ts=ts,
+            eid=f"{session_id}:opened",
         ))
     if typ == "ai-title":
         title = str(raw.get("aiTitle") or "").strip()
         if title:
-            out.append(make_ev(
-                f"{session_id}:opened:title", agent_id, session_id, ts,
-                "session.opened", None, {"title": title[:80]},
+            out.append(envelope(
+                agent_id=agent_id,
+                session_id=session_id,
+                type_="session.opened",
+                payload={"title": title[:80]},
+                turn=None,
+                ts=ts,
+                eid=f"{session_id}:opened:title",
             ))
         return out
     if typ == "system":
@@ -73,10 +83,11 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         model = msg.get("model") if isinstance(msg, dict) else None
         if isinstance(model, str) and (not model or model.startswith("<")):
             model = None
-        out.append(make_ev(
-            f"{session_id}:msg:{mid}", agent_id, session_id, ts,
-            "message.upserted", state.get("turn") or 1,
-            {
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=session_id,
+            type_="message.upserted",
+            payload={
                 "message_id": mid,
                 "role": role,
                 "text": (texts or "")[:200],
@@ -89,6 +100,9 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 "thinking": thinking or None,
                 "model": model,
             },
+            turn=state.get("turn") or 1,
+            ts=ts,
+            eid=f"{session_id}:msg:{mid}",
         ))
     for block in _blocks(content):
         if block.get("type") == "tool_use":
@@ -102,10 +116,14 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 _tool_text(name, args), ts)
             state.setdefault("tools", {})[cid] = payload
             # 与 droid / pi 同款：start/end 拆两个 event id，幂等账本才收得到完成态。
-            out.append(make_ev(
-                f"{session_id}:tool:{cid}:start", agent_id, session_id, ts,
-                "tool.upserted", state.get("turn") or 1,
-                payload,
+            out.append(envelope(
+                agent_id=agent_id,
+                session_id=session_id,
+                type_="tool.upserted",
+                payload=payload,
+                turn=state.get("turn") or 1,
+                ts=ts,
+                eid=f"{session_id}:tool:{cid}:start",
             ))
         elif block.get("type") == "tool_result":
             cid = str(block.get("tool_use_id") or block.get("id") or "")
@@ -114,10 +132,14 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
             result = _result_text(block.get("content"))
             prev = state.setdefault("tools", {}).get(cid, {})
             end_payload = tool_end_payload(prev, cid, state.get("last_assistant_id"), result, ts)
-            out.append(make_ev(
-                f"{session_id}:tool:{cid}:end", agent_id, session_id, ts,
-                "tool.upserted", state.get("turn") or 1,
-                end_payload,
+            out.append(envelope(
+                agent_id=agent_id,
+                session_id=session_id,
+                type_="tool.upserted",
+                payload=end_payload,
+                turn=state.get("turn") or 1,
+                ts=ts,
+                eid=f"{session_id}:tool:{cid}:end",
             ))
     return out
 
@@ -134,16 +156,20 @@ def _system_line(raw, state, ts, out):
     if sub == "compact_boundary":
         meta = raw.get("compactMetadata") if isinstance(raw.get("compactMetadata"), dict) else {}
         cid = str(raw.get("uuid") or ts)
-        out.append(make_ev(
-            f"{session_id}:compact:{cid}", "claude", session_id, ts,
-            "compaction.boundary", turn,
-            {
+        out.append(envelope(
+            agent_id="claude",
+            session_id=session_id,
+            type_="compaction.boundary",
+            payload={
                 "summary": "Context compacted",
                 "trigger": meta.get("trigger"),
                 "pre_tokens": meta.get("preTokens"),
                 "post_tokens": meta.get("postTokens"),
                 "duration_ms": meta.get("durationMs"),
             },
+            turn=turn,
+            ts=ts,
+            eid=f"{session_id}:compact:{cid}",
         ))
         return out
     if sub == "api_error":
@@ -155,10 +181,11 @@ def _system_line(raw, state, ts, out):
         if attempt is not None and max_r is not None:
             bits.append(f"retry {attempt}/{max_r}")
         mid = str(raw.get("uuid") or f"{session_id}:api-error:{turn}:{ts}")
-        out.append(make_ev(
-            f"{session_id}:msg:{mid}", "claude", session_id, ts,
-            "message.upserted", turn,
-            {
+        out.append(envelope(
+            agent_id="claude",
+            session_id=session_id,
+            type_="message.upserted",
+            payload={
                 "message_id": mid,
                 "role": "assistant",
                 "text": " · ".join(bits),
@@ -170,6 +197,9 @@ def _system_line(raw, state, ts, out):
                 "output_text": " · ".join(bits),
                 "thinking": None,
             },
+            turn=turn,
+            ts=ts,
+            eid=f"{session_id}:msg:{mid}",
         ))
     return out
 

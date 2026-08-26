@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from ata.plugins.common import (
     PLACEHOLDER_MS,
-    make_ev,
     tool_end_payload,
     tool_start_payload,
     usage_from_counts,
 )
 from ata.plugins.jsonl import iso_to_ms, translate_file as _jfile
+from ata.schema import envelope
 
 
 def translate_line(raw: dict, state: dict) -> list[dict]:
@@ -23,16 +23,25 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         if not state.get("opened"):
             state["opened"] = True
             title = str(payload.get("originator") or session_id).strip()[:80] or session_id
-            out.append(make_ev(
-                f"{session_id}:opened", agent_id, session_id, ts,
-                "session.opened", None, {"title": title},
+            out.append(envelope(
+                agent_id=agent_id,
+                session_id=session_id,
+                type_="session.opened",
+                payload={"title": title},
+                turn=None,
+                ts=ts,
+                eid=f"{session_id}:opened",
             ))
         instructions = payload.get("base_instructions")
         if instructions:
-            out.append(make_ev(
-                f"{session_id}:system:1", agent_id, session_id, ts,
-                "system.upserted", None,
-                {"prompt_text": str(instructions), "previous_prompt": None, "tools_catalog": []},
+            out.append(envelope(
+                agent_id=agent_id,
+                session_id=session_id,
+                type_="system.upserted",
+                payload={"prompt_text": str(instructions), "previous_prompt": None, "tools_catalog": []},
+                turn=None,
+                ts=ts,
+                eid=f"{session_id}:system:1",
             ))
         return out
     if typ == "turn_context":
@@ -47,10 +56,14 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         turn = state.get("turn") or 1
         window = payload.get("window_number")
         summary = f"Context compacted · window {window}" if window is not None else "Context compacted"
-        out.append(make_ev(
-            f"{session_id}:compact:{payload.get('window_id') or ts}", agent_id, session_id, ts,
-            "compaction.boundary", turn,
-            {"summary": summary, "trigger": "compacted"},
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=session_id,
+            type_="compaction.boundary",
+            payload={"summary": summary, "trigger": "compacted"},
+            turn=turn,
+            ts=ts,
+            eid=f"{session_id}:compact:{payload.get('window_id') or ts}",
         ))
         return out
     if typ == "event_msg":
@@ -69,9 +82,14 @@ def _ensure_opened(state, ts, out):
     if not state.get("opened"):
         state["opened"] = True
         session_id = state["session_id"]
-        out.append(make_ev(
-            f"{session_id}:opened", "codex", session_id, ts,
-            "session.opened", None, {"title": session_id},
+        out.append(envelope(
+            agent_id="codex",
+            session_id=session_id,
+            type_="session.opened",
+            payload={"title": session_id},
+            turn=None,
+            ts=ts,
+            eid=f"{session_id}:opened",
         ))
     return out
 
@@ -86,9 +104,14 @@ def _turn_for(state, turn_id, ts, out):
         turn = int(state.get("turn") or 0) + 1
         mapping[str(turn_id)] = turn
         state["turn"] = turn
-        out.append(make_ev(
-            f"{state['session_id']}:turn:{turn}:start", "codex", state["session_id"], ts,
-            "turn.started", turn, {},
+        out.append(envelope(
+            agent_id="codex",
+            session_id=state["session_id"],
+            type_="turn.started",
+            payload={},
+            turn=turn,
+            ts=ts,
+            eid=f"{state['session_id']}:turn:{turn}:start",
         ))
     return turn
 
@@ -106,30 +129,43 @@ def _event_msg(payload, state, ts, out):
         turn = state.get("turn") or 1
         usage = state.get("last_token_usage")
         usage = _usage(usage) if usage is not None else None
-        out.append(make_ev(
-            f"{session_id}:turn:{turn}:end", "codex", session_id, ts,
-            "turn.ended", turn, {"usage": usage},
+        out.append(envelope(
+            agent_id="codex",
+            session_id=session_id,
+            type_="turn.ended",
+            payload={"usage": usage},
+            turn=turn,
+            ts=ts,
+            eid=f"{session_id}:turn:{turn}:end",
         ))
         return out
     if etype == "turn_aborted":
         turn_id = payload.get("turn_id")
         turn = _turn_for(state, turn_id, ts, out) if turn_id is not None else (state.get("turn") or 1)
-        out.append(make_ev(
-            f"{session_id}:turn:{turn}:end:cancelled", "codex", session_id, ts,
-            "turn.ended", turn,
-            {
+        out.append(envelope(
+            agent_id="codex",
+            session_id=session_id,
+            type_="turn.ended",
+            payload={
                 "usage": None,
                 "status": "cancelled",
                 "note": str(payload.get("reason") or "interrupted"),
             },
+            turn=turn,
+            ts=ts,
+            eid=f"{session_id}:turn:{turn}:end:cancelled",
         ))
         return out
     if etype == "context_compacted":
         turn = state.get("turn") or 1
-        out.append(make_ev(
-            f"{session_id}:compact:ctx:{ts}", "codex", session_id, ts,
-            "compaction.boundary", turn,
-            {"summary": "Context compacted", "trigger": "context_compacted"},
+        out.append(envelope(
+            agent_id="codex",
+            session_id=session_id,
+            type_="compaction.boundary",
+            payload={"summary": "Context compacted", "trigger": "context_compacted"},
+            turn=turn,
+            ts=ts,
+            eid=f"{session_id}:compact:ctx:{ts}",
         ))
         return out
     if etype == "token_count":
@@ -163,10 +199,11 @@ def _response_item(payload, state, ts, out):
             state["request_no"] = int(state.get("request_no") or 0) + 1
         text = _texts(payload.get("content"))
         mid = str(payload.get("id") or f"{session_id}:{role}:{ts}")
-        out.append(make_ev(
-            f"{session_id}:msg:{mid}", "codex", session_id, ts,
-            "message.upserted", state.get("turn") or 1,
-            {
+        out.append(envelope(
+            agent_id="codex",
+            session_id=session_id,
+            type_="message.upserted",
+            payload={
                 "message_id": mid,
                 "role": role,
                 "text": (text or "")[:200],
@@ -179,6 +216,9 @@ def _response_item(payload, state, ts, out):
                 "model": state.get("model") if role == "assistant" else None,
                 "effort": state.get("effort") if role == "assistant" else None,
             },
+            turn=state.get("turn") or 1,
+            ts=ts,
+            eid=f"{session_id}:msg:{mid}",
         ))
         return out
     if rtype in {"function_call", "custom_tool_call"}:
@@ -193,10 +233,14 @@ def _response_item(payload, state, ts, out):
             cid, state.get("last_assistant_id"), name, args,
             _tool_text(name, args), ts)
         state.setdefault("tools", {})[cid] = pld
-        out.append(make_ev(
-            f"{session_id}:tool:{cid}:start", "codex", session_id, ts,
-            "tool.upserted", state.get("turn") or 1,
-            pld,
+        out.append(envelope(
+            agent_id="codex",
+            session_id=session_id,
+            type_="tool.upserted",
+            payload=pld,
+            turn=state.get("turn") or 1,
+            ts=ts,
+            eid=f"{session_id}:tool:{cid}:start",
         ))
         return out
     if rtype in {"function_call_output", "custom_tool_call_output"}:
@@ -206,10 +250,14 @@ def _response_item(payload, state, ts, out):
         result = _result_text(payload.get("output"))
         prev = state.setdefault("tools", {}).get(cid, {})
         end_payload = tool_end_payload(prev, cid, state.get("last_assistant_id"), result, ts)
-        out.append(make_ev(
-            f"{session_id}:tool:{cid}:end", "codex", session_id, ts,
-            "tool.upserted", state.get("turn") or 1,
-            end_payload,
+        out.append(envelope(
+            agent_id="codex",
+            session_id=session_id,
+            type_="tool.upserted",
+            payload=end_payload,
+            turn=state.get("turn") or 1,
+            ts=ts,
+            eid=f"{session_id}:tool:{cid}:end",
         ))
         return out
     # reasoning / agent_message / web_search_call 等：跳过

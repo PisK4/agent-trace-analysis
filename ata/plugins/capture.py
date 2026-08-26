@@ -16,6 +16,7 @@ import hashlib
 import json
 
 from ata.plugins.common import usage_from_counts
+from ata.schema import envelope
 from ata.wire import parse_request as _wire_req
 from ata.wire import parse_response as _wire_resp
 
@@ -130,12 +131,15 @@ def _translate(rec, state):
         h = _system_hash(prompt_text, catalog)
         if h != state.get("system_hash"):
             state["system_hash"] = h
-            out.append({
-                "v": 1, "id": f"{sid}:system:{h}", "agent_id": agent_id,
-                "session_id": sid, "ts": ts, "type": "system.upserted",
-                "turn": None,
-                "payload": {"prompt_text": prompt_text, "tools_catalog": catalog},
-            })
+            out.append(envelope(
+                agent_id=agent_id,
+                session_id=sid,
+                type_="system.upserted",
+                payload={"prompt_text": prompt_text, "tools_catalog": catalog},
+                turn=None,
+                ts=ts,
+                eid=f"{sid}:system:{h}",
+            ))
 
     # 每轮真实 usage：轮次号 = 请求上下文真实用户消息数（与 transcript 侧
     # bump_turn_if_real_user 同口径，两条通道才能落在同一 turn 上）。
@@ -153,14 +157,16 @@ def _translate(rec, state):
         turn = count_real_user_turns(messages)
         if turn >= 1:
             rid = resp.get("response_id")
-            out.append({
-                "v": 1,
-                "id": f"{sid}:turn:{turn}:ended:{rid or ts}",
-                "agent_id": agent_id, "session_id": sid, "ts": ts,
-                "type": "turn.ended", "turn": turn,
-                "payload": {"usage": usage_from_counts(
+            out.append(envelope(
+                agent_id=agent_id,
+                session_id=sid,
+                type_="turn.ended",
+                payload={"usage": usage_from_counts(
                     inp, outp, cr, cw, total_tokens=inp + outp + cr + cw)},
-            })
+                turn=turn,
+                ts=ts,
+                eid=f"{sid}:turn:{turn}:ended:{rid or ts}",
+            ))
     return out
 
 

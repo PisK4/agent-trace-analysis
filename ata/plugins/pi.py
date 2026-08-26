@@ -3,7 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 
-from ata.plugins.common import make_ev, usage_missing
+from ata.plugins.common import usage_missing
+from ata.schema import envelope
 
 
 ZERO = (0, 0, 0, 0)
@@ -80,9 +81,14 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
             payload["tools_catalog"] = catalog
             payload["skills_catalog"] = skills
         state["catalog_fp"] = fp
-        out.append(make_ev(
-            f"{session_id}:system:{n}", agent_id, session_id, ts,
-            "system.upserted", None, payload,
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=session_id,
+            type_="system.upserted",
+            payload=payload,
+            turn=None,
+            ts=ts,
+            eid=f"{session_id}:system:{n}",
         ))
         state["last_prompt"] = prompt
         return out
@@ -105,9 +111,14 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                     "child_agent": lin.get("PI_SUBAGENT_CHILD_AGENT"),
                     "depth": lin.get("PI_SUBAGENT_PARENT_DEPTH"),
                 }
-            out.append(make_ev(
-                f"{session_id}:opened", agent_id, session_id, ts,
-                "session.opened", None, payload,
+            out.append(envelope(
+                agent_id=agent_id,
+                session_id=session_id,
+                type_="session.opened",
+                payload=payload,
+                turn=None,
+                ts=ts,
+                eid=f"{session_id}:opened",
             ))
         return out
     if name == "turn_start":
@@ -127,18 +138,28 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 state["last_assistant_id"] = None
                 if int(state.get("turn_started") or 0) < state["turn"]:
                     state["turn_started"] = state["turn"]
-                    out.append(make_ev(
-                        f"{session_id}:turn:{state['turn']}:start", agent_id, session_id, ts,
-                        "turn.started", state["turn"], {},
+                    out.append(envelope(
+                        agent_id=agent_id,
+                        session_id=session_id,
+                        type_="turn.started",
+                        payload={},
+                        turn=state["turn"],
+                        ts=ts,
+                        eid=f"{session_id}:turn:{state['turn']}:start",
                     ))
                 # Pi 未显式命名会话时（getSessionName 未设置），标题取第一条用户消息。
                 if not state.get("title_set") and (ctx.get("title") or "") in {"", session_id}:
                     first = _message_text(msg)
                     if first:
                         state["title_set"] = True
-                        out.append(make_ev(
-                            f"{session_id}:opened:title", agent_id, session_id, ts,
-                            "session.opened", None, {"title": first[:80]},
+                        out.append(envelope(
+                            agent_id=agent_id,
+                            session_id=session_id,
+                            type_="session.opened",
+                            payload={"title": first[:80]},
+                            turn=None,
+                            ts=ts,
+                            eid=f"{session_id}:opened:title",
                         ))
             state["user_pending"] = name == "message_start"
             turn = state["turn"]
@@ -177,10 +198,11 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
             # 耗时不可得时写 None（未测量）而非 0（会被当成实测零毫秒）。
             duration = max(int(ts) - int(m_start), 0) if m_start else None
             state.setdefault("msg_dur", {})[mid] = duration
-        out.append(make_ev(
-            f"{session_id}:msg:{mid}:{name}", agent_id, session_id, ts,
-            "message.upserted", turn,
-            {
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=session_id,
+            type_="message.upserted",
+            payload={
                 "message_id": mid,
                 "role": role,
                 "text": text or "",
@@ -193,6 +215,9 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 "provider": msg.get("provider"),
                 "output_text": text if role == "assistant" else None,
             },
+            turn=turn,
+            ts=ts,
+            eid=f"{session_id}:msg:{mid}:{name}",
         ))
         return out
     if name == "tool_execution_start":
@@ -202,10 +227,11 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
         args = event.get("args") if isinstance(event.get("args"), dict) else {}
         state.setdefault("tool_args", {})[cid] = args
         state.setdefault("tool_start_ts", {})[cid] = ts
-        out.append(make_ev(
-            f"{session_id}:tool:{cid}:start", agent_id, session_id, ts,
-            "tool.upserted", state.get("turn") or 1,
-            {
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=session_id,
+            type_="tool.upserted",
+            payload={
                 "tool_call_id": cid,
                 "parent_message_id": state.get("last_assistant_id"),
                 "name": event.get("toolName") or "tool",
@@ -216,6 +242,9 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 "started_at": ts,
                 "duration_ms": None,
             },
+            turn=state.get("turn") or 1,
+            ts=ts,
+            eid=f"{session_id}:tool:{cid}:start",
         ))
         return out
     if name == "tool_execution_end":
@@ -227,10 +256,11 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
         result = _tool_result(event.get("result"))
         start_ts = state.get("tool_start_ts", {}).pop(cid, None)
         duration = max(int(ts) - int(start_ts), 0) if start_ts else None
-        out.append(make_ev(
-            f"{session_id}:tool:{cid}:end", agent_id, session_id, ts,
-            "tool.upserted", state.get("turn") or 1,
-            {
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=session_id,
+            type_="tool.upserted",
+            payload={
                 "tool_call_id": cid,
                 "parent_message_id": state.get("last_assistant_id"),
                 "name": event.get("toolName") or "tool",
@@ -241,6 +271,9 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 "started_at": ts,
                 "duration_ms": duration,
             },
+            turn=state.get("turn") or 1,
+            ts=ts,
+            eid=f"{session_id}:tool:{cid}:end",
         ))
         return out
     if name == "turn_end":
@@ -261,10 +294,11 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 if not state.get("last_assistant_id"):
                     state["asst_no"] = int(state.get("asst_no") or 0) + 1
                     state["last_assistant_id"] = mid
-                out.append(make_ev(
-                    f"{session_id}:msg:{mid}:end", agent_id, session_id, ts,
-                    "message.upserted", turn,
-                    {
+                out.append(envelope(
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    type_="message.upserted",
+                    payload={
                         "message_id": mid,
                         "role": "assistant",
                         "text": text or "",
@@ -277,6 +311,9 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                         "provider": msg.get("provider"),
                         "output_text": text,
                     },
+                    turn=turn,
+                    ts=ts,
+                    eid=f"{session_id}:msg:{mid}:end",
                 ))
         stop = (msg.get("stopReason") if isinstance(msg, dict) else None)
         status = {"error": "failed", "aborted": "cancelled"}.get(stop)
@@ -288,9 +325,14 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
         }
         if status:
             ended_payload["status"] = status
-        out.append(make_ev(
-            f"{session_id}:turn:{turn}:end", agent_id, session_id, ts,
-            "turn.ended", turn, ended_payload,
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=session_id,
+            type_="turn.ended",
+            payload=ended_payload,
+            turn=turn,
+            ts=ts,
+            eid=f"{session_id}:turn:{turn}:end",
         ))
         return out
     # agent_end / agent_settled / 其他：不做收尾。以前把 agent_end 当会话结束，

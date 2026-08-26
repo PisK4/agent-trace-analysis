@@ -9,7 +9,6 @@ from ata.plugins.common import (
     PLACEHOLDER_MS,
     bump_turn_if_real_user,
     is_context_text,
-    make_ev,
     tool_end_payload,
     tool_start_payload,
 )
@@ -80,18 +79,28 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         if not state.get("opened"):
             state["opened"] = True
             title = str(raw.get("title") or session_id).strip()[:80] or session_id
-            out.append(make_ev(
-                f"{session_id}:opened", agent_id, session_id, ts,
-                "session.opened", None, {"title": title},
+            out.append(envelope(
+                agent_id=agent_id,
+                session_id=session_id,
+                type_="session.opened",
+                payload={"title": title},
+                turn=None,
+                ts=ts,
+                eid=f"{session_id}:opened",
             ))
         return out
     if typ == "todo_state" or typ not in {"message", "agent_turn_outcome", "compaction_state"}:
         return out
     if not state.get("opened"):
         state["opened"] = True
-        out.append(make_ev(
-            f"{session_id}:opened", agent_id, session_id, ts,
-            "session.opened", None, {"title": session_id},
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=session_id,
+            type_="session.opened",
+            payload={"title": session_id},
+            turn=None,
+            ts=ts,
+            eid=f"{session_id}:opened",
         ))
     if typ == "compaction_state":
         turn = state.get("turn") or 1
@@ -99,15 +108,19 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         summary = str(raw.get("summaryText") or "").strip()
         if not summary:
             summary = "Provider switch serialization" if kind == "provider_switch_serialization" else "Context compacted"
-        out.append(make_ev(
-            f"{session_id}:compact:{raw.get('id') or ts}", agent_id, session_id, ts,
-            "compaction.boundary", turn,
-            {
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=session_id,
+            type_="compaction.boundary",
+            payload={
                 "summary": summary[:200],
                 "trigger": kind,
                 "removed_count": raw.get("removedCount"),
                 "raw": summary[:2000] if raw.get("summaryText") else None,
             },
+            turn=turn,
+            ts=ts,
+            eid=f"{session_id}:compact:{raw.get('id') or ts}",
         ))
         return out
     if typ == "agent_turn_outcome":
@@ -120,9 +133,14 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         eid = f"{session_id}:turn:{turn}:end"
         if status:
             eid = f"{eid}:{status}"
-        out.append(make_ev(
-            eid, agent_id, session_id, ts,
-            "turn.ended", turn, payload,
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=session_id,
+            type_="turn.ended",
+            payload=payload,
+            turn=turn,
+            ts=ts,
+            eid=eid,
         ))
         return out
     # v2：消息嵌套在 `message` 字段（{role, content, visibility}）；v1 顶层 role/content 兼容。
@@ -153,10 +171,11 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 state["last_assistant_id"] = mid
                 state["request_no"] = int(state.get("request_no") or 0) + 1
             text = texts or ""
-            out.append(make_ev(
-                f"{session_id}:msg:{mid}", agent_id, session_id, ts,
-                "message.upserted", turn,
-                {
+            out.append(envelope(
+                agent_id=agent_id,
+                session_id=session_id,
+                type_="message.upserted",
+                payload={
                     "message_id": mid,
                     "role": role,
                     "text": text[:200],
@@ -168,6 +187,9 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                     "output_text": text if role == "assistant" else None,
                     "thinking": thinking or None,
                 },
+                turn=turn,
+                ts=ts,
+                eid=f"{session_id}:msg:{mid}",
             ))
         else:
             turn = state.get("turn") or 1
@@ -185,10 +207,14 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 # 与 Pi 插件同款修法（见 plugins/pi.py）：start/end 拆成两个 event id，
                 # 否则幂等账本（重复 id 只认第一条）会吞掉 tool_result 的完成态，
                 # 工具行永远 pending。投影层按 tool_call_id 合并，后写覆盖前写。
-                out.append(make_ev(
-                    f"{session_id}:tool:{cid}:start", agent_id, session_id, ts,
-                    "tool.upserted", state.get("turn") or 1,
-                    payload,
+                out.append(envelope(
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    type_="tool.upserted",
+                    payload=payload,
+                    turn=state.get("turn") or 1,
+                    ts=ts,
+                    eid=f"{session_id}:tool:{cid}:start",
                 ))
             elif block.get("type") == "tool_result":
                 cid = str(block.get("tool_use_id") or block.get("id") or "")
@@ -197,10 +223,14 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 result = _result_text(block.get("content"))
                 prev = state.setdefault("tools", {}).get(cid, {})
                 end_payload = tool_end_payload(prev, cid, state.get("last_assistant_id"), result, ts)
-                out.append(make_ev(
-                    f"{session_id}:tool:{cid}:end", agent_id, session_id, ts,
-                    "tool.upserted", state.get("turn") or 1,
-                    end_payload,
+                out.append(envelope(
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    type_="tool.upserted",
+                    payload=end_payload,
+                    turn=state.get("turn") or 1,
+                    ts=ts,
+                    eid=f"{session_id}:tool:{cid}:end",
                 ))
     return out
 
