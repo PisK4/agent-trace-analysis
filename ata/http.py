@@ -180,6 +180,8 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 raw = json.loads(self.rfile.read(length) or b"{}")
             except json.JSONDecodeError as exc:
                 return self._json(400, {"ok": False, "error": str(exc)})
+            if parsed.path == "/api/captures":
+                return self._ingest_capture(raw)
             if parsed.path == "/api/pi-hooks":
                 return self._ingest_pi_hooks(raw)
             if parsed.path == "/api/runs":
@@ -225,6 +227,28 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
             except (ValidationError, TypeError, ValueError) as exc:
                 return self._json(400, {"ok": False, "error": str(exc)})
             return self._json(200, {"ok": True, "seq": seqs[-1] if seqs else 0, "seqs": seqs})
+
+        def _ingest_capture(self, raw):
+            # 代理采集通道的 HTTP 入口（外部壳/测试用）：record 的 JSON 形式，
+            # request_body/response_body 为 base64（JSON 不安全字节）。
+            from ata.plugins.capture import RECORD_KEYS, ingest_capture
+            if not isinstance(raw, dict):
+                return self._json(400, {"ok": False, "error": "capture record must be object"})
+            missing = RECORD_KEYS - set(raw)
+            if missing:
+                return self._json(400, {"ok": False, "error": f"missing {sorted(missing)}"})
+            import base64
+            rec = dict(raw)
+            for key in ("request_body", "response_body"):
+                try:
+                    rec[key] = base64.b64decode(raw.get(key) or "")
+                except Exception:
+                    return self._json(400, {"ok": False, "error": f"{key} must be base64"})
+            try:
+                count = ingest_capture(ledger, rec)
+            except (ValidationError, TypeError, ValueError) as exc:
+                return self._json(400, {"ok": False, "error": str(exc)})
+            return self._json(200, {"ok": True, "count": count})
 
         def _ingest_pi_hooks(self, raw):
             if not isinstance(raw, dict) or "name" not in raw:
