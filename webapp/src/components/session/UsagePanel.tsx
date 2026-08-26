@@ -55,8 +55,10 @@ export function UsagePanel({ sessionId, onJump, open, onClose }: {
   open: boolean
   onClose: () => void
 }) {
+  // path 以 open 门控：面板关着时不订阅 /usage——否则 live tailing 的每次
+  // nudge 都会与 UsageBadges 重复拉同一路径，面板不可见也照发。
   const { data } = useSummary<UsageSummary>(
-    sessionId ? `/api/sessions/${encodeURIComponent(sessionId)}/usage` : null,
+    open && sessionId ? `/api/sessions/${encodeURIComponent(sessionId)}/usage` : null,
   )
 
   if (!open || !data) return null

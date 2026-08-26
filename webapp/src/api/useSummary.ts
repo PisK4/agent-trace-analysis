@@ -19,16 +19,20 @@ export function useSummary<T>(
   // dataFor 记录 data 归属的路径：换目标过渡期渲染 null，不在 effect 里同步置空
   const [state, setState] = useState<{ dataFor: string | null; data: T | null }>({ dataFor: null, data: null })
   const aliveRef = useRef(true)
+  // 最新请求的 path：aliveRef 只管挂载生命周期，跨 path 变化仍为 true——
+  // 换会话时旧会话的慢响应后到必须丢弃，否则会把新会话的面板刷成旧数据。
+  const requestedRef = useRef<string | null>(null)
   useEffect(() => {
     aliveRef.current = true
     return () => { aliveRef.current = false }
   }, [])
 
   const load = useCallback((p: string) => {
+    requestedRef.current = p
     fetch(p)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
-      .then((d: T) => { if (aliveRef.current) setState({ dataFor: p, data: d }) })
-      .catch(() => { if (aliveRef.current) setState({ dataFor: p, data: null }) })
+      .then((d: T) => { if (aliveRef.current && requestedRef.current === p) setState({ dataFor: p, data: d }) })
+      .catch(() => { if (aliveRef.current && requestedRef.current === p) setState({ dataFor: p, data: null }) })
   }, [])
 
   useEffect(() => {

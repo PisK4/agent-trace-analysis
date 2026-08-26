@@ -37,6 +37,9 @@ export function SessionView({ sessionId }: Props) {
   const [detailsCollapsed, setDetailsCollapsed] = useState(() => {
     try { return localStorage.getItem('ata.detailsCollapsed') === 'true' } catch { return false }
   })
+  // 宽度的可变镜像：Inspector 的 commit 回调要读最新值，state 闭包拿不到。
+  // 首帧时上面的 useState 懒初始化已从 localStorage 解出持久值，直接作初值。
+  const detailsWidthRef = useRef<number | null>(detailsWidth)
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   // loadOlder 前插后补偿滚动差，视觉位置不跳
   const scrollBeforeLoad = useRef<{ height: number; top: number } | null>(null)
@@ -221,9 +224,18 @@ export function SessionView({ sessionId }: Props) {
             selectedId={selectedId}
             onJump={jumpToId}
             width={detailsWidth}
+            // 拖拽中只更新 state（每帧 setState 已够重），localStorage 留到
+            // 拖拽结束的 commit 里写一次——一次拖拽 30-60 帧不能写 30-60 次存储
             onWidthChange={(w) => {
+              detailsWidthRef.current = w
               setDetailsWidth(w)
-              try { if (w == null) localStorage.removeItem('ata.detailsWidth'); else localStorage.setItem('ata.detailsWidth', String(w)) } catch { /* 隐私模式等存储不可用 */ }
+            }}
+            onWidthCommit={() => {
+              const w = detailsWidthRef.current
+              try {
+                if (w == null) localStorage.removeItem('ata.detailsWidth')
+                else localStorage.setItem('ata.detailsWidth', String(w))
+              } catch { /* 隐私模式等存储不可用 */ }
             }}
           />
         )}

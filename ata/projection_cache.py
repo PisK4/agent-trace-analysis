@@ -12,6 +12,11 @@ import threading
 
 
 class ProjectionCache:
+    # 槽位上限：每个槽持有整份 json.loads 后的事件列表（每会话最多 4 份全量
+    # 拷贝），不设上限的话长期运行的 serve 进程 RSS 单调上涨。超限按 FIFO
+    # 淘汰——rev 门控保证被淘汰的槽下次请求原样重算，无正确性影响。
+    MAX_SLOTS = 256
+
     def __init__(self):
         self._lock = threading.Lock()
         self._slots: dict[tuple[str, str], tuple[int, object]] = {}
@@ -25,7 +30,13 @@ class ProjectionCache:
             # 竞态下同 kind 可能算两次，幂等无害。
         result = compute()
         with self._lock:
-            self._slots[(sid, kind)] = (rev, result)
+            cur = self._slots.get((sid, kind))
+            # 只允许新 rev 覆盖旧 rev：慢的旧 rev 计算晚到时不得回退已就位的
+            # 新结果（否则并发轮询下多一次冗余重算）。
+            if cur is None or cur[0] <= rev:
+                if len(self._slots) >= self.MAX_SLOTS and (sid, kind) not in self._slots:
+                    self._slots.pop(next(iter(self._slots)))
+                self._slots[(sid, kind)] = (rev, result)
         return result
 
     def invalidate_prefix(self, sid: str) -> None:

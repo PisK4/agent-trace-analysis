@@ -295,8 +295,11 @@ interface Props {
   onJump: (id: string) => void
   /** 详情栏宽度（px）；null = 用 CSS 默认 clamp(320px,38%,440px) */
   width: number | null
-  /** 拖拽/双击复位时回传新宽度；持久化由父层负责 */
+  /** 拖拽中回传新宽度（父层只更新 state，不落存储） */
   onWidthChange: (w: number | null) => void
+  /** 拖拽/双击复位结束时回调一次；localStorage 持久化由父层在此做，
+   * 不随 pointermove 每帧写存储 */
+  onWidthCommit?: () => void
 }
 
 // 与旧版 web/js/util.js 同参：拖宽边界与表格最小宽度，防止把轨迹列挤没。
@@ -304,7 +307,7 @@ const DETAILS_MIN = 320
 const DETAILS_MAX = 720
 const TABLE_MIN = 280
 
-export function Inspector({ rows, toolsIndex, sessionId, selectedId, onJump, width, onWidthChange }: Props) {
+export function Inspector({ rows, toolsIndex, sessionId, selectedId, onJump, width, onWidthChange, onWidthCommit }: Props) {
   // tab 记忆：换选中优先恢复用户去过的 tab（旧版 rememberTab/restoreTab）
   // tab 历史：换选中优先恢复用户去过的 tab（旧版 rememberTab/restoreTab）
   const [tabHistory, setTabHistory] = useState<string[]>(['summary'])
@@ -355,8 +358,23 @@ export function Inspector({ rows, toolsIndex, sessionId, selectedId, onJump, wid
           if (!d || d.pointerId !== e.pointerId) return
           onWidthChange(clampWidth(d.startWidth + d.startX - e.clientX, d.splitWidth))
         }}
-        onPointerUp={(e) => { dragRef.current = null; e.currentTarget.releasePointerCapture(e.pointerId) }}
-        onDoubleClick={() => onWidthChange(null)}
+        onPointerUp={(e) => {
+          if (dragRef.current?.pointerId === e.pointerId) {
+            // capture 可能已被浏览器提前释放（pointercancel 等），强判再放
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+              e.currentTarget.releasePointerCapture(e.pointerId)
+            }
+            dragRef.current = null
+            onWidthCommit?.()
+          }
+        }}
+        onPointerCancel={() => {
+          // 浏览器中途取消（滚动手势打断等）：capture 自动释放，只清拖拽态，
+          // 否则 dragRef 残留会让后续 mousemove 无按键持续触发 resize
+          dragRef.current = null
+          onWidthCommit?.()
+        }}
+        onDoubleClick={() => { onWidthChange(null); onWidthCommit?.() }}
       />
       <ContextDrawer rows={rows} sessionId={sessionId} />
       {row && target && tab ? (

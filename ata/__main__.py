@@ -63,7 +63,7 @@ def main(argv=None):
     p.add_argument("cmd", choices=["serve", "seed"])
     p.add_argument("--port", type=int, default=8787)
     p.add_argument("--ledger", default="./data")
-    p.add_argument("--web", default="web")
+    p.add_argument("--web", default="web/dist")
     p.add_argument("--droid-path")
     p.add_argument("--claude-path")
     p.add_argument("--codex-path")

@@ -2,7 +2,7 @@
 
 本地 Agent 轨迹阅读器。把 Pi、Droid、Claude Code、Codex 的会话翻译成统一账本，在浏览器里按轮次回看：消息、工具调用、每轮 usage、会话标题。
 
-- 纯 Python 标准库后端 + 零构建前端；Markdown 与代码高亮用 vendored 库（`web/vendor/`，无运行期下载）
+- 纯 Python 标准库后端 + React 前端（`webapp/`，Vite 构建，产物落 `web/dist/`；首次使用先 `cd webapp && npm install && npm run build`）
 - 全部数据留在本机，不设服务端
 - 内核不打开任何厂商目录；每个 agent 的适配器只在你显式传入路径时读取
 
@@ -69,13 +69,12 @@ CUE_PI_AGENT_DIR=/path/to/pi-config make attach-cue
 ## 结构
 
 ```text
-ata/            Python 服务：schema / ledger / projection / http / plugins
-plugins/        pi / droid / claude / codex 方言翻译器 + 公共 jsonl 增量读取
+ata/            Python 服务：schema / ledger / fold / projection_cache / http / plugins
+plugins/        pi / droid / claude / codex 方言翻译器 + 公共 jsonl 增量读取 + 共享内核 common.py
 extensions/     pi-atatrace（Pi 官方 extension）
-web/            零构建前端（复制自 sketches/002-beautiful-workbench，只换数据入口；
-                vendor/ 存放 marked 与 highlight.js，来源与许可证见 vendor/README.md）
+webapp/         React 前端源码（Vite + TypeScript，测试 vitest）；构建产物输出 web/dist/
 testdata/       合成 fixture（占位文案，无真实会话）
-tests/          unittest（111 个）
+tests/          unittest（非 pytest）
 docs/           spec / plan / 交付总结 / 测试指南
 ```
 

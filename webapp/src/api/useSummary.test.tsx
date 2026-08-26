@@ -61,4 +61,31 @@ describe('useSummary', () => {
     await act(async () => {})
     expect(fetchCalls.length).toBe(before + 1)
   })
+
+  it('slow response from previous path is dropped after switch', async () => {
+    // 回归：aliveRef 只管挂载生命周期，跨 path 变化仍为 true——旧会话的慢
+    // 响应后到会把新会话的数据覆盖掉（旧版 TimeBadge 用 effect 级 alive 防住）。
+    let releaseOld!: (v: Response) => void
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const path = String(input)
+      if (path.includes('s1')) {
+        return new Promise<Response>((resolve) => { releaseOld = resolve })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ path }),
+      } as Response)
+    }))
+    const { result, rerender } = renderHook(
+      ({ sid }: { sid: string }) => useSummary<{ path: string }>(`/api/sessions/${sid}/usage`),
+      { initialProps: { sid: 's1' } },
+    )
+    rerender({ sid: 's2' })
+    await act(async () => {})
+    expect(result.current.data?.path).toContain('s2')
+    act(() => { releaseOld({ ok: true, json: async () => ({ path: '/old-s1' }) } as Response) })
+    await act(async () => {})
+    // 慢的旧响应已到，但不得覆盖新会话数据
+    expect(result.current.data?.path).toContain('s2')
+  })
 })
