@@ -11,6 +11,8 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from ata.schema import envelope
+
 DEFAULT_URL = "http://127.0.0.1:8787"
 REGRESSION_DIR = Path.home() / ".ata" / "regression"
 TASKS_FILE = REGRESSION_DIR / "tasks.jsonl"
@@ -150,9 +152,7 @@ def build_score_event(agent_id, session_id, value, note=None):
     payload = {"value": value}
     if note:
         payload["note"] = note
-    return {"v": 1, "id": uuid.uuid4().hex, "agent_id": agent_id,
-            "session_id": str(session_id), "ts": int(time.time() * 1000),
-            "type": "session.scored", "turn": None, "payload": payload}
+    return envelope(agent_id, session_id, "session.scored", payload)
 
 
 def post_json(base, path, body):

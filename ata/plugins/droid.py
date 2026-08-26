@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from ata.project import is_context_text
+from ata.schema import envelope
 
 
 def refresh_titles(root: Path, ledger, state: dict | None = None) -> None:
@@ -47,16 +48,9 @@ def refresh_titles(root: Path, ledger, state: dict | None = None) -> None:
             continue
         sid = f.stem
         digest = hashlib.sha1(title.encode()).hexdigest()[:12]
-        ledger.append({
-            "v": 1,
-            "id": f"{sid}:title-fix:{digest}",
-            "agent_id": "droid",
-            "session_id": sid,
-            "ts": int(time.time() * 1000),
-            "type": "session.opened",
-            "turn": None,
-            "payload": {"title": title},
-        })
+        ledger.append(envelope(
+            "droid", sid, "session.opened", {"title": title},
+            ts=int(time.time() * 1000), eid=f"{sid}:title-fix:{digest}"))
 
 
 def translate_line(raw: dict, state: dict) -> list[dict]:

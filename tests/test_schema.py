@@ -1,5 +1,5 @@
 import unittest
-from ata.schema import ValidationError, parse_event
+from ata.schema import ALLOWED_AGENTS, ValidationError, envelope, parse_event
 
 MIN = {
     "v": 1,
@@ -55,6 +55,32 @@ class SchemaTest(unittest.TestCase):
             parse_event(bad)
         ok = dict(MIN, type="compaction.boundary", turn=1, payload={"summary": "Context compacted"})
         self.assertEqual(parse_event(ok)["type"], "compaction.boundary")
+
+
+class EnvelopeTest(unittest.TestCase):
+    def test_envelope_full_shape(self):
+        ev = envelope("claude", "s1", "session.scored", {"value": "good"},
+                      turn=None, ts=1234, eid="abc")
+        self.assertEqual(ev, {
+            "v": 1, "id": "abc", "agent_id": "claude", "session_id": "s1",
+            "ts": 1234, "type": "session.scored", "turn": None,
+            "payload": {"value": "good"},
+        })
+        # 工厂产物必须能直接过 parse_event
+        self.assertEqual(parse_event(ev)["type"], "session.scored")
+
+    def test_envelope_defaults(self):
+        import time as _t
+        before = int(_t.time() * 1000)
+        ev = envelope("pi", "s2", "session.renamed", {"title": "x"}, eid="e2")
+        after = int(_t.time() * 1000)
+        self.assertEqual(ev["v"], 1)
+        self.assertEqual(ev["id"], "e2")
+        self.assertIsNone(ev["turn"])
+        self.assertTrue(before <= ev["ts"] <= after)
+
+    def test_allowed_agents_unchanged(self):
+        self.assertIn("pi", ALLOWED_AGENTS)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ import re
 
 from ata.plugins.pi import translate_hook
 from ata.project import audit_usage, list_compactions, list_tools, project_session, summarize_timing, summarize_tools, summarize_usage, tail_preview
-from ata.schema import ValidationError, parse_event
+from ata.schema import ValidationError, envelope, parse_event
 
 _RE_RENAME = re.compile(r"^/api/sessions/([^/]+)/title$")
 _RE_RUN_RENAME = re.compile(r"^/api/runs/([^/]+)/name$")
@@ -186,12 +186,8 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 meta = ledger.session(sid)
                 if meta is None:
                     return self._json(404, {"ok": False, "error": "unknown session"})
-                ev = parse_event({
-                    "v": 1, "id": uuid.uuid4().hex, "agent_id": meta["agent"],
-                    "session_id": sid, "ts": int(time.time() * 1000),
-                    "type": "session.renamed", "turn": None,
-                    "payload": {"title": title},
-                })
+                ev = parse_event(envelope(
+                    meta["agent"], sid, "session.renamed", {"title": title}))
                 ledger.append(ev)
                 return self._json(200, {"ok": True, "title": title})
             m = _RE_RUN_RENAME.match(parsed.path)
