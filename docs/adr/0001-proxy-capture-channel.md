@@ -48,3 +48,37 @@ claude transcript 侧永久缺失 SYSTEM 快照、tools 目录、每轮 usage
   发 opened 会与 transcript 适配器的 opened 抢同键）。刚开的会话里代理
   事件已入账、sessions 列表却还没有行——要等 transcript tail 扫到文件
   才浮出。这是裁决内行为，不是 bug。
+
+### 落档白名单（2026-08-27 增补）
+
+落档头白名单是 `ata/wire/storage_headers.py::record_headers_for_storage`
+的单一归属地。`x-claude-` / `x-codex-` / `x-droid-` 三个 namespace 在
+`STORAGE_HEADER_NAMESPACES` 同时声明。**绝不**把 authorization / x-api-key
+/ cookie / content-type / user-agent 列入——这些是上游网关或通用协议所需，
+不是 host 业务字段。
+
+代理壳的转发逻辑**不**动：`capture_proxy._relay` 仍按 hop-by-hop 黑名单
+过滤（host / content-length / connection / transfer-encoding），其余头
+一字不动转上游。代理是根管子，落档白名单是**账本侧**单点，与转发无关。
+
+加新 agent 走代理：在 `STORAGE_HEADER_NAMESPACES` 加一行 + 在对应适配器
+的 `_SESSION_HEADERS` 或 `_BODY_SESSION_FIELDS` 加具体提取规则。
+
+### codex / droid 反代集成边界（2026-08-27 增补）
+
+本计划只完成**接入面**：
+
+- **codex**：`_BODY_SESSION_FIELDS["codex"] = (("metadata", "session_id"),)`
+  声明；OpenAI Responses API 客户端把 session_id 放在请求体 metadata 字段，
+  走 body 路径提取。`openai_parser` 移植是后续工作（见
+  architecture-review-20260827-proxy-deepening.html 候选 3）——本计划落地后
+  codex 走代理能恢复 sessionId，但**暂未**走完整解析内核（system/tools
+  提取仍走 fallback）。
+
+- **droid**：headers 与 body 路径**都未**声明（具体头名与 body 字段待真实
+  流量回填）。droid 走代理当前 ingest_capture 抛 `ValueError` → 被吞掉
+  （进程内壳）或回 400（HTTP 端点）。这是裁决内行为，不是 bug。
+
+落档白名单 `x-droid-` namespace **占位存在**，让 STORAGE_HEADER_NAMESPACES
+含三家的事实**被一处声明**而不是散落。真实头名回填时，在
+`STORAGE_HEADER_NAMESPACES` 不动、`_SESSION_HEADERS` 加具体头名。
