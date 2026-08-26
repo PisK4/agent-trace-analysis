@@ -61,3 +61,104 @@ def count_real_user_turns(messages):
             continue
         count += 1
     return count
+
+
+from ata.plugins.common import usage_from_counts
+from ata.wire import parse_request as _wire_req
+from ata.wire import parse_response as _wire_resp
+
+#: record 形状的唯一声明（shell 与 HTTP 端点共同遵守）。
+RECORD_KEYS = frozenset({
+    "agent_id", "path", "request_headers", "request_body",
+    "response_content_type", "response_body",
+    "started_at_ms", "completed_at_ms",
+})
+
+
+def state_bucket(ledger, sid):
+    """按 session 分桶的翻译状态，挂在 ledger 上（与 _pi_states 同款约定）。"""
+    states = getattr(ledger, "_capture_states", None)
+    if states is None:
+        ledger._capture_states = {}
+        states = ledger._capture_states
+    return states.setdefault(sid, {"session_id": sid})
+
+
+def _catalog(tool_items):
+    return [
+        {
+            "name": item.get("name"),
+            "description": item.get("description"),
+            "parameters": item.get("parameters"),
+        }
+        for item in (tool_items or [])
+        if isinstance(item, dict) and item.get("name")
+    ]
+
+
+def _system_hash(prompt_text, catalog):
+    blob = json.dumps(
+        {"p": prompt_text, "t": catalog}, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def translate_capture(rec, state):
+    """一次截获的请求/响应对 → 规范事件列表。永不抛（坏输入返回 []）。"""
+    try:
+        return _translate(rec, state)
+    except Exception as exc:  # noqa: BLE001 —— 采集绝不弄挂被代理请求
+        print(f"capture translate error: {exc}")
+        return []
+
+
+def _translate(rec, state):
+    path = rec.get("path") or ""
+    body = rec.get("request_body") or b""
+    req = _wire_req(path, rec.get("request_headers") or {}, body)
+    resp = _wire_resp(path, {}, rec.get("response_content_type") or "",
+                      rec.get("response_body") or b"")
+    out = []
+    ts = int(rec.get("completed_at_ms") or rec.get("started_at_ms") or 1)
+    agent_id = rec.get("agent_id") or "claude"
+    sid = state.get("session_id")
+
+    # SYSTEM 快照 + tools 目录：只在内容变化时发（system.upserted 无自然键，
+    # 每次请求都带全文，不去重会把账本灌爆）。
+    prompt_text = "\n\n".join(req.get("system_prompts") or [])
+    catalog = _catalog(req.get("tool_items"))
+    if prompt_text:
+        h = _system_hash(prompt_text, catalog)
+        if h != state.get("system_hash"):
+            state["system_hash"] = h
+            out.append({
+                "v": 1, "id": f"{sid}:system:{h}", "agent_id": agent_id,
+                "session_id": sid, "ts": ts, "type": "system.upserted",
+                "turn": None,
+                "payload": {"prompt_text": prompt_text, "tools_catalog": catalog},
+            })
+
+    # 每轮真实 usage：轮次号 = 请求上下文真实用户消息数（与 transcript 侧
+    # bump_turn_if_real_user 同口径，两条通道才能落在同一 turn 上）。
+    usage = resp.get("usage") if isinstance(resp.get("usage"), dict) else {}
+    inp = int(usage.get("input_tokens") or 0)
+    outp = int(usage.get("output_tokens") or 0)
+    cr = int(usage.get("cache_read_input_tokens") or 0)
+    cw = int(usage.get("cache_creation_input_tokens") or 0)
+    if inp or outp or cr or cw:
+        messages = []
+        try:
+            messages = json.loads(body.decode("utf-8")).get("messages") or []
+        except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            pass
+        turn = count_real_user_turns(messages)
+        if turn >= 1:
+            rid = resp.get("response_id")
+            out.append({
+                "v": 1,
+                "id": f"{sid}:turn:{turn}:ended:{rid or ts}",
+                "agent_id": agent_id, "session_id": sid, "ts": ts,
+                "type": "turn.ended", "turn": turn,
+                "payload": {"usage": usage_from_counts(
+                    inp, outp, cr, cw, total_tokens=inp + outp + cr + cw)},
+            })
+    return out
