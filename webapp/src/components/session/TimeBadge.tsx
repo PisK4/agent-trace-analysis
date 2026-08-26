@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { TimingSummary } from '../../api/types'
 import { api } from '../../api/client'
-import { fmtDur, QUALITY_LABEL } from '../../lib/timing'
+import { fmtDur, fmtDurQ, QUALITY_LABEL } from '../../lib/timing'
 
 interface Props {
   sessionId: string
@@ -38,6 +38,8 @@ export function TimeBadge({ sessionId, onJumpTurn }: Props) {
   }, [open])
 
   if (!data) return null
+  // LLM/工具全未测量时徽章只显墙钟——「0 ms · 0 ms」会被读成实测零毫秒
+  const anyMeasured = data.llm_quality === 'measured' || data.tool_quality === 'measured'
   return (
     <span className="popwrap" ref={wrapRef}>
       <button
@@ -47,15 +49,15 @@ export function TimeBadge({ sessionId, onJumpTurn }: Props) {
         title="时间拆解：LLM 生成 vs 工具执行"
         onClick={() => setOpen(!open)}
       >
-        <b>⏱ {fmtDur(data.llm_ms)} · {fmtDur(data.tool_ms)}</b>
+        <b>⏱ {anyMeasured ? `${fmtDurQ(data.llm_ms, data.llm_quality)} · ${fmtDurQ(data.tool_ms, data.tool_quality)}` : fmtDur(data.span_ms)}</b>
       </button>
       {open && (
         <div className="pop timing-pop">
           <div className="pop-title">时间拆解</div>
           <dl className="timing-kv">
             <div><dt>墙钟</dt><dd>{fmtDur(data.span_ms)} · {data.steps} 步 · {data.turns} 轮</dd></div>
-            <div><dt>LLM</dt><dd>{fmtDur(data.llm_ms)} <span className="q">{QUALITY_LABEL[data.llm_quality]}</span></dd></div>
-            <div><dt>工具</dt><dd>{fmtDur(data.tool_ms)} <span className="q">{QUALITY_LABEL[data.tool_quality]}</span></dd></div>
+            <div><dt>LLM</dt><dd>{fmtDurQ(data.llm_ms, data.llm_quality)} <span className="q">{QUALITY_LABEL[data.llm_quality]}</span></dd></div>
+            <div><dt>工具</dt><dd>{fmtDurQ(data.tool_ms, data.tool_quality)} <span className="q">{QUALITY_LABEL[data.tool_quality]}</span></dd></div>
             <div><dt>等待/其他</dt><dd>{fmtDur(data.other_ms)}</dd></div>
           </dl>
           {data.per_turn.length > 0 && (
@@ -69,14 +71,14 @@ export function TimeBadge({ sessionId, onJumpTurn }: Props) {
                   onClick={() => { onJumpTurn(t.turn); setOpen(false) }}
                 >
                   <span className="ct">T{t.turn}</span>
-                  <span className="cd">{fmtDur(t.llm_ms)}</span>
-                  <span className="cd">{fmtDur(t.tool_ms)}</span>
+                  <span className="cd">{fmtDurQ(t.llm_ms, data.llm_quality)}</span>
+                  <span className="cd">{fmtDurQ(t.tool_ms, data.tool_quality)}</span>
                   <span className="cx">{t.steps} 步 · {t.calls} 次调用</span>
                 </button>
               ))}
             </div>
           )}
-          <div className="hint">Claude/Codex/Droid 的转录不带耗时，对应项标为占位值，只看相对量纲</div>
+          <div className="hint">— 表示来源不带耗时（未测量）；实测项按真实毫秒显示</div>
         </div>
       )}
     </span>

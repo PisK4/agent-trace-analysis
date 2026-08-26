@@ -16,3 +16,8 @@ export const QUALITY_LABEL: Record<TimingSummary['llm_quality'], string> = {
   placeholder: '占位值（来源不带耗时）',
   'n/a': '无数据',
 }
+
+/** 未测量（占位/无数据）的项显示 —，不显示 0 ms：0 会被读成实测零毫秒 */
+export function fmtDurQ(ms: number, quality: TimingSummary['llm_quality']): string {
+  return quality === 'measured' ? fmtDur(ms) : '—'
+}
