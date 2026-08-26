@@ -1050,6 +1050,23 @@
   border-radius: 7px; color: inherit; padding: 6px 10px; font-size: 13px; outline: none;
 }
 .pop .score-note:focus, .pop select:focus { border-color: var(--accent); }
+.pop select.board-input { padding: 6px 10px; font-size: 13px; }
+
+/* 归组弹层：已有归组 chips + 行内提示 */
+.assign-current { display: flex; flex-wrap: wrap; gap: 6px; }
+.assign-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px; border-radius: 999px;
+  background: var(--field); box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 11.5px;
+}
+.assign-chip .assign-task { color: var(--ink-3); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10.5px; }
+.assign-chip .assign-x {
+  border: none; background: none; color: var(--ink-3); cursor: pointer;
+  font-size: 11px; padding: 0 1px; line-height: 1;
+}
+.assign-chip .assign-x:hover { color: var(--danger, #e5484d); }
+.assign-hint { font-size: 11px; color: var(--ink-3); }
 
 .th-filters { float: right; display: inline-flex; gap: 6px; margin-left: 14px; }
 .th-filters .chip { padding: 2px 9px; font-size: 11px; }
@@ -1098,12 +1115,14 @@
   font-size: 10px; color: var(--ink-3);
 }
 .board-input {
-  height: var(--h-ghost); padding: 0 8px;
+  min-height: var(--h-ghost); padding: 0 8px;
   border: 1px solid var(--line); border-radius: 6px;
   background: var(--field); color: inherit; font-size: 12px; outline: none;
   width: 100%;
 }
 .board-input:focus { border-color: var(--accent); }
+/* select 的高度由内容+padding 决定，固定 height 会裁掉文字下半 */
+select.board-input { height: auto; padding: 6px 8px; }
 
 /* 标注行：adot · vchip · [标题+时间 / 副行 / 备注] · 动作；备注独占一行 */
 .arow {

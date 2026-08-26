@@ -5,7 +5,7 @@ import type { AssignmentEntry, RunInfo, ScoreEntry } from '../../api/types'
 import { fullTime, shortTime } from '../../lib/format'
 import { useToast } from '../toast'
 import { AnnoForm, type AnnoValue, type SessionOption } from './AnnoForm'
-import { AssignForm } from './AssignForm'
+import { AssignForm, CreateRunForm } from './AssignForm'
 import { useBoard } from './useBoard'
 
 import { api } from '../../api/client'
@@ -44,7 +44,8 @@ export function BoardView({ sessions, onOpenSession }: Props) {
   const [search, setSearch] = useState('')
   const [annoFormOpen, setAnnoFormOpen] = useState(false)
   const [editingScore, setEditingScore] = useState<ScoreEntry | null>(null)
-  const [assignFormOpen, setAssignFormOpen] = useState(false)
+  const [createRunOpen, setCreateRunOpen] = useState(false)
+  const [assignTarget, setAssignTarget] = useState<{ runId: string; taskId: string } | null>(null)
   const [openRuns, setOpenRuns] = useState<Set<string>>(new Set())
 
   const scoresBySid = useMemo(() => new Map((data?.scores ?? []).map((s) => [s.session_id, s.value])), [data])
@@ -93,7 +94,7 @@ export function BoardView({ sessions, onOpenSession }: Props) {
       `已归组：${taskId} → ${runId}`, '归组写入失败')
     if (ok) {
       toast(`已归组：${taskId} → ${runId}`)
-      setAssignFormOpen(false)
+      setAssignTarget(null)
     } else {
       toast('归组写入失败', 'err')
     }
@@ -232,14 +233,11 @@ export function BoardView({ sessions, onOpenSession }: Props) {
             <span className="cnt">{new Set(assignments.map((a) => a.run_id)).size} runs · 按任务聚合</span>
             <span className="grow" />
             <span className="popwrap">
-              <button type="button" className="ghost" disabled={!sessions.length} onClick={() => setAssignFormOpen(true)}>新建归组</button>
-              {assignFormOpen && (
-                <AssignForm
-                  sessions={sessions}
-                  runs={data.runs}
-                  onSave={saveAssign}
+              <button type="button" className="ghost" onClick={() => setCreateRunOpen(true)}>新建组</button>
+              {createRunOpen && (
+                <CreateRunForm
                   onCreateRun={createRun}
-                  onCancel={() => setAssignFormOpen(false)}
+                  onCancel={() => setCreateRunOpen(false)}
                 />
               )}
             </span>
@@ -307,13 +305,24 @@ export function BoardView({ sessions, onOpenSession }: Props) {
                                 </div>
                               )
                             })}
-                            <button
-                              type="button"
-                              className="add-sess"
-                              onClick={(e) => { e.stopPropagation(); setAssignFormOpen(true) }}
-                            >
-                              + 挂会话
-                            </button>
+                            <span className="popwrap">
+                              <button
+                                type="button"
+                                className="add-sess"
+                                onClick={(e) => { e.stopPropagation(); setAssignTarget({ runId: rid, taskId: tid }) }}
+                              >
+                                + 挂会话
+                              </button>
+                              {assignTarget?.runId === rid && assignTarget?.taskId === tid && (
+                                <AssignForm
+                                  sessions={sessions}
+                                  runId={rid}
+                                  taskId={tid}
+                                  onSave={saveAssign}
+                                  onCancel={() => setAssignTarget(null)}
+                                />
+                              )}
+                            </span>
                           </div>
                         </div>
                       ))}
@@ -321,7 +330,7 @@ export function BoardView({ sessions, onOpenSession }: Props) {
                   )}
                 </div>
               )
-            }) : <div className="board-empty">暂无归组 —— 在会话页「归组」或点右上「新建归组」</div>}
+            }) : <div className="board-empty">暂无归组 —— 点右上「新建组」建组，再在组内「挂会话」</div>}
           </div>
         </div>
       </div>

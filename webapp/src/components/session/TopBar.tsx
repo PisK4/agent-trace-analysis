@@ -3,9 +3,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, eventEnvelope } from '../../api/client'
 import type { SessionData } from '../../api/merge'
+import type { AnnotationsPage } from '../../api/types'
 import { useToast } from '../toast'
 
 const SCORES = ['good', 'bad', 'partial'] as const
+// 「＋ 新建组…」在下拉里的哨兵值
+const NEW_RUN = '__new__'
 
 interface Props {
   sessionId: string
@@ -24,19 +27,31 @@ export function TopBar({ sessionId, data, follow, onFollowChange, search, onSear
   const [assignOpen, setAssignOpen] = useState(false)
   const [note, setNote] = useState('')
   const [runs, setRuns] = useState<Array<{ run_id: string; description: string }>>([])
+  // 下拉选中的组（NEW_RUN 哨兵 = 就地建组）
   const [runId, setRunId] = useState('')
-  const [taskId, setTaskId] = useState('')
+  // 全量归组（latest-wins 后）：派生本会话已有归组
+  const [allAssigns, setAllAssigns] = useState<Array<{ session_id: string; run_id: string | null; task_id: string | null; seq: number }>>([])
+  // 选「新建组」时的就地建组输入；正在归入中的 run_id（按钮 busy 态）
+  const [newRunName, setNewRunName] = useState('')
+  const [busyRun, setBusyRun] = useState<string | null>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
 
   const latestScore = data.scores[data.scores.length - 1]
 
-  // 归组 run 列表：打开弹层时懒加载一次（旧版 ensureRunsLoaded 同策略）
+  const assigns = allAssigns
+    .filter((a) => a.session_id === sessionId && a.run_id)
+    .map((a) => ({ run_id: a.run_id as string, task_id: a.task_id }))
+
+  // 归组数据：打开弹层时懒加载 runs + 归组列表
   useEffect(() => {
-    if (!assignOpen || runs.length) return
+    if (!assignOpen) return
     let alive = true
     api.runs().then((rs) => { if (alive) setRuns(rs) }).catch(() => { /* 服务不可达时保持空下拉 */ })
+    api.annotations().then((page: AnnotationsPage) => {
+      if (alive) setAllAssigns(page.assignments)
+    }).catch(() => { /* 同上，空列表即可 */ })
     return () => { alive = false }
-  }, [assignOpen, runs.length])
+  }, [assignOpen])
 
   // 点外面收起两个弹层
   useEffect(() => {
@@ -83,19 +98,51 @@ export function TopBar({ sessionId, data, follow, onFollowChange, search, onSear
     }
   }
 
-  const submitAssign = async () => {
-    if (!runId || !taskId) {
-      toast('先选 run 并填任务 id（ata tasks list 可查）', 'err')
-      return
-    }
+  // 该组最近一次使用的任务 id（归入时自动沿用，保持任务维度聚合）
+  const lastTaskOf = (rid: string) =>
+    allAssigns.filter((a) => a.run_id === rid && a.task_id).sort((a, b) => b.seq - a.seq)[0]?.task_id ?? ''
+
+  // 点「归入」才提交；任务 id 沿用该组最近一次用的，没有则留空
+  const assignToRun = async (rid: string) => {
+    if (busyRun) return
+    const lastTask = lastTaskOf(rid)
+    setBusyRun(rid)
     try {
-      await api.appendEvent(eventEnvelope(null, sessionId, 'session.assigned', { run_id: runId, task_id: taskId }))
-      setTaskId('')
+      await api.appendEvent(eventEnvelope(null, sessionId, 'session.assigned',
+        lastTask ? { run_id: rid, task_id: lastTask } : { run_id: rid, task_id: '' }))
+      setAllAssigns((prev) => [...prev, { session_id: sessionId, run_id: rid, task_id: lastTask || null, seq: Number.MAX_SAFE_INTEGER }])
+      setRunId('')
       setAssignOpen(false)
-      toast('已归入')
+      toast(`已归入：${runs.find((r) => r.run_id === rid)?.description || rid}${lastTask ? ` · ${lastTask}` : ''}`)
       onRefresh()
     } catch (err) {
       toast(`归组失败：${String(err)}`, 'err')
+    } finally {
+      setBusyRun(null)
+    }
+  }
+
+  const createRunHere = async () => {
+    const name = newRunName.trim()
+    if (!name) return
+    try {
+      const { run_id: rid } = await api.createRun(name)
+      setRuns((prev) => [...prev, { run_id: rid, description: name }])
+      setNewRunName('')
+      toast(`已建组：${name}`)
+    } catch (err) {
+      toast(`建组失败：${String(err)}`, 'err')
+    }
+  }
+
+  const unassign = async (rid: string) => {
+    try {
+      await api.appendEvent(eventEnvelope(null, sessionId, 'session.unassigned', { run_id: rid }))
+      setAllAssigns((prev) => prev.filter((a) => !(a.session_id === sessionId && a.run_id === rid)))
+      toast('已移出归组')
+      onRefresh()
+    } catch (err) {
+      toast(`移出失败：${String(err)}`, 'err')
     }
   }
 
@@ -153,22 +200,74 @@ export function TopBar({ sessionId, data, follow, onFollowChange, search, onSear
         </button>
         {assignOpen && (
           <div className="pop" id="assignBox">
-            <div className="pop-title">归组到回归轮次</div>
-            <select value={runId} onChange={(e) => setRunId(e.target.value)}>
-              <option value="">选 run…</option>
+            <div className="pop-title">归组：点组名即把本会话挂进去</div>
+
+            {/* 已有归组：可见、可移出 */}
+            {assigns.length > 0 && (
+              <div className="assign-current">
+                {assigns.map((a) => {
+                  const run = runs.find((r) => r.run_id === a.run_id)
+                  return (
+                    <span key={a.run_id} className="assign-chip">
+                      {run?.description || a.run_id}
+                      {a.task_id ? <span className="assign-task"> · {a.task_id}</span> : null}
+                      <button type="button" className="assign-x" title="移出该组"
+                        onClick={() => void unassign(a.run_id)}>✕</button>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* 下拉选组：组名单行显示；任务 id 自动沿用该组最近一次用的，不用填 */}
+            <select
+              className="board-input"
+              aria-label="选择组"
+              value={runId}
+              onChange={(e) => {
+                const v = e.target.value
+                setRunId(v)
+                if (v === NEW_RUN) setNewRunName('')
+              }}
+            >
+              <option value="">{runs.length ? '选择组…' : '还没有组，选「＋ 新建组…」'}</option>
               {runs.map((r) => (
-                <option key={r.run_id} value={r.run_id}>{r.run_id} · {r.description}</option>
+                <option key={r.run_id} value={r.run_id}>
+                  {r.description || r.run_id}{assigns.some((a) => a.run_id === r.run_id) ? '（已归入）' : ''}
+                </option>
               ))}
+              <option value={NEW_RUN}>＋ 新建组…</option>
             </select>
-            <input
-              className="score-note"
-              type="text"
-              placeholder="任务 id（t-xxxx）"
-              maxLength={40}
-              value={taskId}
-              onChange={(e) => setTaskId(e.target.value)}
-            />
-            <button type="button" className="ghost" onClick={() => void submitAssign()}>归入</button>
+
+            {/* 选了「＋ 新建组…」→ 就地建组；选了普通组 → 归入按钮 */}
+            {runId === NEW_RUN ? (
+              <div className="pop-row">
+                <input
+                  className="board-input"
+                  type="text"
+                  placeholder="新组名（中英文皆可）"
+                  maxLength={60}
+                  autoFocus
+                  style={{ flex: 1 }}
+                  value={newRunName}
+                  onChange={(e) => setNewRunName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void createRunHere() }}
+                />
+                <button type="button" className="ghost" disabled={!newRunName.trim()} onClick={() => void createRunHere()}>创建</button>
+              </div>
+            ) : (
+              runId && (
+                <div className="pop-row">
+                  <button type="button" className="ghost primary-btn" disabled={busyRun === runId}
+                    onClick={() => void assignToRun(runId)}>
+                    {busyRun === runId ? '归入中…' : '归入'}
+                  </button>
+                  {lastTaskOf(runId) && (
+                    <span className="assign-hint" style={{ alignSelf: 'center' }}>任务 id 自动沿用：{lastTaskOf(runId)}</span>
+                  )}
+                </div>
+              )
+            )}
           </div>
         )}
       </span>
