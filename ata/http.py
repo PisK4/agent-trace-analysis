@@ -225,6 +225,12 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 ledger._pi_states = {}
                 state = ledger._pi_states
             bucket = state.setdefault(sid, {"session_id": sid})
+            event = raw.get("event") or {}
+            # pi 运行时多数 hook 事件不带 timestamp（类型上只有 turn_start 有），
+            # 翻译层只能回退 state 里的旧 ts，start/end 会拿到同一时刻、duration
+            # 恒 0。hook 按到达序处理即事件序，缺 timestamp 时打上到达时刻。
+            if not event.get("timestamp"):
+                event = {**event, "timestamp": int(time.time() * 1000)}
             ctx = {
                 "session_id": sid,
                 "title": raw.get("title") or sid,
@@ -235,7 +241,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 "lineage": raw.get("lineage") or {},
             }
             try:
-                events = translate_hook(raw["name"], raw.get("event") or {}, ctx, bucket)
+                events = translate_hook(raw["name"], event, ctx, bucket)
                 seqs = []
                 for ev in events:
                     parsed = parse_event(ev)
