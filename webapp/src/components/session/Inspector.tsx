@@ -293,9 +293,18 @@ interface Props {
   sessionId: string
   selectedId: string | null
   onJump: (id: string) => void
+  /** 详情栏宽度（px）；null = 用 CSS 默认 clamp(320px,38%,440px) */
+  width: number | null
+  /** 拖拽/双击复位时回传新宽度；持久化由父层负责 */
+  onWidthChange: (w: number | null) => void
 }
 
-export function Inspector({ rows, toolsIndex, sessionId, selectedId, onJump }: Props) {
+// 与旧版 web/js/util.js 同参：拖宽边界与表格最小宽度，防止把轨迹列挤没。
+const DETAILS_MIN = 320
+const DETAILS_MAX = 720
+const TABLE_MIN = 280
+
+export function Inspector({ rows, toolsIndex, sessionId, selectedId, onJump, width, onWidthChange }: Props) {
   // tab 记忆：换选中优先恢复用户去过的 tab（旧版 rememberTab/restoreTab）
   // tab 历史：换选中优先恢复用户去过的 tab（旧版 rememberTab/restoreTab）
   const [tabHistory, setTabHistory] = useState<string[]>(['summary'])
@@ -317,8 +326,38 @@ export function Inspector({ rows, toolsIndex, sessionId, selectedId, onJump }: P
     setTabHistory((prev) => prev.filter((x) => x !== t).concat(t))
   }
 
+  // 左缘拖宽（旧版 resize pointer 三件套同语义）：pointer capture 保证移出
+  // 把手仍持续收到 move；双击复位交还 CSS 默认宽度。
+  const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number; splitWidth: number } | null>(null)
+  const clampWidth = (w: number, splitW: number) =>
+    Math.min(Math.max(w, DETAILS_MIN), Math.min(DETAILS_MAX, splitW - TABLE_MIN))
+
   return (
-    <aside className="details">
+    <aside className="details" style={width != null ? { width } : undefined}>
+      <div
+        className="resize"
+        role="separator"
+        aria-orientation="vertical"
+        onPointerDown={(e) => {
+          if (e.button !== 0) return
+          e.currentTarget.setPointerCapture(e.pointerId)
+          const aside = e.currentTarget.parentElement as HTMLElement
+          dragRef.current = {
+            pointerId: e.pointerId,
+            startX: e.clientX,
+            startWidth: aside.getBoundingClientRect().width,
+            splitWidth: (aside.parentElement as HTMLElement).getBoundingClientRect().width,
+          }
+          e.preventDefault()
+        }}
+        onPointerMove={(e) => {
+          const d = dragRef.current
+          if (!d || d.pointerId !== e.pointerId) return
+          onWidthChange(clampWidth(d.startWidth + d.startX - e.clientX, d.splitWidth))
+        }}
+        onPointerUp={(e) => { dragRef.current = null; e.currentTarget.releasePointerCapture(e.pointerId) }}
+        onDoubleClick={() => onWidthChange(null)}
+      />
       <ContextDrawer rows={rows} sessionId={sessionId} />
       {row && target && tab ? (
         <>

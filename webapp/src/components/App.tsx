@@ -32,6 +32,15 @@ export function App() {
     return () => { alive = false }
   }, [])
 
+  // 侧栏轮询：新 agent 会话出现时无需刷新页面（旧版 pollSessions 5s 同频；
+  // 失败静默——首轮失败已由 loadError 提示，后续恢复即自动补上）
+  useEffect(() => {
+    const t = setInterval(() => {
+      api.listSessions().then((list) => setSessions(list)).catch(() => {})
+    }, 5000)
+    return () => clearInterval(t)
+  }, [])
+
   const agents = useMemo(
     () => [...new Set(sessions.map((s) => s.agent))],
     [sessions],

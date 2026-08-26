@@ -30,6 +30,13 @@ export function SessionView({ sessionId }: Props) {
   const [follow, setFollow] = useState(true)
   const [search, setSearch] = useState('')
   const [titleOverride, setTitleOverride] = useState<{ title: string; crumb: string } | null>(null)
+  // 详情栏宽度/折叠态跨会话记忆（旧版 ata.detailsWidth / ata.detailsCollapsed 同键）
+  const [detailsWidth, setDetailsWidth] = useState<number | null>(() => {
+    try { return Number(localStorage.getItem('ata.detailsWidth')) || null } catch { return null }
+  })
+  const [detailsCollapsed, setDetailsCollapsed] = useState(() => {
+    try { return localStorage.getItem('ata.detailsCollapsed') === 'true' } catch { return false }
+  })
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   // loadOlder 前插后补偿滚动差，视觉位置不跳
   const scrollBeforeLoad = useRef<{ height: number; top: number } | null>(null)
@@ -206,12 +213,30 @@ export function SessionView({ sessionId }: Props) {
             />
           )}
         </div>
-        <Inspector
-          rows={data.rows}
-          toolsIndex={data.toolsIndex}
-          sessionId={sessionId}
-          selectedId={selectedId}
-          onJump={jumpToId}
+        {!detailsCollapsed && (
+          <Inspector
+            rows={data.rows}
+            toolsIndex={data.toolsIndex}
+            sessionId={sessionId}
+            selectedId={selectedId}
+            onJump={jumpToId}
+            width={detailsWidth}
+            onWidthChange={(w) => {
+              setDetailsWidth(w)
+              try { if (w == null) localStorage.removeItem('ata.detailsWidth'); else localStorage.setItem('ata.detailsWidth', String(w)) } catch { /* 隐私模式等存储不可用 */ }
+            }}
+          />
+        )}
+        {/* 右缘细把手：折叠/展开详情栏，折叠后把手留在屏幕右缘（旧版同款） */}
+        <button
+          type="button"
+          className="collapse-handle"
+          title={detailsCollapsed ? '展开详情栏' : '收起详情栏'}
+          aria-label={detailsCollapsed ? '展开详情栏' : '收起详情栏'}
+          onClick={() => {
+            setDetailsCollapsed(!detailsCollapsed)
+            try { localStorage.setItem('ata.detailsCollapsed', String(!detailsCollapsed)) } catch { /* 同上 */ }
+          }}
         />
       </section>
     </>
