@@ -95,6 +95,12 @@ class TestRoutes(unittest.TestCase):
         code, out = self.get("/api/sessions/conv/compactions")
         self.assertEqual(out["compactions"], [])
 
+    def test_usage_endpoint_twice_same_body(self):
+        """rev 未变时二次请求应命中缓存且响应体一致（外部形状冻结的回归锚）。"""
+        first = self.get("/api/sessions/conv/usage")
+        second = self.get("/api/sessions/conv/usage")
+        self.assertEqual(first, second)
+
     def test_timing_endpoint(self):
         code, out = self.get("/api/sessions/conv/timing")
         self.assertEqual(code, 200)
