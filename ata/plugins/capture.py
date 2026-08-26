@@ -162,3 +162,24 @@ def _translate(rec, state):
                     inp, outp, cr, cw, total_tokens=inp + outp + cr + cw)},
             })
     return out
+
+
+def ingest_capture(ledger, rec):
+    """解析 → 校验 → 入账本。返回写入数；校验失败抛 ValidationError。
+
+    身份规则在此收口：恢复不出宿主 sessionId 就抛错丢弃（进程内壳吞掉，
+    HTTP 端点回 400），绝不造 sid 新建孤儿会话。
+    """
+    from ata.schema import parse_event
+
+    headers = rec.get("request_headers") or {}
+    agent_id = rec.get("agent_id") or "claude"
+    sid = resolve_session_id(headers, agent_id)
+    if not sid:
+        raise ValueError("capture: no host session id; dropping (no orphan sessions)")
+    state = state_bucket(ledger, sid)
+    state["session_id"] = sid
+    events = [parse_event(ev) for ev in translate_capture(rec, state)]
+    if events:
+        ledger.append_many(events)
+    return len(events)
