@@ -8,9 +8,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 type Listener = () => void
 const listeners = new Set<Listener>()
 
-/** live tailing 检测到数据变化时通知全部 useSummary 消费者重新拉取。 */
+/** live tailing 检测到数据变化时通知全部消费者重新拉取。 */
 export function nudgeSummaries(): void {
   for (const l of listeners) l()
+}
+
+/** 订阅数据变化广播（标注板等非 useSummary 消费者用），返回退订函数。 */
+export function onSummariesChanged(listener: Listener): () => void {
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
 }
 
 export function useSummary<T>(

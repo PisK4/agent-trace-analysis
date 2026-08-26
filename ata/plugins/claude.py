@@ -5,6 +5,7 @@ from datetime import datetime
 from ata.plugins.common import (
     PLACEHOLDER_MS,
     bump_turn_if_real_user,
+    is_context_text,
     make_ev,
     tool_end_payload,
     tool_start_payload,
@@ -12,7 +13,6 @@ from ata.plugins.common import (
     usage_missing,
 )
 from ata.plugins.jsonl import translate_file as _jfile
-from ata.project import is_context_text
 
 
 def translate_line(raw: dict, state: dict) -> list[dict]:

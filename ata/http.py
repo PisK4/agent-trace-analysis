@@ -8,29 +8,238 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import re
 
+from ata.ingest import PiHookStates
 from ata.plugins.pi import translate_hook
 from ata.projection_cache import ProjectionCache
 from ata.project import audit_usage, list_compactions, list_tools, project_session, summarize_timing, summarize_tools, summarize_usage, tail_preview
 from ata.schema import ValidationError, envelope, parse_event
 
-_RE_RENAME = re.compile(r"^/api/sessions/([^/]+)/title$")
-_RE_RUN_RENAME = re.compile(r"^/api/runs/([^/]+)/name$")
 
-
-def make_server(ledger, webroot, host="127.0.0.1", port=8787):
+def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
     webroot = Path(webroot)
     cache = ProjectionCache()
+    pi_states = PiHookStates() if pi_states is None else pi_states
 
-    def cached_summary(sid, kind):
-        """便捷层统一入口：rev 门控 + read。rev 取自 session 行，
-        调用前已确保会话存在；缓存的是事件记录，body 组装每请求执行。"""
+    def cached_summary(sid):
+        """便捷层统一入口：rev 门控 + read。rev 取自 session 行，调用前已确保
+        会话存在；缓存的是事件记录（键即 session_id——四个端点的 compute 是
+        同一份 read，同会话同 rev 只持一份快照），body 组装每请求执行。"""
         meta = ledger.session(sid)
-        return cache.get_or_compute(sid, int(meta["last_seq"]), kind,
+        return cache.get_or_compute(sid, int(meta["last_seq"]),
                                     lambda: ledger.read(sid))
 
-    def summary_response(sid, kind, fn):
-        recs = cached_summary(sid, kind)
-        return fn(recs)
+    # ── 路由表（架构评审二轮候选 4）：(method, pattern) → handler。
+    # handler(match, qs, body) 返回 (code, payload)；qs 已 parse_qs。
+    # 新端点 = 表里加一行；404/400/CORS 纪律在 dispatch 一处。外部形状冻结。
+
+    def h_health(m, qs, body):
+        return 200, {"ok": True}
+
+    def h_runs(m, qs, body):
+        assigns = ledger.assign_events()
+        out = []
+        for r in ledger.runs():
+            r["assignment_count"] = sum(
+                1 for a in assigns if a.get("run_id") == r["run_id"])
+            out.append(r)
+        return 200, out
+
+    def h_run_detail(m, qs, body):
+        rid = m["rid"]
+        run = ledger.run(rid)
+        if run is None:
+            return 404, {"ok": False, "error": "unknown run"}
+        run["assignments"] = [
+            a for a in ledger.assign_events() if a.get("run_id") == rid]
+        return 200, {"ok": True, **run}
+
+    def h_sessions(m, qs, body):
+        return 200, ledger.sessions()
+
+    def h_annotations(m, qs, body):
+        return 200, {"ok": True, **ledger.annotations()}
+
+    def h_session(m, qs, body):
+        # 与旧版 rest.partition("/") 同语义：sub 只取第一段
+        sid, _, sub = m["rest"].partition("/")
+        meta = ledger.session(sid)
+        if meta is None:
+            return 404, {"ok": False, "error": "unknown session"}
+        if sub == "":
+            limit = int(qs.get("limit", ["80"])[0])
+            before = qs.get("before", [None])[0]
+            before = int(before) if before not in (None, "") else None
+            # rev 门控：last_seq 未变（无任何事件追加/幂等折叠/改名/标注）时
+            # 跳过全量投影，返回几十字节的 unchanged；前端据此零重绘。
+            # last_seq 随每次 append 单调递增，天然是会话级版本号。
+            rev = qs.get("rev", [None])[0]
+            if not before and rev not in (None, ""):
+                try:
+                    if int(rev) == int(meta["last_seq"]):
+                        return 200, {"ok": True, "unchanged": True,
+                                     "rev": int(meta["last_seq"])}
+                except ValueError:
+                    pass
+            recs = ledger.read(sid)
+            page = project_session(sid, meta["agent"], recs, tail=limit, before=before)
+            page["rev"] = int(meta["last_seq"])
+            return 200, page
+        if sub == "events":
+            after = int(qs.get("after_seq", ["0"])[0])
+            limit = min(int(qs.get("limit", ["100"])[0]), 500)
+            picked = [r for r in ledger.read(sid) if r["seq"] > after][:limit]
+            nxt = picked[-1]["seq"] if picked else after
+            return 200, {"ok": True, "events": picked, "next_after_seq": nxt}
+        if sub == "lineage":
+            return 200, {"ok": True,
+                         "ancestors": ledger.ancestry(sid),
+                         "children": ledger.children(sid)}
+        if sub == "usage":
+            def usage_body(recs):
+                compactions = [{"turn": r["event"].get("turn"), "seq": r["seq"]}
+                               for r in recs if r["event"]["type"] == "compaction.boundary"]
+                return {"ok": True, **summarize_usage(recs),
+                        "audit": audit_usage(recs),
+                        "compactions": compactions}
+            return 200, summary_body(sid, usage_body)
+        if sub == "tools":
+            full = qs.get("full", ["false"])[0] == "true"
+            def tools_body(recs):
+                rows = list_tools(recs,
+                                  qs.get("status", [None])[0],
+                                  qs.get("name", [None])[0])
+                for r in rows:
+                    r["result"] = r["result"] if full else tail_preview(r["result"])
+                return {"ok": True, "tools": rows}
+            return 200, summary_body(sid, tools_body)
+        if sub == "tool-stats":
+            return 200, summary_body(sid, lambda recs: {"ok": True, **summarize_tools(recs)})
+        if sub == "timing":
+            return 200, summary_body(sid, lambda recs: {"ok": True, **summarize_timing(recs)})
+        if sub == "compactions":
+            full = qs.get("full", ["false"])[0] == "true"
+            rows = list_compactions(ledger.read(sid))
+            for r in rows:
+                r["summary"] = r["summary"] if full else tail_preview(r["summary"])
+            return 200, {"ok": True, "compactions": rows}
+        return 404, {"ok": False, "error": "not found"}
+
+    def summary_body(sid, fn):
+        return fn(cached_summary(sid))
+
+    def h_pi_hooks(m, qs, body):
+        if not isinstance(body, dict) or "name" not in body:
+            return 400, {"ok": False, "error": "hook name required"}
+        sid = body.get("session_id")
+        if not sid:
+            return 400, {"ok": False, "error": "session_id required"}
+        bucket = pi_states.bucket(sid)
+        event = body.get("event") or {}
+        # pi 运行时多数 hook 事件不带 timestamp（类型上只有 turn_start 有），
+        # 翻译层只能回退 state 里的旧 ts，start/end 会拿到同一时刻、duration
+        # 恒 0。hook 按到达序处理即事件序，缺 timestamp 时打上到达时刻。
+        if not event.get("timestamp"):
+            event = {**event, "timestamp": int(time.time() * 1000)}
+        ctx = {
+            "session_id": sid,
+            "title": body.get("title") or sid,
+            "agent_id": body.get("agent_id"),
+            "host": body.get("host"),
+            "runtime": body.get("runtime"),
+            "channel": body.get("channel"),
+            "lineage": body.get("lineage") or {},
+        }
+        try:
+            events = translate_hook(body["name"], event, ctx, bucket)
+            seqs = []
+            for ev in events:
+                parsed = parse_event(ev)
+                print("append %s %s %s" % (parsed["type"], parsed["id"], parsed["session_id"]))
+                seqs.append(ledger.append(parsed))
+        except (ValidationError, TypeError, ValueError) as exc:
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "count": len(seqs), "seq": seqs[-1] if seqs else None}
+
+    def h_create_run(m, qs, body):
+        if not isinstance(body, dict) or not (body.get("description") or "").strip():
+            return 400, {"ok": False, "error": "description required"}
+        rid = "r-" + uuid.uuid4().hex[:8]
+        try:
+            ledger.create_run(rid, body["description"].strip(),
+                              body.get("taskset_fingerprint"))
+        except ValueError as exc:
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "run_id": rid}
+
+    def h_rename_session(m, qs, body):
+        # 会话改名：服务端组一个 session.renamed 事件入账本，前端不必自己造 id/ts。
+        sid = m["sid"]
+        title = (body.get("title") or "").strip() if isinstance(body, dict) else ""
+        if not title:
+            return 400, {"ok": False, "error": "title required"}
+        meta = ledger.session(sid)
+        if meta is None:
+            return 404, {"ok": False, "error": "unknown session"}
+        ev = parse_event(envelope(
+            meta["agent"], sid, "session.renamed", {"title": title}))
+        ledger.append(ev)
+        return 200, {"ok": True, "title": title}
+
+    def h_rename_run(m, qs, body):
+        name = (body.get("name") or "").strip() if isinstance(body, dict) else ""
+        # 允许清空：空组名回退显示 run_id
+        if not ledger.rename_run(m["rid"], name):
+            return 404, {"ok": False, "error": "unknown run"}
+        return 200, {"ok": True, "name": name}
+
+    def h_append_events(m, qs, body):
+        items = body.get("events") if isinstance(body, dict) and "events" in body else [body]
+        seqs = []
+        try:
+            for item in items:
+                ev = parse_event(item)
+                print("append %s %s %s" % (ev["type"], ev["id"], ev["session_id"]))
+                seqs.append(ledger.append(ev))
+        except (ValidationError, TypeError, ValueError) as exc:
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "seq": seqs[-1] if seqs else 0, "seqs": seqs}
+
+    def h_capture(m, qs, body):
+        # 代理采集通道的 HTTP 入口（外部壳/测试用）：record 的 JSON 形式，
+        # request_body/response_body 为 base64（JSON 不安全字节）。
+        from ata.plugins.capture import RECORD_KEYS, ingest_capture
+        if not isinstance(body, dict):
+            return 400, {"ok": False, "error": "capture record must be object"}
+        missing = RECORD_KEYS - set(body)
+        if missing:
+            return 400, {"ok": False, "error": f"missing {sorted(missing)}"}
+        import base64
+        rec = dict(body)
+        for key in ("request_body", "response_body"):
+            try:
+                rec[key] = base64.b64decode(body.get(key) or "")
+            except Exception:
+                return 400, {"ok": False, "error": f"{key} must be base64"}
+        try:
+            count = ingest_capture(ledger, rec)
+        except (ValidationError, TypeError, ValueError) as exc:
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "count": count}
+
+    ROUTES = [
+        ("GET", re.compile(r"^/api/health$"), h_health),
+        ("GET", re.compile(r"^/api/runs$"), h_runs),
+        ("GET", re.compile(r"^/api/runs/(?P<rid>.+)$"), h_run_detail),
+        ("GET", re.compile(r"^/api/sessions$"), h_sessions),
+        ("GET", re.compile(r"^/api/annotations$"), h_annotations),
+        ("GET", re.compile(r"^/api/sessions/(?P<rest>.+)$"), h_session),
+        ("POST", re.compile(r"^/api/captures$"), h_capture),
+        ("POST", re.compile(r"^/api/pi-hooks$"), h_pi_hooks),
+        ("POST", re.compile(r"^/api/runs$"), h_create_run),
+        ("POST", re.compile(r"^/api/runs/(?P<rid>[^/]+)/name$"), h_rename_run),
+        ("POST", re.compile(r"^/api/sessions/(?P<sid>[^/]+)/title$"), h_rename_session),
+        ("POST", re.compile(r"^/api/events$"), h_append_events),
+    ]
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
@@ -62,98 +271,31 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
             self.send_header("Access-Control-Allow-Headers", "content-type")
             self.end_headers()
 
-        def do_GET(self):
+        def _dispatch(self, method):
             parsed = urlparse(self.path)
-            path = parsed.path
-            if path == "/api/health":
-                return self._json(200, {"ok": True})
-            if path == "/api/runs":
-                assigns = ledger.assign_events()
-                out = []
-                for r in ledger.runs():
-                    r["assignment_count"] = sum(
-                        1 for a in assigns if a.get("run_id") == r["run_id"])
-                    out.append(r)
-                return self._json(200, out)
-            if path.startswith("/api/runs/"):
-                rid = path[len("/api/runs/"):]
-                run = ledger.run(rid)
-                if run is None:
-                    return self._json(404, {"ok": False, "error": "unknown run"})
-                run["assignments"] = [
-                    a for a in ledger.assign_events() if a.get("run_id") == rid]
-                return self._json(200, {"ok": True, **run})
-            if path == "/api/sessions":
-                return self._json(200, _list_sessions(ledger))
-            if path == "/api/annotations":
-                return self._json(200, {"ok": True, **ledger.annotations()})
-            if path.startswith("/api/sessions/"):
-                rest = path[len("/api/sessions/"):]
-                sid, _, sub = rest.partition("/")
-                qs = parse_qs(parsed.query)
-                meta = ledger.session(sid)
-                if meta is None:
-                    return self._json(404, {"ok": False, "error": "unknown session"})
-                if sub == "":
-                    limit = int(qs.get("limit", ["80"])[0])
-                    before = qs.get("before", [None])[0]
-                    before = int(before) if before not in (None, "") else None
-                    # rev 门控：last_seq 未变（无任何事件追加/幂等折叠/改名/标注）时
-                    # 跳过全量投影，返回几十字节的 unchanged；前端据此零重绘。
-                    # last_seq 随每次 append 单调递增，天然是会话级版本号。
-                    rev = qs.get("rev", [None])[0]
-                    if not before and rev not in (None, ""):
-                        try:
-                            if int(rev) == int(meta["last_seq"]):
-                                return self._json(200, {"ok": True, "unchanged": True,
-                                                        "rev": int(meta["last_seq"])})
-                        except ValueError:
-                            pass
-                    recs = ledger.read(sid)
-                    page = project_session(sid, meta["agent"], recs, tail=limit, before=before)
-                    page["rev"] = int(meta["last_seq"])
-                    return self._json(200, page)
-                if sub == "events":
-                    after = int(qs.get("after_seq", ["0"])[0])
-                    limit = min(int(qs.get("limit", ["100"])[0]), 500)
-                    picked = [r for r in ledger.read(sid) if r["seq"] > after][:limit]
-                    nxt = picked[-1]["seq"] if picked else after
-                    return self._json(200, {"ok": True, "events": picked, "next_after_seq": nxt})
-                if sub == "lineage":
-                    return self._json(200, {"ok": True,
-                                            "ancestors": ledger.ancestry(sid),
-                                            "children": ledger.children(sid)})
-                if sub == "usage":
-                    def usage_body(recs):
-                        compactions = [{"turn": r["event"].get("turn"), "seq": r["seq"]}
-                                       for r in recs if r["event"]["type"] == "compaction.boundary"]
-                        return {"ok": True, **summarize_usage(recs),
-                                "audit": audit_usage(recs),
-                                "compactions": compactions}
-                    return self._json(200, summary_response(sid, "usage", usage_body))
-                if sub == "tools":
-                    full = qs.get("full", ["false"])[0] == "true"
-                    def tools_body(recs):
-                        rows = list_tools(recs,
-                                          qs.get("status", [None])[0],
-                                          qs.get("name", [None])[0])
-                        for r in rows:
-                            r["result"] = r["result"] if full else tail_preview(r["result"])
-                        return {"ok": True, "tools": rows}
-                    return self._json(200, summary_response(sid, "tools", tools_body))
-                if sub == "tool-stats":
-                    return self._json(200, summary_response(sid, "tool-stats",
-                                                            lambda recs: {"ok": True, **summarize_tools(recs)}))
-                if sub == "timing":
-                    return self._json(200, summary_response(sid, "timing",
-                                                            lambda recs: {"ok": True, **summarize_timing(recs)}))
-                if sub == "compactions":
-                    full = qs.get("full", ["false"])[0] == "true"
-                    rows = list_compactions(ledger.read(sid))
-                    for r in rows:
-                        r["summary"] = r["summary"] if full else tail_preview(r["summary"])
-                    return self._json(200, {"ok": True, "compactions": rows})
+            qs = parse_qs(parsed.query)
+            body = None
+            if method == "POST":
+                length = int(self.headers.get("Content-Length") or 0)
+                try:
+                    body = json.loads(self.rfile.read(length) or b"{}")
+                except json.JSONDecodeError as exc:
+                    return self._json(400, {"ok": False, "error": str(exc)})
+            for route_method, pattern, handler in ROUTES:
+                if route_method != method:
+                    continue
+                m = pattern.match(parsed.path)
+                if m:
+                    code, payload = handler(m.groupdict(), qs, body)
+                    return self._json(code, payload)
+            if method != "GET":
                 return self._json(404, {"ok": False, "error": "not found"})
+            return self._serve_static(parsed.path)
+
+        do_GET = lambda self: self._dispatch("GET")
+        do_POST = lambda self: self._dispatch("POST")
+
+        def _serve_static(self, path):
             if path in ("/", "/index.html"):
                 target = webroot / "index.html"
                 if not target.exists():
@@ -173,123 +315,5 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 ctype = "text/html; charset=utf-8" if target.suffix == ".html" else f"image/{target.suffix.lstrip('.')}"
             return self._bytes(200, target.read_bytes(), ctype)
 
-        def do_POST(self):
-            parsed = urlparse(self.path)
-            length = int(self.headers.get("Content-Length") or 0)
-            try:
-                raw = json.loads(self.rfile.read(length) or b"{}")
-            except json.JSONDecodeError as exc:
-                return self._json(400, {"ok": False, "error": str(exc)})
-            if parsed.path == "/api/captures":
-                return self._ingest_capture(raw)
-            if parsed.path == "/api/pi-hooks":
-                return self._ingest_pi_hooks(raw)
-            if parsed.path == "/api/runs":
-                if not isinstance(raw, dict) or not (raw.get("description") or "").strip():
-                    return self._json(400, {"ok": False, "error": "description required"})
-                rid = "r-" + uuid.uuid4().hex[:8]
-                try:
-                    ledger.create_run(rid, raw["description"].strip(),
-                                      raw.get("taskset_fingerprint"))
-                except ValueError as exc:
-                    return self._json(400, {"ok": False, "error": str(exc)})
-                return self._json(200, {"ok": True, "run_id": rid})
-            # 会话改名：服务端组一个 session.renamed 事件入账本，前端不必自己造 id/ts。
-            m = _RE_RENAME.match(parsed.path)
-            if m:
-                sid = m.group(1)
-                title = (raw.get("title") or "").strip() if isinstance(raw, dict) else ""
-                if not title:
-                    return self._json(400, {"ok": False, "error": "title required"})
-                meta = ledger.session(sid)
-                if meta is None:
-                    return self._json(404, {"ok": False, "error": "unknown session"})
-                ev = parse_event(envelope(
-                    meta["agent"], sid, "session.renamed", {"title": title}))
-                ledger.append(ev)
-                return self._json(200, {"ok": True, "title": title})
-            m = _RE_RUN_RENAME.match(parsed.path)
-            if m:
-                name = (raw.get("name") or "").strip() if isinstance(raw, dict) else ""
-                # 允许清空：空组名回退显示 run_id
-                if not ledger.rename_run(m.group(1), name):
-                    return self._json(404, {"ok": False, "error": "unknown run"})
-                return self._json(200, {"ok": True, "name": name})
-            if parsed.path != "/api/events":
-                return self._json(404, {"ok": False, "error": "not found"})
-            items = raw.get("events") if isinstance(raw, dict) and "events" in raw else [raw]
-            seqs = []
-            try:
-                for item in items:
-                    ev = parse_event(item)
-                    print("append %s %s %s" % (ev["type"], ev["id"], ev["session_id"]))
-                    seqs.append(ledger.append(ev))
-            except (ValidationError, TypeError, ValueError) as exc:
-                return self._json(400, {"ok": False, "error": str(exc)})
-            return self._json(200, {"ok": True, "seq": seqs[-1] if seqs else 0, "seqs": seqs})
-
-        def _ingest_capture(self, raw):
-            # 代理采集通道的 HTTP 入口（外部壳/测试用）：record 的 JSON 形式，
-            # request_body/response_body 为 base64（JSON 不安全字节）。
-            from ata.plugins.capture import RECORD_KEYS, ingest_capture
-            if not isinstance(raw, dict):
-                return self._json(400, {"ok": False, "error": "capture record must be object"})
-            missing = RECORD_KEYS - set(raw)
-            if missing:
-                return self._json(400, {"ok": False, "error": f"missing {sorted(missing)}"})
-            import base64
-            rec = dict(raw)
-            for key in ("request_body", "response_body"):
-                try:
-                    rec[key] = base64.b64decode(raw.get(key) or "")
-                except Exception:
-                    return self._json(400, {"ok": False, "error": f"{key} must be base64"})
-            try:
-                count = ingest_capture(ledger, rec)
-            except (ValidationError, TypeError, ValueError) as exc:
-                return self._json(400, {"ok": False, "error": str(exc)})
-            return self._json(200, {"ok": True, "count": count})
-
-        def _ingest_pi_hooks(self, raw):
-            if not isinstance(raw, dict) or "name" not in raw:
-                return self._json(400, {"ok": False, "error": "hook name required"})
-            sid = raw.get("session_id")
-            if not sid:
-                return self._json(400, {"ok": False, "error": "session_id required"})
-            state = getattr(ledger, "_pi_states", None)
-            if state is None:
-                ledger._pi_states = {}
-                state = ledger._pi_states
-            bucket = state.setdefault(sid, {"session_id": sid})
-            event = raw.get("event") or {}
-            # pi 运行时多数 hook 事件不带 timestamp（类型上只有 turn_start 有），
-            # 翻译层只能回退 state 里的旧 ts，start/end 会拿到同一时刻、duration
-            # 恒 0。hook 按到达序处理即事件序，缺 timestamp 时打上到达时刻。
-            if not event.get("timestamp"):
-                event = {**event, "timestamp": int(time.time() * 1000)}
-            ctx = {
-                "session_id": sid,
-                "title": raw.get("title") or sid,
-                "agent_id": raw.get("agent_id"),
-                "host": raw.get("host"),
-                "runtime": raw.get("runtime"),
-                "channel": raw.get("channel"),
-                "lineage": raw.get("lineage") or {},
-            }
-            try:
-                events = translate_hook(raw["name"], event, ctx, bucket)
-                seqs = []
-                for ev in events:
-                    parsed = parse_event(ev)
-                    print("append %s %s %s" % (parsed["type"], parsed["id"], parsed["session_id"]))
-                    seqs.append(ledger.append(parsed))
-            except (ValidationError, TypeError, ValueError) as exc:
-                return self._json(400, {"ok": False, "error": str(exc)})
-            return self._json(200, {"ok": True, "count": len(seqs), "seq": seqs[-1] if seqs else None})
-
     httpd = ThreadingHTTPServer((host, port), Handler)
     return httpd
-
-
-def _list_sessions(ledger):
-    return ledger.sessions()

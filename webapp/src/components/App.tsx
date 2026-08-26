@@ -4,18 +4,19 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client'
 import type { SessionMeta } from '../api/types'
 import { shortTime } from '../lib/format'
+import { AGENT_CLASS, AGENT_LABELS } from '../lib/agents'
 import { BoardView } from './board/BoardView'
 import { SessionView } from './session/SessionView'
 import { ToastProvider } from './ToastProvider'
 
-const AGENT_LABELS: Record<string, string> = {
-  pi: 'Pi', cue: 'Cue', droid: 'Droid', claude: 'Claude Code', codex: 'Codex',
-}
-const AGENT_CLASS: Record<string, string> = {
-  pi: 'agent-pi', cue: 'agent-cue', droid: 'agent-droid', claude: 'agent-claude', codex: 'agent-codex',
-}
-
 type View = 'sessions' | 'board'
+
+// 侧栏轮询的变更门控：last_seq 随每次 append 单调递增，覆盖新事件/改名/标注
+function sameList(a: SessionMeta[], b: SessionMeta[]): boolean {
+  return a.length === b.length && a.every((s, i) =>
+    s.id === b[i].id && s.last_seq === b[i].last_seq && s.title === b[i].title
+    && s.event_count === b[i].event_count && s.error_count === b[i].error_count)
+}
 
 export function App() {
   const [sessions, setSessions] = useState<SessionMeta[]>([])
@@ -33,10 +34,14 @@ export function App() {
   }, [])
 
   // 侧栏轮询：新 agent 会话出现时无需刷新页面（旧版 pollSessions 5s 同频；
-  // 失败静默——首轮失败已由 loadError 提示，后续恢复即自动补上）
+  // 失败静默——首轮失败已由 loadError 提示，后续恢复即自动补上）。
+  // 门控：last_seq/title/计数全等才保留旧数组身份，账本没变不触发整树重渲染
+  // （架构评审二轮候选 5：盲轮询是三套刷新纪律里唯一没门控的）。
   useEffect(() => {
     const t = setInterval(() => {
-      api.listSessions().then((list) => setSessions(list)).catch(() => {})
+      api.listSessions().then((list) => {
+        setSessions((prev) => (sameList(prev, list) ? prev : list))
+      }).catch(() => {})
     }, 5000)
     return () => clearInterval(t)
   }, [])

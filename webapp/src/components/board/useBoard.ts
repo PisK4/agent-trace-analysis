@@ -1,8 +1,9 @@
 // 标注板数据源：annotations + runs 的加载与写入后重拉。
-// 写入统一走 api.appendEvent / api.createRun，成功后 reload——与旧版
-// postBoardEvent 同策略：账本 append-only，没有原地更新。
+// 写入统一走 api.appendForSession（agent 解析的唯一 seam），成功后 reload——
+// 与旧版 postBoardEvent 同策略：账本 append-only，没有原地更新。
 import { useCallback, useEffect, useState } from 'react'
-import { api, eventEnvelope } from '../../api/client'
+import { api } from '../../api/client'
+import { onSummariesChanged } from '../../api/useSummary'
 import type { AssignmentEntry, RunInfo, ScoreEntry } from '../../api/types'
 
 export interface BoardData {
@@ -36,9 +37,12 @@ export function useBoard(enabled: boolean) {
         void alive
       } catch { /* reload 自吞错误 */ }
     })()
+    // live tailing 期间别人标的也能看见：会话页轮询检测到变化即广播，
+    // 标注板订阅同一信号（架构评审二轮候选 5）。
+    return onSummariesChanged(() => { void reload() })
   }, [enabled, reload])
 
-  /** 组一条 v1 事件追加进账本；成功后重拉聚合 */
+  /** 组一条 v1 事件经唯一 seam 追加进账本；成功后重拉聚合 */
   const postEvent = useCallback(async (
     sessionId: string,
     type: string,
@@ -46,12 +50,8 @@ export function useBoard(enabled: boolean) {
     okMsg: string | null,
     failPrefix: string,
   ): Promise<boolean> => {
-    // agent_id 从已有聚合行取；未知会话直接拦（理论不可达：列表来自同一账本）
-    const agent = data?.scores.find((s) => s.session_id === sessionId)?.agent
-      ?? data?.assignments.find((a) => a.session_id === sessionId)?.agent
-    if (!agent) return false
     try {
-      await api.appendEvent(eventEnvelope(agent, sessionId, type, payload))
+      await api.appendForSession(sessionId, type, payload)
       if (okMsg) void okMsg
       await reload()
       return true
@@ -59,7 +59,7 @@ export function useBoard(enabled: boolean) {
       setError(`${failPrefix}：${err instanceof Error ? err.message : String(err)}`)
       return false
     }
-  }, [data, reload])
+  }, [reload])
 
   return { data, error, reload, postEvent, clearError: () => setError(null) }
 }

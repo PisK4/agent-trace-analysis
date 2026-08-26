@@ -15,6 +15,22 @@ from __future__ import annotations
 # 消费端 summarize_timing 按 >PLACEHOLDER_MS 过滤。与 project.PLACEHOLDER_MS 同值。
 PLACEHOLDER_MS = 1
 
+# dsh 把非用户输入的注入消息标成 CONTEXT（system-reminder / skill 清单 /
+# TodoWrite 提醒）。ATA 语料里这些仍走 user 角色：「CONTEXT 注入不算真实
+# 用户消息、不开新轮」是翻译裁决（CONTEXT.md 明文挂在 CONTEXT 词条下），
+# 唯一归属地在翻译内核；投影层改标 CONTEXT 同吃这份判定。
+_CONTEXT_PREFIXES = (
+    "<system-reminder>",
+    "<system-notification>",
+    "Skill \"",
+    "Skill '",
+)
+
+
+def is_context_text(text):
+    raw = (text or "").lstrip()
+    return any(raw.startswith(prefix) for prefix in _CONTEXT_PREFIXES)
+
 
 def make_ev(eid, agent_id, session_id, ts, typ, turn, payload):
     return {
@@ -91,8 +107,6 @@ def bump_turn_if_real_user(state, texts, agent_id, session_id, ts, emit):
     返回本轮轮次号（未开新轮返回当前轮或 None）。emit(event) 由调用方提供
     （通常是把事件 append 进输出列表的闭包）。started_turns 防同一轮重复发。
     """
-    # 懒加载避免与 ata.project 顶层循环导入（project 反向引本模块的 PLACEHOLDER_MS）。
-    from ata.project import is_context_text
     if is_context_text(texts):
         return state.get("turn") or None
     state["turn"] = int(state.get("turn") or 0) + 1

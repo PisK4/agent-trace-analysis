@@ -491,8 +491,6 @@ function DetailBody({ row, byId, tab, onJump, toolsIndex }: {
       )
     }
     case 'timing': {
-      const throughput = row.usage?.output != null && row.durationMs ? null : null // 占位：旧版用 outputTokens 字段，投影未下发
-      void throughput
       return (
         <dl className="kv">
           <div><dt>Started</dt><StartedValue ms={row.startedAt} /></div>

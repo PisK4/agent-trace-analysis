@@ -3,16 +3,13 @@
 import { useCallback, useMemo, useState } from 'react'
 import type { AssignmentEntry, RunInfo, ScoreEntry } from '../../api/types'
 import { fullTime, shortTime } from '../../lib/format'
+import { AGENT_LABELS } from '../../lib/agents'
 import { useToast } from '../toast'
 import { AnnoForm, type AnnoValue, type SessionOption } from './AnnoForm'
 import { AssignForm, CreateRunForm } from './AssignForm'
 import { useBoard } from './useBoard'
 
 import { api } from '../../api/client'
-
-const AGENT_LABELS: Record<string, string> = {
-  pi: 'Pi', cue: 'Cue', droid: 'Droid', claude: 'Claude Code', codex: 'Codex',
-}
 
 // 标注/归组共用的列表过滤：badOnly + 搜索（标题/备注/任务/run 任一命中）
 function filterEntries<T extends { title: string | null; value?: string }>(

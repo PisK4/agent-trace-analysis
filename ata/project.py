@@ -1,8 +1,7 @@
 import json
 
 from ata.fold import fold_session_meta
-# 占位时长约定的唯一归属地在 plugins/common.py（适配器写入侧同源），此处只消费。
-from ata.plugins.common import PLACEHOLDER_MS
+from ata.plugins.common import PLACEHOLDER_MS, is_context_text
 
 NA = {
     "status": "n/a", "input": None, "output": None,
@@ -38,21 +37,6 @@ def _esc(s):
         .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
-
-
-# dsh 把非用户输入的注入消息标成 CONTEXT（system-reminder / skill 清单 /
-# TodoWrite 提醒）。ATA 语料里这些仍走 user 角色，投影时按正文前缀改标。
-_CONTEXT_PREFIXES = (
-    "<system-reminder>",
-    "<system-notification>",
-    "Skill \"",
-    "Skill '",
-)
-
-
-def is_context_text(text):
-    raw = (text or "").lstrip()
-    return any(raw.startswith(prefix) for prefix in _CONTEXT_PREFIXES)
 
 
 def _message_kind(p):
