@@ -1,0 +1,68 @@
+<!doctype html><meta charset="utf-8">
+<pre id="out">pending</pre>
+<iframe id="f" src="/" style="width:1440px;height:900px;border:0"></iframe>
+<script>
+// rev 门控重构的端到端 harness：空闲会话零重绘、交互态存活、切换竞态。
+const f = document.getElementById("f");
+f.onload = async () => {
+  const out = (o) => { document.getElementById("out").textContent = JSON.stringify(o, null, 1); };
+  try {
+    const w = f.contentWindow, doc = w.document;
+    for (let i = 0; i < 40 && !doc.querySelector(".item"); i++)
+      await new Promise(r => setTimeout(r, 250));
+    await w.openSession(doc.querySelector(".item").dataset.sid);
+    await new Promise(r => setTimeout(r, 800));
+
+    // ① 空闲会话：挂 MutationObserver 计 tbody 变异，等 3.5s（>3 个轮询拍）
+    const body = doc.getElementById("dBody");
+    const tbody = doc.getElementById("rows");
+    let mutations = 0;
+    const mo = new w.MutationObserver(m => { mutations += m.length; });
+    mo.observe(tbody, { childList: true });
+
+    // 同时在详情栏拖一个文本选区、展开一个 details
+    const walker = doc.createTreeWalker(body, w.NodeFilter.SHOW_TEXT);
+    let node = null;
+    while (walker.nextNode()) {
+      if (walker.currentNode.textContent.trim().length > 8) { node = walker.currentNode; break; }
+    }
+    let selText = "";
+    if (node) {
+      const sel = w.getSelection();
+      sel.removeAllRanges();
+      const r = doc.createRange();
+      r.setStart(node, 0);
+      r.setEnd(node, Math.min(8, node.textContent.length));
+      sel.addRange(r);
+      selText = sel.toString();
+    }
+    const det = body.querySelector("details:not([open])");
+    if (det) det.open = true;
+
+    await new Promise(r => setTimeout(r, 3500));
+    mo.disconnect();
+
+    // 选区与展开态是否存活
+    const sel2 = w.getSelection();
+    const selAlive = selText && !sel2.isCollapsed && body.contains(sel2.anchorNode) && sel2.toString() === selText;
+    const detAlive = !det || det.open;
+
+    // ② 快速连开两个会话：最终 crumb 必须是最后点的那个
+    const items = [...doc.querySelectorAll(".item")];
+    const a = items[0]?.dataset.sid, b = items[items.length - 1]?.dataset.sid;
+    let race = "skipped(单会话)";
+    if (a && b && a !== b) {
+      w.openSession(a); w.openSession(b);   // 同 tick 并发触发
+      await new Promise(r => setTimeout(r, 1200));
+      race = doc.getElementById("sidBox").textContent === b ? "ok" : "MIXED";
+    }
+
+    out({
+      idleMutations: mutations,
+      selectionSurvived: !!selAlive,
+      detailsSurvived: !!detAlive,
+      switchRace: race
+    });
+  } catch (e) { out({ error: String(e) }); }
+};
+</script>

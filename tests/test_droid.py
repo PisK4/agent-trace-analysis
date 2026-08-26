@@ -150,10 +150,11 @@ class DroidTest(unittest.TestCase):
             recs = led.read("sid-1")
             proj = project_session("sid-1", "droid", recs)
             self.assertEqual(proj["title"], "真实标题")
-            # 幂等：同签名重复刷新不重复追加
+            # 幂等：同签名重复刷新不重复追加；新账本契约下同自然键
+            # （session.opened）只保留最新一行。
             refresh_titles(root, led)
             self.assertEqual(len([r for r in led.read("sid-1")
-                                  if r["event"]["type"] == "session.opened"]), 2)
+                                  if r["event"]["type"] == "session.opened"]), 1)
 
     def test_refresh_fixes_stale_stream_even_if_table_corrected(self):
         # 回归：sessions 表标题曾被单独修正过（非占位值），但事件流里只有旧的

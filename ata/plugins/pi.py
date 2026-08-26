@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
 
 ZERO = (0, 0, 0, 0)
 
@@ -50,8 +53,8 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
     state["ts"] = ts
     out = []
     if name == "before_agent_start":
-        # Pi 契约（锚定 845d6ff1）：systemPrompt + systemPromptOptions
-        # （selectedTools 只是名字数组，toolSnippets 是 {name: 单行描述}）。
+        # Pi 契约：systemPrompt + systemPromptOptions（toolSnippets 是
+        # {name: 单行描述}）；skills 与 toolsFull 见 b1efcf7 / v0.84.2。
         prompt = event.get("systemPrompt") or ""
         if not prompt:
             return out
@@ -61,16 +64,31 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
             {"name": str(n), "description": (str(s) or "")[:200], "parameters": {}}
             for n, s in snippets.items()
         ]
+        # toolSnippets 无参数 schema；extension 在事件上附带 getAllTools 快照，
+        # 按名字回填 parameters。
+        full = event.get("toolsFull")
+        schemas = {}
+        if isinstance(full, dict) and isinstance(full.get("tools"), list):
+            for t in full["tools"]:
+                if isinstance(t, dict) and t.get("name"):
+                    schemas[str(t["name"])] = t.get("parameters")
+        for item in catalog:
+            params = schemas.get(item["name"])
+            if params is not None:
+                item["parameters"] = params
+        skills = opts.get("skills") if isinstance(opts, dict) and isinstance(opts.get("skills"), list) else []
         n = int(state.get("sys_no") or 0) + 1
         state["sys_no"] = n
+        payload = {"prompt_text": prompt, "previous_prompt": state.get("last_prompt")}
+        # 目录逐轮同质化：内容不变不重复落库，投影层前向填充补齐展示。
+        fp = hashlib.sha1(json.dumps({"t": catalog, "s": skills}, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        if fp != state.get("catalog_fp"):
+            payload["tools_catalog"] = catalog
+            payload["skills_catalog"] = skills
+        state["catalog_fp"] = fp
         out.append(_ev(
             f"{session_id}:system:{n}", agent_id, session_id, ts,
-            "system.upserted", None,
-            {
-                "prompt_text": prompt,
-                "previous_prompt": state.get("last_prompt"),
-                "tools_catalog": catalog,
-            },
+            "system.upserted", None, payload,
         ))
         state["last_prompt"] = prompt
         return out
@@ -161,7 +179,9 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
         duration = None if status == "pending" else 1
         if role == "assistant" and name == "message_end":
             m_start = state.get("msg_start_ts", {}).get(mid)
-            duration = max(int(ts) - int(m_start), 0) if m_start else 0
+            # 会话重放（session.opened 后补历史）没有 message_start，
+            # 耗时不可得时写 None（未测量）而非 0（会被当成实测零毫秒）。
+            duration = max(int(ts) - int(m_start), 0) if m_start else None
             state.setdefault("msg_dur", {})[mid] = duration
         out.append(_ev(
             f"{session_id}:msg:{mid}:{name}", agent_id, session_id, ts,
@@ -175,6 +195,8 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 "usage": usage,
                 "started_at": int(msg.get("timestamp") or ts),
                 "duration_ms": duration,
+                "model": msg.get("model"),
+                "provider": msg.get("provider"),
                 "output_text": text if role == "assistant" else None,
             },
         ))
@@ -210,7 +232,7 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
         args = state.get("tool_args", {}).get(cid) or {}
         result = _tool_result(event.get("result"))
         start_ts = state.get("tool_start_ts", {}).pop(cid, None)
-        duration = max(int(ts) - int(start_ts), 0) if start_ts else 0
+        duration = max(int(ts) - int(start_ts), 0) if start_ts else None
         out.append(_ev(
             f"{session_id}:tool:{cid}:end", agent_id, session_id, ts,
             "tool.upserted", state.get("turn") or 1,
@@ -257,12 +279,19 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                         "usage": usage,
                         "started_at": int(msg.get("timestamp") or ts),
                         "duration_ms": state.get("msg_dur", {}).get(mid),
+                        "model": msg.get("model"),
+                        "provider": msg.get("provider"),
                         "output_text": text,
                     },
                 ))
         stop = (msg.get("stopReason") if isinstance(msg, dict) else None)
         status = {"error": "failed", "aborted": "cancelled"}.get(stop)
-        ended_payload = {"usage": usage}
+        # turn.ended 是部分轮次取 usage/model 的唯一来源，必须带归因字段。
+        ended_payload = {
+            "usage": usage,
+            "model": msg.get("model"),
+            "provider": msg.get("provider"),
+        }
         if status:
             ended_payload["status"] = status
         out.append(_ev(

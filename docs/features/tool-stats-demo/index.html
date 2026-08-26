@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Atatrace · Tool Stats 高保真 Demo</title>
+<style>
+  :root {
+    --page:#FAFAFB; --canvas:#F1F2F3; --surface:#FFF; --field:#F2F2F3; --inset:#F7F8F9;
+    --hover:#F4F5F6; --hover-2:#E7E9EB; --line:#ECEDEF; --line-strong:#E0E2E5;
+    --ink:#1F2124; --ink-2:#62656B; --ink-3:#9A9DA3;
+    --accent:#0285FF; --accent-ink:#0170DD;
+    --green:#189A4D; --red:#E3474C; --orange:#EF720C; --cyan:#0E8AA8; --pink:#DB2777;
+    --shadow-btn:0 0 0 1px #E0E2E5, 0 1px 2px #1018280D;
+    --mono:"JetBrains Mono", ui-monospace, monospace;
+  }
+  html.dark {
+    --page:#17181A; --canvas:#1C1D1F; --surface:#232427; --field:#2B2C2F; --inset:#1F2022;
+    --hover:#2A2B2E; --hover-2:#313236; --line:#2E3033; --line-strong:#3A3C40;
+    --ink:#F2F3F4; --ink-2:#A5A8AD; --ink-3:#6C6F75;
+    --accent:#3D9AFF; --green:#3DBB72; --red:#FF6B6F; --orange:#F68F3C;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--canvas); color:var(--ink);
+         font:13px/1.5 -apple-system, "PingFang SC", sans-serif; }
+  button { font-family:inherit; border:0; background:none; cursor:pointer; color:inherit; }
+
+  .shell { display:flex; min-height:100vh; }
+
+  /* ── 左侧导航（示意原布局用，非重点） ── */
+  .nav { width:220px; flex:none; background:var(--page); border-right:1px solid var(--line);
+         padding:10px; display:flex; flex-direction:column; gap:6px; }
+  .brand { font-weight:600; padding:4px 6px; }
+  .nav-label { font:10px/1 var(--mono); letter-spacing:.04em; color:var(--ink-3); margin-top:8px; }
+  .sess { text-align:left; padding:7px 9px; border-radius:8px; background:var(--surface);
+          box-shadow:0 0 0 1px var(--line); margin-bottom:6px; cursor:pointer; }
+  .sess.active { box-shadow:0 0 0 1.5px var(--accent); }
+  .sess .t { display:block; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sess small { color:var(--ink-3); font-size:10px; display:flex; gap:8px; margin-top:3px; }
+
+  /* ── 主舞台 ── */
+  .stage { flex:1; min-width:0; display:flex; flex-direction:column; }
+  .top { height:40px; flex:none; display:flex; align-items:center; gap:10px;
+         padding:0 12px; background:var(--page); border-bottom:1px solid var(--line); }
+  .crumb { font-size:13px; } .crumb b { font-weight:600; }
+  .grow { flex:1; }
+  .ghost { height:22px; padding:0 8px; border-radius:6px; font-size:11px; color:var(--ink-2); }
+  .ghost:hover { background:var(--hover-2); }
+
+  /* ═══ Timeline 区：三泳道 + 失败强化 ═══ */
+  .overview { flex:none; border-bottom:1px solid var(--line); background:var(--page); user-select:none; }
+  .zone-bar { height:32px; display:flex; align-items:center; gap:8px; padding:0 12px;
+              border-bottom:1px solid var(--line); }
+  .zone-name { font:10px/1 var(--mono); letter-spacing:.04em; color:var(--ink-3); margin-right:2px; }
+
+  /* 常驻徽章：统计模块的唯一入口，长在 zone-bar 上 */
+  .stat-badge {
+    display:inline-flex; align-items:center; gap:6px; height:22px; padding:0 10px;
+    border-radius:999px; background:var(--surface); box-shadow:var(--shadow-btn);
+    font-size:11px; color:var(--ink-2); cursor:pointer;
+  }
+  .stat-badge:hover { box-shadow:0 0 0 1px var(--accent), var(--shadow-btn); }
+  .stat-badge b { font-family:var(--mono); font-weight:500; color:var(--ink); }
+  .stat-badge .fbadge { color:var(--red); font-weight:600; }
+  .stat-badge[aria-expanded="true"] { box-shadow:0 0 0 1.5px var(--accent); }
+
+  .plot { display:grid; grid-template-columns:44px 1fr; background:var(--inset); }
+  .labels { position:relative; border-right:1px solid var(--line);
+            font-size:10px; color:var(--ink-3); }
+  .labels span { position:absolute; right:4px; line-height:8px; height:8px; }
+  .labels span:nth-child(1) { top:7px; } .labels span:nth-child(2) { top:23px; }
+  .labels span:nth-child(3) { top:39px; } .labels span:nth-child(4) { top:55px; }
+  .track { position:relative; height:70px; }
+  .lane-sep { position:absolute; left:0; right:0; height:1px; background:var(--line); }
+  .span { position:absolute; height:8px; border-radius:1px; opacity:.85; }
+  .span.user { background:var(--green); top:5px; }
+  .span.model { background:#7A4FD3; top:21px; }
+  .span.tool { background:var(--orange); top:37px; }
+  /* 失败强化：加高、描边、色块内嵌十字纹——滚动时自然入眼 */
+  .span.tool.failed {
+    background:var(--red); top:34px; height:14px; opacity:1; z-index:2;
+    background-image:repeating-linear-gradient(-45deg, transparent 0 3px, #ffffff55 3px 5px);
+    box-shadow:0 0 0 1.5px var(--surface), 0 0 0 3px var(--red);
+  }
+  .span.tool.pending { background:repeating-linear-gradient(-45deg, var(--orange) 0 4px, #ffffff44 4px 7px); }
+  .turn-line { position:absolute; top:0; bottom:0; width:1px; background:var(--line-strong); }
+
+  /* ═══ 统计面板：徽章下方弹出，两级焦点 ═══ */
+  .panel-wrap { position:relative; }
+  .stats-panel {
+    position:absolute; z-index:30; left:12px; right:12px; top:-6px;
+    background:var(--surface); border-radius:10px;
+    box-shadow:0 0 0 1px var(--line-strong), 0 12px 32px #10182822;
+    overflow:hidden;
+  }
+  .sp-head { display:flex; align-items:center; gap:10px; padding:9px 14px;
+             border-bottom:1px solid var(--line); }
+  .sp-head b { font-size:12px; }
+  .sp-head .sum { color:var(--ink-3); font-size:11px; font-family:var(--mono); }
+  .sp-close { color:var(--ink-3); font-size:15px; padding:0 4px; }
+
+  /* 工具使用率：三段小字，放标题右侧空白 */
+  .urate { display:inline-flex; align-items:center; gap:10px; margin-left:14px;
+           font-size:11px; color:var(--ink-3); }
+  .urate b { font-family:var(--mono); font-weight:500; color:var(--ink); }
+  .urate .rate b { color:var(--accent-ink); }
+  .sp-body { max-height:300px; overflow:auto; padding:6px 0; }
+
+  /* 钻取行内的状态点与错误预览 */
+  .dot { width:8px; height:8px; border-radius:50%; flex:none; }
+  .dot.fail { background:var(--red); } .dot.wait { background:var(--orange); }
+
+  /* 分布视图：纯表格（flex 列）。失败降序 → 调用降序，红色数字自己完成分区 */
+  .dtable { width:100%; }
+  .dhead { display:flex; align-items:center; gap:18px; padding:6px 14px 3px;
+           font:10px/1 var(--mono); letter-spacing:.05em; color:var(--ink-3);
+           border-bottom:1px solid var(--line); }
+  .dhead .h-tool { width:180px; }
+  .dhead .h-n { width:44px; text-align:right; }
+  .drow { display:flex; align-items:center; gap:18px; width:100%; text-align:left;
+          padding:4px 14px; font-size:12px; cursor:pointer; }
+  .drow:hover { background:var(--hover); }
+  .drow[aria-expanded="true"] { background:var(--inset); }
+  .dname { font-family:var(--mono); font-size:11px; width:180px; flex:none;
+           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dnum { font-family:var(--mono); font-size:11px; color:var(--ink-2); width:44px;
+          text-align:right; flex:none; }
+  .dnum.bad { color:var(--red); font-weight:600; }
+  .dnum.mute { color:var(--ink-3); }
+  .dnum .bad { color:var(--red); font-weight:600; }
+
+  /* 钻取：点某工具行展开它的调用序列 */
+  .drill { background:var(--inset); padding:2px 0 6px 26px; }
+  .drill .crow { display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+                 padding:4px 14px 4px 0; font-size:11px; color:var(--ink-2); }
+  .drill .crow:hover { background:var(--hover-2); }
+  .drill .ct { font-family:var(--mono); color:var(--ink-3); flex:none; }
+  .drill .cd { min-width:52px; text-align:right; flex:none; font-family:var(--mono); }
+  .drill .cx { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .more { margin:4px 0 0 14px; font-size:11px; color:var(--accent-ink); }
+
+  .hint { padding:8px 14px 10px; font-size:10px; color:var(--ink-3); border-top:1px solid var(--line); }
+
+  /* ═══ Ledger 表格区（示意） ═══ */
+  .ledger { flex:1; display:flex; min-height:0; }
+  .tbl { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .lzone { height:32px; flex:none; display:flex; align-items:center; gap:8px; padding:0 12px;
+           border-bottom:1px solid var(--line); background:var(--page); }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  tr { height:28px; cursor:pointer; }
+  tbody tr:hover { background:var(--hover); }
+  tr[data-error="1"] { background:color-mix(in srgb, var(--red) 7%, transparent); }
+  td { padding:0 10px; border-bottom:1px solid var(--line); white-space:nowrap;
+       overflow:hidden; text-overflow:ellipsis; }
+  td.k tag, .kindtag { display:inline-block; padding:0 5px; border-radius:4px;
+       font:10px/16px var(--mono); background:var(--field); color:var(--ink-2); margin-right:6px; }
+  td.k .kindtag.TOOL { background:color-mix(in srgb, var(--orange) 14%, transparent);
+                       color:color-mix(in srgb, var(--orange) 80%, var(--ink)); }
+  td.i { width:60px; color:var(--ink-3); font-family:var(--mono); font-size:10px; }
+
+  .chip { display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 9px;
+          border-radius:999px; background:var(--surface); box-shadow:var(--shadow-btn);
+          font-size:11px; color:var(--ink-2); }
+  .chip[aria-pressed="true"] { color:var(--accent-ink); box-shadow:0 0 0 1px var(--accent-ink) inset; }
+  .chip .n { font-family:var(--mono); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="nav">
+    <div class="brand">◐ Atatrace <em style="font-style:normal;color:var(--ink-3);font-weight:400;font-size:11px">ledger</em></div>
+    <div class="nav-label">SESSIONS</div>
+    <div class="sess active">
+      <span class="t">调研 screenpipe app 前端现状</span>
+      <small><span>droid</span><span>14 turns</span><span>09:41</span></small>
+    </div>
+    <div class="sess">
+      <span class="t">fix: ata ledger idempotency</span>
+      <small><span>pi</span><span>6 turns</span><span>08:12</span></small>
+    </div>
+    <div class="sess">
+      <span class="t">重构 web inspector tabs</span>
+      <small><span>claude-code</span><span>21 turns</span><span>yesterday</span></small>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <header class="top">
+      <div class="crumb"><b>droid</b> · 调研 screenpipe app 前端现状</div>
+      <div class="grow"></div>
+      <button class="ghost">跟随尾部 ●</button>
+      <button class="ghost">☾</button>
+    </header>
+
+    <!-- ══════ Timeline 区：常驻徽章 + 失败强化泳道 ══════ -->
+    <section class="overview">
+      <div class="zone-bar">
+        <span class="zone-name">TIMELINE</span>
+        <div class="seg" style="display:inline-flex;background:var(--field);border-radius:999px;padding:2px;">
+          <button style="height:20px;padding:0 10px;border-radius:999px;font-size:11px;background:var(--surface);box-shadow:var(--shadow-btn)">Sequence</button>
+          <button style="height:20px;padding:0 10px;border-radius:999px;font-size:11px;color:var(--ink-3)">Time</button>
+        </div>
+        <button class="ghost">Duration</button>
+        <button class="ghost" id="usageBtn" aria-expanded="false">Usage</button>
+
+        <!-- ★ 常驻统计徽章：统计模块唯一入口，failed 非零时红字永远在场 -->
+        <button class="stat-badge" id="badge" aria-expanded="false"
+                onclick="togglePanel()" title="工具调用统计">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M22.7 19 13.6 9.9c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1 .1-1.4z"/></svg>
+          <b>87 calls</b><span class="fbadge">· 3 failed</span>
+        </button>
+        <div class="grow"></div>
+        <span style="font-size:10px;color:var(--ink-3)" id="clock">14:22:31</span>
+      </div>
+
+      <!-- 弹出的统计面板（点徽章开合），锚定在 Timeline 区 -->
+      <div class="panel-wrap">
+        <div class="stats-panel" id="panel" hidden>
+          <div class="sp-head">
+            <b>工具调用统计</b>
+            <span class="sum">87 calls · 3 failed · 12 tools</span>
+            <!-- ★ 工具使用率：挂载 vs 已用；目录缺失时使用率标 n/a -->
+            <span class="urate" title="分母来自 SYSTEM 行的工具目录；目录缺失的 agent 只显示使用数">
+              <span class="u-seg">挂载 <b>21</b></span>
+              <span class="u-seg">已用 <b>12</b></span>
+              <span class="u-seg rate">使用率 <b>57%</b></span>
+            </span>
+            <button class="sp-close" onclick="togglePanel()">×</button>
+          </div>
+
+          <!-- 单一面板：失败数降序 → 调用数降序；行展开按调用时间顺序 -->
+          <div class="sp-body">
+            <div class="dtable">
+              <div class="dhead"><span class="h-tool">Tool</span><span class="h-n">Calls</span><span class="h-n">Failed</span></div>
+              <div id="distRows"></div>
+            </div>
+            <div class="hint">按失败数 → 调用数降序 · 点击行按时间顺序展开该工具的每次调用 · 红点行含错误预览，点击跳转轨迹现场</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="plot">
+        <div class="labels"><span>Input</span><span>Model</span><span>Tools</span><span></span></div>
+        <div class="track">
+          <!-- turn 分隔线 -->
+          <i class="turn-line" style="left:0"></i>
+          <i class="turn-line" style="left:18%"></i>
+          <i class="turn-line" style="left:37%"></i>
+          <i class="turn-line" style="left:56%"></i>
+          <i class="turn-line" style="left:78%"></i>
+          <!-- Input 泳道 -->
+          <i class="span user" style="left:1%;width:2%"></i>
+          <i class="span user" style="left:19%;width:1.6%"></i>
+          <i class="span user" style="left:57%;width:1.8%"></i>
+          <!-- Model 泳道 -->
+          <i class="span model" style="left:4%;width:12%"></i>
+          <i class="span model" style="left:21%;width:14%"></i>
+          <i class="span model" style="left:38%;width:9%"></i>
+          <i class="span model" style="left:59%;width:17%"></i>
+          <i class="span model" style="left:79%;width:19%"></i>
+          <!-- Tools 泳道：普通调用橙色细条；★失败调用红色加高+斜纹+描边，一眼可辨 -->
+          <i class="span tool" style="left:6%;width:3%"></i>
+          <i class="span tool failed" style="left:10%;width:3%"></i>
+          <i class="span tool" style="left:24%;width:2%"></i>
+          <i class="span tool" style="left:27%;width:4%"></i>
+          <i class="span tool failed" style="left:33%;width:3%"></i>
+          <i class="span tool" style="left:40%;width:5%"></i>
+          <i class="span tool" style="left:47%;width:2.4%"></i>
+          <i class="span tool pending" style="left:62%;width:3%"></i>
+          <i class="span tool" style="left:66%;width:2.6%"></i>
+          <i class="span tool failed" style="left:71%;width:3.4%"></i>
+          <i class="span tool" style="left:81%;width:4%"></i>
+          <i class="span tool" style="left:86%;width:2%"></i>
+          <i class="span tool" style="left:89%;width:3%"></i>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════ Ledger 区 ══════ -->
+    <section class="ledger">
+      <div class="tbl">
+        <div class="lzone">
+          <span class="zone-name">LEDGER</span>
+          <button class="chip" aria-pressed="false">● Failed <span class="n">3</span></button>
+          <button class="chip" aria-pressed="false">▣ Tools <span class="n">87</span></button>
+          <div class="grow"></div>
+          <code style="font:11px var(--mono);color:var(--ink-3)">2c46cccc-58c9…</code>
+        </div>
+        <div style="overflow:auto">
+        <table>
+          <thead><tr style="height:26px;color:var(--ink-3);font-size:10px;cursor:default">
+            <td class="i">#</td><td style="width:150px">Event</td><td>Content</td></tr></thead>
+          <tbody>
+            <tr><td class="i">01 T2</td><td class="k"><span class="kindtag USER">USER</span></td>
+                <td>继续调研，重点看 worktree 相关的界面</td></tr>
+            <tr><td class="i">02 T2</td><td class="k"><span class="kindtag" style="background:color-mix(in srgb,#7A4FD3 14%,transparent)">ASSISTANT</span></td>
+                <td>我先看 apps 目录结构，再进 worktree 页面组件</td></tr>
+            <tr data-error="1"><td class="i">03 T2</td><td class="k"><span class="kindtag TOOL">TOOL</span></td>
+                <td>mcp__fs__read_file → EACCES: permission denied, open '/Users/pis/.ssh/config'</td></tr>
+            <tr><td class="i">04 T2</td><td class="k"><span class="kindtag TOOL">TOOL</span></td>
+                <td>LS → apps/screenpipe/src-tauri</td></tr>
+            <tr><td class="i">05 T2</td><td class="k"><span class="kindtag TOOL">TOOL</span></td>
+                <td>Read → tauri.conf.json</td></tr>
+            <tr data-error="1"><td class="i">06 T3</td><td class="k"><span class="kindtag TOOL">TOOL</span></td>
+                <td>Bash → exit 1: rg pattern too large</td></tr>
+            <tr><td class="i">07 T3</td><td class="k"><span class="kindtag ASSISTANT">ASSISTANT</span></td>
+                <td>换短 pattern 分两次搜，先搜 worktree 再搜 timeline</td></tr>
+          </tbody>
+        </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+// 合成数据：12 工具 / 87 调用 / 3 failed + 1 pending
+const TOOLS = [
+  ["Read", 16, 0], ["Grep", 14, 1], ["Bash", 13, 1], ["Task", 9, 0],
+  ["mcp__fs__read_file", 7, 1], ["LS", 6, 0], ["WebFetch", 5, 0],
+  ["Glob", 4, 0], ["TodoWrite", 4, 0], ["Edit", 4, 0], ["Write", 3, 0], ["NotebookEdit", 2, 0],
+];
+// 纯表格渲染：失败数降序 → 调用数降序。零失败的 Failed 列留白，视觉自然安静。
+const distRows = document.getElementById("distRows");
+const sorted = [...TOOLS].sort((a, b) => (b[2] - a[2]) || (b[1] - a[1]));
+distRows.innerHTML = sorted.map(([name, total, failed]) => `
+  <div>
+    <button class="drow" aria-expanded="false" onclick="toggleDrill(this,'${name}',${total},${failed})">
+      <span class="dname">${name}</span>
+      <span class="dnum">${total}</span>
+      <span class="dnum ${failed ? "bad" : "mute"}">${failed || ""}</span>
+    </button>
+    <div class="drill" hidden></div>
+  </div>`).join("");
+
+function toggleDrill(btn, name, total, failed) {
+  const drill = btn.nextElementSibling;
+  const open = drill.hidden;
+  drill.hidden = !open;
+  btn.setAttribute("aria-expanded", open);
+  if (open && !drill.dataset.filled) {
+    // 演示数据：时间戳严格递增，对应生产口径 calls 按 started_at 升序。
+    // 失败调用（这里造在第 2 次）行内直接给错误预览。
+    drill.innerHTML = Array.from({ length: Math.min(total, 5) }, (_, i) => {
+      const isFail = failed > 0 && i === 1;
+      const status = isFail ? "fail" : "ok";
+      const preview = isFail ? "EACCES: permission denied"
+                    : i === 0 && failed === 0 ? `${name} → ok` : "ok";
+      return `
+      <button class="crow">
+        <i class="dot ${status}" style="${status === "ok" ? "background:var(--green)" : ""}"></i>
+        <span class="ct">14:${String(3 + i).padStart(2, "0")}:${String(10 + i * 11).padStart(2, "0")}</span>
+        <span class="cd">${(Math.random() * 900 | 0) + 20} ms</span>
+        <span class="cx">${name} · call #${i + 1} · ${preview}</span>
+      </button>`;
+    }).join("") +
+      (total > 5 ? `<button class="more">show more (${total - 5} left)</button>` : "");
+    drill.dataset.filled = "1";
+  }
+}
+
+function togglePanel() {
+  const p = document.getElementById("panel");
+  p.hidden = !p.hidden;
+  document.getElementById("badge").setAttribute("aria-expanded", String(!p.hidden));
+}
+document.addEventListener("keydown", e => { if (e.key === "Escape") togglePanel(); });
+
+// 演示用时钟
+setInterval(() => {
+  const d = new Date();
+  document.getElementById("clock").textContent =
+    [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, "0")).join(":");
+}, 1000);
+</script>
+</body>
+</html>

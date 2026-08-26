@@ -89,6 +89,23 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(page["tools_index"]["Read"]["description"], "read files v2")
         self.assertEqual(page["tools_index"]["Write"]["description"], "write files")
 
+    def test_system_catalog_forward_fill(self):
+        # 目录去重落库后，缺省轮次沿用最近一份目录（前向填充）。
+        recs = [
+            rec(1, {"v":1,"id":"o","agent_id":"pi","session_id":"s","ts":1,"type":"session.opened","turn":None,"payload":{"title":"t"}}),
+            rec(2, {"v":1,"id":"sys1","agent_id":"pi","session_id":"s","ts":2,"type":"system.upserted","turn":None,"payload":{
+                "prompt_text":"p1","previous_prompt":None,
+                "tools_catalog":[{"name":"Read","description":"read files","parameters":{}}],
+                "skills_catalog":[{"name":"s1","description":"d"}]}}),
+            rec(3, {"v":1,"id":"sys2","agent_id":"pi","session_id":"s","ts":3,"type":"system.upserted","turn":None,"payload":{
+                "prompt_text":"p2","previous_prompt":"p1"}}),
+        ]
+        page = project_session("s", "pi", recs)
+        rows = [row for row in page["rows"] if row["kind"] == "system"]
+        self.assertEqual(rows[0]["skillsCatalog"][0]["name"], "s1")
+        self.assertEqual(rows[1]["toolsCatalog"][0]["name"], "Read")
+        self.assertEqual(rows[1]["skillsCatalog"], rows[0]["skillsCatalog"])
+
     def test_droid_missing(self):
         recs = [
             rec(1, {"v":1,"id":"o","agent_id":"droid","session_id":"d","ts":1,"type":"session.opened","turn":None,"payload":{"title":"d"}}),

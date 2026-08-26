@@ -1,0 +1,23 @@
+<!doctype html><meta charset="utf-8">
+<pre id="out">pending</pre>
+<iframe id="f" src="/" style="width:1440px;height:900px;border:0"></iframe>
+<script>
+const f = document.getElementById("f");
+f.onload = async () => {
+  const out = (o) => { document.getElementById("out").textContent = JSON.stringify(o); };
+  try {
+    const w = f.contentWindow, doc = w.document;
+    for (let i = 0; i < 40 && !doc.querySelector(".item"); i++)
+      await new Promise(r => setTimeout(r, 250));
+    const sid = doc.querySelector(".item").dataset.sid;
+    try {
+      await w.openSession(sid);
+    } catch (e) {
+      out({ openSessionError: String(e), stack: e.stack });
+      return;
+    }
+    out({ ok: true, sid: doc.getElementById("sidBox").textContent,
+          rows: w.current ? w.current.rows.length : -1 });
+  } catch (e) { out({ error: String(e), stack: e.stack }); }
+};
+</script>

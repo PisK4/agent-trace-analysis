@@ -6,6 +6,26 @@ import threading
 import time
 from pathlib import Path
 
+# 毫秒时间戳低于此值的视为脏数据（历史推送端写过 ts=1 的 opened 事件），
+# 不参与创建时间的判定。
+_REAL_TS_FLOOR = 10 ** 12
+
+
+def _dedupe_key(event: dict) -> str | None:
+    """自然键幂等：同实体的多次快照只留最新一行。翻译层对不同阶段发的
+    确定性 event id（:message_start/:message_end/:end）由此收敛；
+    session.opened 的标题纠正同键折叠，与投影层 last-write-wins 一致。
+    无自然键的事件保持追加式。"""
+    typ = event.get("type")
+    payload = event.get("payload") or {}
+    if typ == "message.upserted" and payload.get("message_id"):
+        return f"{typ}:{payload['message_id']}"
+    if typ == "tool.upserted" and payload.get("tool_call_id"):
+        return f"{typ}:{payload['tool_call_id']}"
+    if typ == "session.opened":
+        return f"{typ}:"
+    return None
+
 
 class Ledger:
     def __init__(self, root: Path):
@@ -32,7 +52,8 @@ class Ledger:
                 title TEXT NOT NULL,
                 turns INTEGER NOT NULL DEFAULT 0,
                 last_seq INTEGER NOT NULL DEFAULT 0,
-                last_ts INTEGER NOT NULL DEFAULT 0
+                last_ts INTEGER NOT NULL DEFAULT 0,
+                first_ts INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_title ON sessions(title);
             CREATE TABLE IF NOT EXISTS events (
@@ -66,9 +87,53 @@ class Ledger:
                     (SELECT MAX(ts) FROM events e WHERE e.session_id = sessions.session_id), 0)
                 """
             )
+        if "first_ts" not in {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}:
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN first_ts INTEGER NOT NULL DEFAULT 0"
+            )
+            # 部分历史 session.opened 事件带异常小 ts，回填时忽略，
+            # 只信正常量级的 ts；全无则退回 last_ts，保证卡片有值可显。
+            self._conn.execute(
+                """
+                UPDATE sessions SET first_ts = COALESCE(
+                    (SELECT MIN(ts) FROM events e WHERE e.session_id = sessions.session_id
+                     AND e.ts > ?), last_ts)
+                """,
+                (_REAL_TS_FLOOR,),
+            )
         if "parent_session_id" not in {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)")
+        if "dedupe_key" not in {row[1] for row in self._conn.execute("PRAGMA table_info(events)")}:
+            # 存量迁移：补自然键并把同键旧行坍缩为最新一条（已确认不保留快照史），
+            # 再用部分唯一索引约束后续写入。只在新列首次加入时执行一次。
+            self._conn.execute("ALTER TABLE events ADD COLUMN dedupe_key TEXT")
+            self._conn.execute(
+                """
+                UPDATE events SET dedupe_key = CASE
+                    WHEN type='message.upserted'
+                         AND json_extract(event_json,'$.payload.message_id') IS NOT NULL
+                        THEN type || ':' || json_extract(event_json,'$.payload.message_id')
+                    WHEN type='tool.upserted'
+                         AND json_extract(event_json,'$.payload.tool_call_id') IS NOT NULL
+                        THEN type || ':' || json_extract(event_json,'$.payload.tool_call_id')
+                    WHEN type='session.opened' THEN type || ':'
+                    ELSE NULL
+                END
+                """
+            )
+            self._conn.execute(
+                """
+                DELETE FROM events WHERE dedupe_key IS NOT NULL AND seq < (
+                    SELECT MAX(e2.seq) FROM events e2
+                    WHERE e2.session_id = events.session_id
+                      AND e2.dedupe_key = events.dedupe_key)
+                """
+            )
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedupe"
+            " ON events(session_id, dedupe_key) WHERE dedupe_key IS NOT NULL"
+        )
         self._conn.commit()
 
     def append(self, event: dict) -> int:
@@ -76,6 +141,12 @@ class Ledger:
             seq = self._append_locked(event)
             self._conn.commit()
             return seq
+
+    def _has_renamed(self, session_id: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM events WHERE session_id=? AND type='session.renamed' LIMIT 1",
+            (session_id,)).fetchone()
+        return row is not None
 
     def _append_locked(self, event: dict) -> int:
         """调用方必须已持有 _lock。返回 seq（重复 id 返回原 seq）。"""
@@ -87,37 +158,72 @@ class Ledger:
         if found:
             return int(found["seq"])
         row = self._conn.execute(
-            "SELECT last_seq, title, turns, last_ts, parent_session_id FROM sessions WHERE session_id=?",
+            "SELECT last_seq, title, turns, last_ts, first_ts, parent_session_id FROM sessions WHERE session_id=?",
             (sid,),
         ).fetchone()
         seq = (int(row["last_seq"]) if row else 0) + 1
         title = (row["title"] if row else sid)
+        renamed = title != sid and bool(row) and self._has_renamed(sid)
         turns = int(row["turns"]) if row else 0
         last_ts = int(event["ts"])
         if row:
             last_ts = max(int(row["last_ts"] or 0), last_ts)
+        # 创建时间取最早的真实事件 ts；异常小值（如 1）不参与，避免显示成 1970 年，
+        # 已存在的异常存量值也一并设防。
+        first_ts = int(event["ts"]) if int(event["ts"]) > _REAL_TS_FLOOR else 0
+        if row:
+            existing_first = int(row["first_ts"] or 0)
+            if existing_first > _REAL_TS_FLOOR:
+                first_ts = min(existing_first, first_ts) if first_ts else existing_first
         # 非 opened 事件必须保留已有父引用，否则后续 UPDATE 会把血缘抹成 NULL。
         parent = row["parent_session_id"] if row else None
         if event["type"] == "session.opened":
-            title = event["payload"].get("title") or title
+            # 用户改过名（renamed）后，opened 的标题只做兜底，不再覆盖
+            if not renamed:
+                title = event["payload"].get("title") or title
             parent = event["payload"].get("parent_session")
+        elif event["type"] == "session.renamed":
+            # 用户改名：与 opened 同走投影索引 latest-wins，后续 opened 不再覆盖
+            title = event["payload"].get("title") or title
+            renamed = True
+        elif event["type"] == "session.renamed":
+            # 用户改名：与 opened 同走投影索引 latest-wins，后续 opened 不再覆盖
+            # （opened 只在 title 为空时兜底，见上）。
+            title = event["payload"].get("title") or title
         turn = event.get("turn")
         if isinstance(turn, int) and turn > turns:
             turns = turn
         if row:
             self._conn.execute(
-                "UPDATE sessions SET agent_id=?, title=?, turns=?, last_seq=?, last_ts=?, parent_session_id=? WHERE session_id=?",
-                (event["agent_id"], title, turns, seq, last_ts, parent, sid),
+                "UPDATE sessions SET agent_id=?, title=?, turns=?, last_seq=?, last_ts=?, first_ts=?, parent_session_id=? WHERE session_id=?",
+                (event["agent_id"], title, turns, seq, last_ts, first_ts, parent, sid),
             )
         else:
             self._conn.execute(
-                "INSERT INTO sessions(session_id, agent_id, title, turns, last_seq, last_ts, parent_session_id) VALUES (?,?,?,?,?,?,?)",
-                (sid, event["agent_id"], title, turns, seq, last_ts, parent),
+                "INSERT INTO sessions(session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id) VALUES (?,?,?,?,?,?,?,?)",
+                (sid, event["agent_id"], title, turns, seq, last_ts, first_ts, parent),
             )
-        self._conn.execute(
-            "INSERT INTO events(session_id, event_id, seq, ts, type, turn, event_json) VALUES (?,?,?,?,?,?,?)",
-            (sid, event["id"], seq, event["ts"], event["type"], turn, json.dumps(event, ensure_ascii=False)),
-        )
+        dk = _dedupe_key(event)
+        existed = None
+        if dk:
+            existed = self._conn.execute(
+                "SELECT seq FROM events WHERE session_id=? AND dedupe_key=?",
+                (sid, dk),
+            ).fetchone()
+        if existed:
+            # 同自然键：整行替换为最新快照。seq 用新号保证 read 按 seq 排序时
+            # 最新态排在最后；旧行的 event_id 列保留原值，读方一律以 event_json 为准。
+            self._conn.execute(
+                "UPDATE events SET seq=?, ts=?, turn=?, event_json=? WHERE session_id=? AND dedupe_key=?",
+                (seq, event["ts"], turn, json.dumps(event, ensure_ascii=False), sid, dk),
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO events(session_id, event_id, seq, ts, type, turn, event_json, dedupe_key)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (sid, event["id"], seq, event["ts"], event["type"], turn,
+                 json.dumps(event, ensure_ascii=False), dk),
+            )
         return seq
 
     def read(self, session_id: str) -> list[dict]:
@@ -133,7 +239,7 @@ class Ledger:
     def session(self, session_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT session_id, agent_id, title, turns, last_ts, parent_session_id FROM sessions WHERE session_id=?",
+                "SELECT session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id FROM sessions WHERE session_id=?",
                 (session_id,),
             ).fetchone()
         return None if row is None else self._session_row(row)
@@ -142,12 +248,34 @@ class Ledger:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT session_id, agent_id, title, turns, last_ts, parent_session_id
+                SELECT session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id
                 FROM sessions
-                ORDER BY last_ts DESC, title
+                ORDER BY first_ts DESC, title
                 """
             ).fetchall()
-        return [self._session_row(r) for r in rows]
+            # 侧栏卡片 meta 行要事件数与失败工具数：json_extract 走 event_json，
+            # 单行扫描；会话量大时这里仍是 O(全部事件)，可接受（本机账本量级）。
+            counts = self._conn.execute(
+                """
+                SELECT session_id,
+                       COUNT(*) AS event_count,
+                       SUM(CASE WHEN type='tool.upserted'
+                                 AND json_extract(event_json,'$.payload.status')='failed'
+                            THEN 1 ELSE 0 END) AS error_count
+                FROM events
+                GROUP BY session_id
+                """
+            ).fetchall()
+        by_sid = {r["session_id"]: r for r in counts}
+        out = []
+        for r in rows:
+            c = by_sid.get(r["session_id"])
+            out.append({
+                **self._session_row(r),
+                "event_count": int(c["event_count"]) if c else 0,
+                "error_count": int(c["error_count"] or 0) if c else 0,
+            })
+        return out
 
     @staticmethod
     def _session_row(r) -> dict:
@@ -156,14 +284,16 @@ class Ledger:
             "agent": r["agent_id"],
             "title": r["title"],
             "turns": int(r["turns"]),
+            "last_seq": int(r["last_seq"] or 0),
             "last_ts": int(r["last_ts"] or 0),
+            "first_ts": int(r["first_ts"] or 0),
             "parent_session_id": r["parent_session_id"],
         }
 
     def children(self, session_id: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT session_id, agent_id, title, turns, last_ts, parent_session_id"
+                "SELECT session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id"
                 " FROM sessions WHERE parent_session_id=? ORDER BY last_ts",
                 (session_id,),
             ).fetchall()
@@ -214,6 +344,15 @@ class Ledger:
             except sqlite3.IntegrityError:
                 raise ValueError("duplicate run_id") from None
 
+    def rename_run(self, run_id: str, description: str) -> bool:
+        """组名即 runs.description；run_id 是事件引用主键，不改。"""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE runs SET description=? WHERE run_id=?",
+                (description, run_id))
+            self._conn.commit()
+            return cur.rowcount > 0
+
     def run(self, run_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
@@ -246,3 +385,67 @@ class Ledger:
             out.append({"session_id": r["session_id"], "seq": int(r["seq"]),
                         "ts": int(r["ts"]), **payload})
         return out
+
+    def annotations(self) -> dict:
+        """标注板聚合读取：latest-wins 折叠墓碑后的有效标注/归组，附会话元信息。
+
+        返回 {scores: [{session_id, value, note, ts, agent, title, event_count,
+        error_count}], assignments: [{session_id, run_id, task_id, ts, agent,
+        title, event_count, error_count}]}，各自按 ts 倒序。
+        墓碑：session.score.cleared 清标注；session.unassigned 清归组
+        （run_id+session_id 粒度，同会话同 run 的全部 task 一起移除）。"""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, seq, ts, type, event_json FROM events"
+                " WHERE type IN ('session.scored','session.score.cleared',"
+                "                'session.assigned','session.unassigned')"
+                " ORDER BY seq").fetchall()
+            metas = {
+                r["session_id"]: r for r in self._conn.execute(
+                    "SELECT s.session_id, s.agent_id, s.title, s.last_seq, s.last_ts, s.first_ts,"
+                    " COALESCE(c.event_count,0) AS event_count,"
+                    " COALESCE(c.error_count,0) AS error_count"
+                    " FROM sessions s LEFT JOIN ("
+                    "   SELECT session_id, COUNT(*) AS event_count,"
+                    "   SUM(CASE WHEN type='tool.upserted'"
+                    "              AND json_extract(event_json,'$.payload.status')='failed'"
+                    "            THEN 1 ELSE 0 END) AS error_count"
+                    "   FROM events GROUP BY session_id) c"
+                    " ON c.session_id = s.session_id").fetchall()
+            }
+        scores: dict[str, dict] = {}
+        # 归组键 run_id+session_id：unassigned 墓碑按此粒度整组撤销
+        assigns: dict[tuple, dict] = {}
+        for r in rows:
+            payload = json.loads(r["event_json"])["payload"]
+            sid = r["session_id"]
+            if r["type"] == "session.scored":
+                scores[sid] = {"session_id": sid, "value": payload.get("value"),
+                               "note": payload.get("note"), "ts": int(r["ts"]),
+                               "seq": int(r["seq"])}
+            elif r["type"] == "session.score.cleared":
+                scores.pop(sid, None)
+            elif r["type"] == "session.assigned":
+                assigns[(payload.get("run_id"), sid)] = {
+                    "session_id": sid, "run_id": payload.get("run_id"),
+                    "task_id": payload.get("task_id"), "ts": int(r["ts"]),
+                    "seq": int(r["seq"])}
+            elif r["type"] == "session.unassigned":
+                assigns.pop((payload.get("run_id"), sid), None)
+        def enrich(item):
+            m = metas.get(item["session_id"])
+            if m:
+                item.update({"agent": m["agent_id"], "title": m["title"],
+                             "event_count": int(m["event_count"]),
+                             "error_count": int(m["error_count"])})
+            else:
+                # 会话元数据缺失（理论不可达）：仍返回条目，前端按未知渲染
+                item.update({"agent": None, "title": item["session_id"],
+                             "event_count": 0, "error_count": 0})
+            return item
+        return {
+            "scores": sorted((enrich(s) for s in scores.values()),
+                             key=lambda s: s["ts"], reverse=True),
+            "assignments": sorted((enrich(a) for a in assigns.values()),
+                                  key=lambda a: a["ts"], reverse=True),
+        }

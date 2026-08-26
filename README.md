@@ -75,7 +75,7 @@ extensions/     pi-atatrace（Pi 官方 extension）
 web/            零构建前端（复制自 sketches/002-beautiful-workbench，只换数据入口；
                 vendor/ 存放 marked 与 highlight.js，来源与许可证见 vendor/README.md）
 testdata/       合成 fixture（占位文案，无真实会话）
-tests/          unittest（27 个）
+tests/          unittest（111 个）
 docs/           spec / plan / 交付总结 / 测试指南
 ```
 

@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+import re
 
 from ata.plugins.pi import translate_hook
-from ata.project import list_compactions, list_tools, project_session, summarize_usage, tail_preview
+from ata.project import audit_usage, list_compactions, list_tools, project_session, summarize_timing, summarize_tools, summarize_usage, tail_preview
 from ata.schema import ValidationError, parse_event
+
+_RE_RENAME = re.compile(r"^/api/sessions/([^/]+)/title$")
+_RE_RUN_RENAME = re.compile(r"^/api/runs/([^/]+)/name$")
 
 
 def make_server(ledger, webroot, host="127.0.0.1", port=8787):
@@ -32,6 +37,8 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Access-Control-Allow-Origin", "*")
+            # 本地开发工具，前端文件改动频繁；禁缓存避免浏览器吃旧页面。
+            self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(body)
 
@@ -65,6 +72,8 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 return self._json(200, {"ok": True, **run})
             if path == "/api/sessions":
                 return self._json(200, _list_sessions(ledger))
+            if path == "/api/annotations":
+                return self._json(200, {"ok": True, **ledger.annotations()})
             if path.startswith("/api/sessions/"):
                 rest = path[len("/api/sessions/"):]
                 sid, _, sub = rest.partition("/")
@@ -76,8 +85,20 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                     limit = int(qs.get("limit", ["80"])[0])
                     before = qs.get("before", [None])[0]
                     before = int(before) if before not in (None, "") else None
+                    # rev 门控：last_seq 未变（无任何事件追加/幂等折叠/改名/标注）时
+                    # 跳过全量投影，返回几十字节的 unchanged；前端据此零重绘。
+                    # last_seq 随每次 append 单调递增，天然是会话级版本号。
+                    rev = qs.get("rev", [None])[0]
+                    if not before and rev not in (None, ""):
+                        try:
+                            if int(rev) == int(meta["last_seq"]):
+                                return self._json(200, {"ok": True, "unchanged": True,
+                                                        "rev": int(meta["last_seq"])})
+                        except ValueError:
+                            pass
                     recs = ledger.read(sid)
                     page = project_session(sid, meta["agent"], recs, tail=limit, before=before)
+                    page["rev"] = int(meta["last_seq"])
                     return self._json(200, page)
                 if sub == "events":
                     after = int(qs.get("after_seq", ["0"])[0])
@@ -90,8 +111,12 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                                             "ancestors": ledger.ancestry(sid),
                                             "children": ledger.children(sid)})
                 if sub == "usage":
-                    return self._json(200, {"ok": True,
-                                            **summarize_usage(ledger.read(sid))})
+                    recs = ledger.read(sid)
+                    compactions = [{"turn": r["event"].get("turn"), "seq": r["seq"]}
+                                   for r in recs if r["event"]["type"] == "compaction.boundary"]
+                    return self._json(200, {"ok": True, **summarize_usage(recs),
+                                            "audit": audit_usage(recs),
+                                            "compactions": compactions})
                 if sub == "tools":
                     full = qs.get("full", ["false"])[0] == "true"
                     rows = list_tools(ledger.read(sid),
@@ -100,6 +125,12 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                     for r in rows:
                         r["result"] = r["result"] if full else tail_preview(r["result"])
                     return self._json(200, {"ok": True, "tools": rows})
+                if sub == "tool-stats":
+                    return self._json(200, {"ok": True,
+                                            **summarize_tools(ledger.read(sid))})
+                if sub == "timing":
+                    return self._json(200, {"ok": True,
+                                            **summarize_timing(ledger.read(sid))})
                 if sub == "compactions":
                     full = qs.get("full", ["false"])[0] == "true"
                     rows = list_compactions(ledger.read(sid))
@@ -122,6 +153,8 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 ctype = "text/javascript"
             elif target.suffix == ".css":
                 ctype = "text/css"
+            elif target.suffix in (".html", ".svg", ".png", ".ico"):
+                ctype = "text/html; charset=utf-8" if target.suffix == ".html" else f"image/{target.suffix.lstrip('.')}"
             return self._bytes(200, target.read_bytes(), ctype)
 
         def do_POST(self):
@@ -143,6 +176,31 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 except ValueError as exc:
                     return self._json(400, {"ok": False, "error": str(exc)})
                 return self._json(200, {"ok": True, "run_id": rid})
+            # 会话改名：服务端组一个 session.renamed 事件入账本，前端不必自己造 id/ts。
+            m = _RE_RENAME.match(parsed.path)
+            if m:
+                sid = m.group(1)
+                title = (raw.get("title") or "").strip() if isinstance(raw, dict) else ""
+                if not title:
+                    return self._json(400, {"ok": False, "error": "title required"})
+                meta = ledger.session(sid)
+                if meta is None:
+                    return self._json(404, {"ok": False, "error": "unknown session"})
+                ev = parse_event({
+                    "v": 1, "id": uuid.uuid4().hex, "agent_id": meta["agent"],
+                    "session_id": sid, "ts": int(time.time() * 1000),
+                    "type": "session.renamed", "turn": None,
+                    "payload": {"title": title},
+                })
+                ledger.append(ev)
+                return self._json(200, {"ok": True, "title": title})
+            m = _RE_RUN_RENAME.match(parsed.path)
+            if m:
+                name = (raw.get("name") or "").strip() if isinstance(raw, dict) else ""
+                # 允许清空：空组名回退显示 run_id
+                if not ledger.rename_run(m.group(1), name):
+                    return self._json(404, {"ok": False, "error": "unknown run"})
+                return self._json(200, {"ok": True, "name": name})
             if parsed.path != "/api/events":
                 return self._json(404, {"ok": False, "error": "not found"})
             items = raw.get("events") if isinstance(raw, dict) and "events" in raw else [raw]
@@ -167,6 +225,12 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 ledger._pi_states = {}
                 state = ledger._pi_states
             bucket = state.setdefault(sid, {"session_id": sid})
+            event = raw.get("event") or {}
+            # pi 运行时多数 hook 事件不带 timestamp（类型上只有 turn_start 有），
+            # 翻译层只能回退 state 里的旧 ts，start/end 会拿到同一时刻、duration
+            # 恒 0。hook 按到达序处理即事件序，缺 timestamp 时打上到达时刻。
+            if not event.get("timestamp"):
+                event = {**event, "timestamp": int(time.time() * 1000)}
             ctx = {
                 "session_id": sid,
                 "title": raw.get("title") or sid,
@@ -177,7 +241,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
                 "lineage": raw.get("lineage") or {},
             }
             try:
-                events = translate_hook(raw["name"], raw.get("event") or {}, ctx, bucket)
+                events = translate_hook(raw["name"], event, ctx, bucket)
                 seqs = []
                 for ev in events:
                     parsed = parse_event(ev)
