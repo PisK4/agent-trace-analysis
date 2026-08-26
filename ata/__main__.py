@@ -1,11 +1,11 @@
 import argparse
 import sys
-import threading
-import time
 from pathlib import Path
 
+from ata.ingest import start_tails
 from ata.http import make_server
 from ata.ledger import Ledger
+from ata.cli import CLI_SUBCOMMANDS
 from ata.plugins.droid import translate_file
 from ata.schema import parse_event
 
@@ -54,9 +54,8 @@ def seed_demo(ledger: Ledger):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    # 机器读路径：read/rate 走 CLI 模块，不进 serve/seed 参数解析；
-    # tasks/run/compare 同理（run/compare 是写或聚合入口，也归 CLI）
-    if argv and argv[0] in {"read", "rate", "tasks", "run", "compare"}:
+    # 机器读路径分发进 CLI 模块；集合唯一归属地在 ata.cli.CLI_SUBCOMMANDS
+    if argv and argv[0] in CLI_SUBCOMMANDS:
         from ata.cli import main as cli_main
         return cli_main(argv)
     p = argparse.ArgumentParser()
@@ -70,41 +69,33 @@ def main(argv=None):
     # 目录 tail 只处理最近 N 天修改的文件；厂商历史会话动辄几千个，全量灌入
     # 会让账本涨到数 GB。None/0 表示不做限制。
     p.add_argument("--tail-max-age-days", type=int, default=7)
+    # 代理采集通道：默认关。开起来后把 agent 的 API base 指到这里即可补采。
+    p.add_argument("--proxy-port", type=int, default=None)
+    p.add_argument("--proxy-upstream", default="https://api.anthropic.com")
+    p.add_argument("--proxy-agent", choices=["claude"], default="claude")
     args = p.parse_args(argv)
     led = Ledger(Path(args.ledger))
     if args.cmd == "seed":
         seed_demo(led)
         print(f"seeded {led.path}")
         return
-    # 目录/单文件统一走 tail_path：首轮灌入近期文件（账本按 id 幂等），
-    # 之后 1s 轮询发现新文件与活动会话的追加行。显式传入才打开，默认不碰厂商目录。
-    def start_tail(path_arg, tf):
-        if not path_arg:
-            return
-        from ata.plugins.jsonl import tail_path
-        threading.Thread(target=tail_path, args=(Path(path_arg), tf, led),
-                         kwargs={"max_age_days": args.tail_max_age_days}, daemon=True).start()
+    start_tails(
+        led,
+        tail_max_age_days=args.tail_max_age_days,
+        droid_path=args.droid_path,
+        claude_path=args.claude_path,
+        codex_path=args.codex_path,
+    )
+    if args.proxy_port:
+        import threading
 
-    start_tail(args.droid_path, translate_file)
-    # Droid 的真实标题在首条消息后才生成并原地重写 session_start 行，tail 读不到；
-    # 单独起线程定期按文件首行纠正账本标题。
-    if args.droid_path:
-        from ata.plugins.droid import refresh_titles
-        title_state = {}  # {session_id: (mtime_ns, size)}，跨轮次持久持有
-        def refresh_loop():
-            while True:
-                time.sleep(15)
-                try:
-                    refresh_titles(Path(args.droid_path), led, title_state)
-                except Exception:
-                    pass  # 目录抖动下一轮再试，不拖死服务
-        threading.Thread(target=refresh_loop, daemon=True).start()
-    if args.claude_path:
-        from ata.plugins.claude import translate_file as claude_tf
-        start_tail(args.claude_path, claude_tf)
-    if args.codex_path:
-        from ata.plugins.codex import translate_file as codex_tf
-        start_tail(args.codex_path, codex_tf)
+        from ata.capture_proxy import start_capture_proxy
+        from ata.plugins.capture import ingest_capture
+        proxy_httpd = start_capture_proxy(
+            "127.0.0.1", args.proxy_port, args.proxy_upstream, args.proxy_agent,
+            lambda rec: ingest_capture(led, rec))
+        threading.Thread(target=proxy_httpd.serve_forever, daemon=True).start()
+        print(f"capture proxy http://127.0.0.1:{args.proxy_port} -> {args.proxy_upstream}")
     httpd = make_server(led, Path(args.web), "127.0.0.1", args.port)
     print(f"atatrace http://127.0.0.1:{args.port}")
     httpd.serve_forever()
