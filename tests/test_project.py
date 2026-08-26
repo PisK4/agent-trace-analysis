@@ -159,5 +159,39 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual([r["id"] for r in page["rows"]], ["m4", "m5"])
 
 
+class TitleAuthorityParityTest(unittest.TestCase):
+    """投影层的标题折叠与账本侧 fold_session_meta 必须产出同一标题。
+
+    架构评审候选 4：「用户改名后 opened 不再覆盖」曾同时实现在账本索引与
+    投影重推两处。此测试让两份实现互为对照；漂移即红。
+    """
+
+    def _events(self):
+        return [
+            {"seq": 1, "event": {"v": 1, "id": "o", "agent_id": "pi", "session_id": "s",
+                                 "ts": 1000, "type": "session.opened", "turn": None,
+                                 "payload": {"title": "auto-title"}}},
+            {"seq": 2, "event": {"v": 1, "id": "r", "agent_id": "pi", "session_id": "s",
+                                 "ts": 2000, "type": "session.renamed", "turn": None,
+                                 "payload": {"title": "user-name"}}},
+            {"seq": 3, "event": {"v": 1, "id": "o2", "agent_id": "pi", "session_id": "s",
+                                 "ts": 3000, "type": "session.opened", "turn": None,
+                                 "payload": {"title": "late-opened"}}},
+        ]
+
+    def test_projection_and_fold_agree(self):
+        from ata.fold import fold_session_meta
+        recs = self._events()
+        page = project_session("s", "pi", recs)
+        folded = None
+        for rec in recs:
+            folded = fold_session_meta(folded, rec["event"])
+        self.assertEqual(page["title"], folded["title"])
+
+    def test_renamed_beats_late_opened(self):
+        page = project_session("s", "pi", self._events())
+        self.assertEqual(page["title"], "user-name")
+
+
 if __name__ == "__main__":
     unittest.main()
