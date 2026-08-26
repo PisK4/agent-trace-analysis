@@ -483,6 +483,10 @@ def summarize_tools(recs):
 # claude/codex/droid 适配器的「耗时未知」占位约定：第一方转录不带耗时统一写 1。
 PLACEHOLDER_MS = 1
 
+# 毫秒时间戳低于此值视为脏数据（历史推送端写过 ts=1 的行），不参与墙钟
+# 跨度——否则 span 被拉成 50+ 年。与 ledger._REAL_TS_FLOOR 同一约定。
+_REAL_TS_FLOOR = 10 ** 12
+
 
 def summarize_timing(recs):
     """会话级时间拆解（DSH 统计栏同思路）：墙钟跨度内 LLM 生成 vs 工具执行。
@@ -497,8 +501,9 @@ def summarize_timing(recs):
     for rec in recs:
         e = rec["event"]
         ts = e["ts"]
-        first_ts = ts if first_ts is None else min(first_ts, ts)
-        last_ts = ts if last_ts is None else max(last_ts, ts)
+        if ts > _REAL_TS_FLOOR:
+            first_ts = ts if first_ts is None else min(first_ts, ts)
+            last_ts = ts if last_ts is None else max(last_ts, ts)
         p = e["payload"]
         if e["type"] == "message.upserted" and p.get("role") == "assistant":
             msgs[str(p.get("message_id"))] = (e.get("turn"), p.get("duration_ms"))

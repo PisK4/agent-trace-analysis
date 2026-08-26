@@ -4,8 +4,12 @@ from ata.project import summarize_timing
 
 def rec(seq, typ, ts, payload, turn=1):
     return {"seq": seq, "event": {"v": 1, "id": f"e{seq}", "agent_id": "pi",
-            "session_id": "s", "ts": ts, "type": typ, "turn": turn,
+            "session_id": "s", "ts": TS0 + ts, "type": typ, "turn": turn,
             "payload": payload}}
+
+
+# fixture 时间戳基线：summarize_timing 只认 > 10^12 的真实毫秒 ts（脏数据过滤）
+TS0 = 1_700_000_000_000
 
 
 class TestSummarizeTiming(unittest.TestCase):
@@ -79,6 +83,20 @@ class TestSummarizeTiming(unittest.TestCase):
         self.assertEqual(out["turns"], 2)
         self.assertEqual([t["turn"] for t in out["per_turn"]], [1, 2])
         self.assertEqual(out["llm_ms"], 10000)
+
+    def test_dirty_ts_excluded_from_span(self):
+        # ts=1 脏行（历史推送端 bug 的存量数据）不参与墙钟跨度，
+        # 否则 span 被拉成 50+ 年（与 ledger._REAL_TS_FLOOR 同一约定）
+        recs = [
+            rec(1, "system.upserted", -TS0 + 1, {}),
+            rec(2, "message.upserted", 0, {"message_id": "a1",
+                "role": "assistant", "status": "completed", "duration_ms": 1}),
+            rec(3, "tool.upserted", 5000, {"tool_call_id": "c1",
+                "status": "completed", "duration_ms": 1}),
+        ]
+        out = summarize_timing(recs)
+        self.assertEqual(out["span_ms"], 5000)
+        self.assertEqual(out["first_ts"], TS0)
 
 
 if __name__ == "__main__":
