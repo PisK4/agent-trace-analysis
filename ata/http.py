@@ -157,7 +157,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787):
             if path in ("/", "/index.html"):
                 target = webroot / "index.html"
                 if not target.exists():
-                    return self._bytes(404, b"missing web/index.html", "text/plain")
+                    return self._bytes(404, b"missing web/dist/index.html (run: cd webapp && npm run build)", "text/plain")
                 return self._bytes(200, target.read_bytes(), "text/html; charset=utf-8")
             target = (webroot / path.lstrip("/")).resolve()
             if webroot.resolve() not in target.parents and target != webroot.resolve():
