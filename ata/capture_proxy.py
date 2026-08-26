@@ -15,6 +15,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
+from ata.wire.storage_headers import record_headers_for_storage
+
 MAX_CAPTURE_BYTES = 8 * 1024 * 1024
 _CHUNK = 65536
 # 转发头黑名单（hop-by-hop）：其余头（含认证头）原样透传给上游——红线是
@@ -82,8 +84,7 @@ def start_capture_proxy(host, port, upstream, agent_id, ingest):
             record = {
                 "agent_id": agent_id,
                 "path": self.path.split("?", 1)[0],
-                "request_headers": {k: v for k, v in self.headers.items()
-                                    if k.lower().startswith("x-claude")},
+                "request_headers": record_headers_for_storage(self.headers),
                 "request_body": bytes(body),
                 "response_content_type": content_type,
                 "response_body": bytes(buf),
