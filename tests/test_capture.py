@@ -1,11 +1,23 @@
 import json
 import unittest
 
-from ata.plugins.capture import count_real_user_turns, resolve_session_id
+from ata.plugins.capture import (
+    _user_text_from_item,
+    count_real_user_turns,
+    resolve_session_id,
+)
 
 
 def user_msg(text):
+    # 给 REQ1.messages 喂的原始请求形态：content blocks 数组。
     return {"role": "user", "content": [{"type": "text", "text": text}]}
+
+
+def wire_item(text):
+    # 给 _user_text_from_item / count_real_user_turns 喂的 wire summary 摘要
+    # 形态（anthropic_parser 产出，protocol_facts.py:57）：
+    # content blocks 已被压平成 text 字段。
+    return {"role": "user", "text": text}
 
 
 class ResolveSessionTest(unittest.TestCase):
@@ -17,29 +29,61 @@ class ResolveSessionTest(unittest.TestCase):
         self.assertIsNone(resolve_session_id({}, "claude"))
         self.assertIsNone(resolve_session_id({"user-agent": "claude-cli"}, "claude"))
 
+    def test_none_safe(self):
+        self.assertIsNone(resolve_session_id({}, "claude"))
+        self.assertIsNone(resolve_session_id({"request_headers": None}, "claude"))
+
 
 class CountTurnsTest(unittest.TestCase):
     def test_counts_real_user_messages(self):
-        msgs = [
-            user_msg("first"),
-            {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
-            user_msg("second"),
-            {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
-            user_msg("third"),
+        # 喂 wire summary 的 message_items 摘要形态：text 字段已压平。
+        items = [
+            wire_item("first"),
+            {"role": "assistant", "text": "ok"},
+            wire_item("second"),
+            {"role": "assistant", "text": "done"},
+            wire_item("third"),
         ]
-        self.assertEqual(count_real_user_turns(msgs), 3)
+        self.assertEqual(count_real_user_turns(items), 3)
 
     def test_context_injection_does_not_count(self):
-        msgs = [
-            user_msg("first"),
-            user_msg("<system-reminder>context noise</system-reminder>"),
-            user_msg("second"),
+        items = [
+            wire_item("first"),
+            wire_item("<system-reminder>context noise</system-reminder>"),
+            wire_item("second"),
         ]
-        self.assertEqual(count_real_user_turns(msgs), 2)
+        self.assertEqual(count_real_user_turns(items), 2)
 
     def test_empty_and_malformed(self):
         self.assertEqual(count_real_user_turns([]), 0)
-        self.assertEqual(count_real_user_turns([{"role": "user"}, None, "junk"]), 0)
+        self.assertEqual(
+            count_real_user_turns([{"role": "user"}, None, "junk"]), 0)
+
+
+class WireItemsTurnsTest(unittest.TestCase):
+    def test_text_block(self):
+        item = {"role": "user", "text": "hi"}
+        self.assertEqual(_user_text_from_item(item), "hi")
+
+    def test_assistant_returns_empty(self):
+        item = {"role": "assistant", "text": "ok"}
+        self.assertEqual(_user_text_from_item(item), "")
+
+    def test_non_dict_returns_empty(self):
+        self.assertEqual(_user_text_from_item(None), "")
+        self.assertEqual(_user_text_from_item("junk"), "")
+        self.assertEqual(_user_text_from_item([]), "")
+
+    def test_missing_text_returns_empty(self):
+        item = {"role": "user"}
+        self.assertEqual(_user_text_from_item(item), "")
+
+    def test_non_string_text_returns_empty(self):
+        # 防止 None / int 之类的退化值漏到 is_context_text 判 CONTEXT 段。
+        self.assertEqual(
+            _user_text_from_item({"role": "user", "text": None}), "")
+        self.assertEqual(
+            _user_text_from_item({"role": "user", "text": 42}), "")
 
 
 class TranslateCaptureTest(unittest.TestCase):
