@@ -8,11 +8,11 @@ from pathlib import Path
 from ata.plugins.common import (
     PLACEHOLDER_MS,
     bump_turn_if_real_user,
+    is_context_text,
     make_ev,
     tool_end_payload,
     tool_start_payload,
 )
-from ata.project import is_context_text
 from ata.schema import envelope
 
 

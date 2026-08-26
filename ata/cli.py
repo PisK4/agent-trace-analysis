@@ -21,6 +21,10 @@ RUNS_DIR = REGRESSION_DIR / "runs"
 METRICS = ["human_score", "turns", "tool_fail_rate",
            "tokens_reported", "usage_missing_turns", "duration_s"]
 
+# CLI 子命令集合的唯一归属地：__main__ 据此把机器读路径分发进本模块，
+# 两处各写一遍会漂移（架构评审二轮候选 7）。
+CLI_SUBCOMMANDS = {"read", "rate", "tasks", "run", "compare"}
+
 
 def build_parser():
     p = argparse.ArgumentParser(prog="ata read")
@@ -70,28 +74,40 @@ def _local(ledger_path, args):
     return {"ok": True, "compactions": list_compactions(led.read(args.sid))}
 
 
-def _remote(base, what, sid, args):
-    q = []
-    if getattr(args, "after_seq", None) is not None:
-        q.append(f"after_seq={args.after_seq}")
-    if getattr(args, "limit", None):
-        q.append(f"limit={args.limit}")
-    if getattr(args, "status", None):
-        q.append(f"status={args.status}")
-    if getattr(args, "name", None):
-        q.append(f"name={args.name}")
-    if getattr(args, "full", False):
-        q.append("full=true")
-    path = "/api/sessions" if what == "sessions" else f"/api/sessions/{sid}/{what}"
-    url = base.rstrip("/") + path + ("?" + "&".join(q) if q else "")
+def _request(base, path, body=None):
+    """CLI 统一 HTTP 通道（架构评审二轮候选 7）：错误纪律与超时只有一份。
+    CLI 是短命进程，失败直接退出，没有重试语义可谈。"""
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(
+        base.rstrip("/") + path, data=data,
+        headers={"content-type": "application/json"} if data is not None else {},
+        method="POST" if data is not None else "GET")
     try:
-        with urllib.request.urlopen(url, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=10) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         sys.exit(f"error: {e.read().decode()}")
     except urllib.error.URLError as e:
         sys.exit(f"error: service unreachable ({e.reason}); "
-                 f"try --ledger ~/.ata/ata.sqlite")
+                 f"try --ledger ~/.ata/ata.sqlite for read-only ops")
+
+
+def _remote(base, what, sid, filters):
+    """filters: {after_seq, limit, status, name, full}——调用方从各自 args 提取，
+    本函数不再依赖 argparse.Namespace 的形状（假 Namespace 七个 None 的骗局已拆）。"""
+    q = []
+    if filters.get("after_seq") is not None:
+        q.append(f"after_seq={filters['after_seq']}")
+    if filters.get("limit"):
+        q.append(f"limit={filters['limit']}")
+    if filters.get("status"):
+        q.append(f"status={filters['status']}")
+    if filters.get("name"):
+        q.append(f"name={filters['name']}")
+    if filters.get("full"):
+        q.append("full=true")
+    path = "/api/sessions" if what == "sessions" else f"/api/sessions/{sid}/{what}"
+    return _request(base, path + ("?" + "&".join(q) if q else ""))
 
 
 def apply_client_filters(data, args):
@@ -120,7 +136,9 @@ def main(argv):
     if args.ledger:
         data = _local(args.ledger, args)
     else:
-        data = apply_client_filters(_remote(args.url, args.what, args.sid, args), args)
+        filters = {k: getattr(args, k, None)
+                   for k in ("after_seq", "limit", "status", "name", "full")}
+        data = apply_client_filters(_remote(args.url, args.what, args.sid, filters), args)
     print(json.dumps(data, ensure_ascii=False))
 
 
@@ -136,9 +154,7 @@ def _rate_main(argv):
     a = p.parse_args(argv[1:])
     if a.ledger:
         sys.exit("error: rate 是写操作，只能走服务（去掉 --ledger）")
-    meta = _remote(a.url, "sessions", None, argparse.Namespace(
-        what="sessions", sid=None, after_seq=None, limit=None,
-        status=None, name=None, full=False))
+    meta = _remote(a.url, "sessions", None, {})
     if isinstance(meta, list):  # 远端 /api/sessions 返回裸数组
         meta = {"ok": True, "sessions": meta}
     mine = next((r for r in meta.get("sessions", []) if r["id"] == a.sid), None)
@@ -156,21 +172,11 @@ def build_score_event(agent_id, session_id, value, note=None):
 
 
 def post_json(base, path, body):
-    req = urllib.request.Request(
-        base.rstrip("/") + path, data=json.dumps(body).encode(),
-        headers={"content-type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=5) as r:
-        return json.load(r)
+    return _request(base, path, body)
 
 
 def get_json(base, path):
-    try:
-        with urllib.request.urlopen(base.rstrip("/") + path, timeout=10) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:
-        sys.exit(f"error: {e.read().decode()}")
-    except urllib.error.URLError as e:
-        sys.exit(f"error: service unreachable ({e.reason}); try --ledger for read-only ops")
+    return _request(base, path)
 
 
 # ---- 回归任务集与实验轮次（T5 决议：文件放 ~/.ata/regression/，本地 git 管版本）----

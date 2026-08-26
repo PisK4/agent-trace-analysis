@@ -1,7 +1,7 @@
 // 会话页顶栏：crumb / 重命名 / 刷新 / 跟随尾部 / 标注徽章+弹层 / 归组徽章+弹层 /
 // 全局搜索 / 主题切换。功能与摆放对齐旧版 web/index.html header.top。
 import { useEffect, useRef, useState } from 'react'
-import { api, eventEnvelope } from '../../api/client'
+import { api } from '../../api/client'
 import type { SessionData } from '../../api/merge'
 import type { AnnotationsPage } from '../../api/types'
 import { useToast } from '../toast'
@@ -87,8 +87,8 @@ export function TopBar({ sessionId, data, follow, onFollowChange, search, onSear
 
   const submitScore = async (value: string) => {
     try {
-      await api.appendEvent(eventEnvelope(null, sessionId, 'session.scored',
-        note ? { value, note } : { value }))
+      await api.appendForSession(sessionId, 'session.scored',
+        note ? { value, note } : { value })
       setNote('')
       setScoreOpen(false)
       toast(`已标注：${value}`)
@@ -108,8 +108,8 @@ export function TopBar({ sessionId, data, follow, onFollowChange, search, onSear
     const lastTask = lastTaskOf(rid)
     setBusyRun(rid)
     try {
-      await api.appendEvent(eventEnvelope(null, sessionId, 'session.assigned',
-        lastTask ? { run_id: rid, task_id: lastTask } : { run_id: rid, task_id: '' }))
+      await api.appendForSession(sessionId, 'session.assigned',
+        lastTask ? { run_id: rid, task_id: lastTask } : { run_id: rid, task_id: '' })
       setAllAssigns((prev) => [...prev, { session_id: sessionId, run_id: rid, task_id: lastTask || null, seq: Number.MAX_SAFE_INTEGER }])
       setRunId('')
       setAssignOpen(false)
@@ -137,7 +137,7 @@ export function TopBar({ sessionId, data, follow, onFollowChange, search, onSear
 
   const unassign = async (rid: string) => {
     try {
-      await api.appendEvent(eventEnvelope(null, sessionId, 'session.unassigned', { run_id: rid }))
+      await api.appendForSession(sessionId, 'session.unassigned', { run_id: rid })
       setAllAssigns((prev) => prev.filter((a) => !(a.session_id === sessionId && a.run_id === rid)))
       toast('已移出归组')
       onRefresh()
