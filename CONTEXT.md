@@ -33,7 +33,7 @@ _Avoid_: 用 extension 泛指任何适配器
 ### 会话结构
 
 **会话（session）**：
-一次 agent 对话的完整轨迹，是账本的归属单位。
+一次 agent 对话的完整轨迹trace，是账本的归属单位。
 _Avoid_: conversation、对话（指整体轨迹时）
 
 **对话视图**：
@@ -104,11 +104,21 @@ _Avoid_: 实验轮次、「创建一轮实验」的说法（应说「创建一�
 **对照对比（compare）**:
 两个 run 各自的分数快照摆出一张差异表。任一侧数据缺失则 Δ 为 n/a，不参与汇总；跨版本任务集不做逐格差值。
 
+### 代理采集
+
+**代理通道（capture）**：
+转发式采集代理：截获 agent↔LLM 的 HTTP 流量，解析出账本别处拿不到的事实（SYSTEM 快照、tools 目录、每轮 usage）作为规范事件并入账本。补充通道，不是权威平面；只发增量事实，从不替代第一方 transcript 适配器。
+_Avoid_: 万能代理、以代理流量当账本、把代理叫「反向代理组件」
+
+**并入（merge-on-write）**：
+代理截获的流量恢复出宿主 sessionId 后往同一 session 追加，靠幂等键收敛；恢复不了就丢弃并放弃该次采集，绝不新建孤儿会话。
+_Avoid_: 平行会话、读取侧归并
+
 ## 数据边界速记
 
 | agent | SYSTEM 快照 | usage |
 | --- | --- | --- |
 | pi / cue | 有 | reported |
-| claude | 无 | reported（缺失或全 0 → missing） |
+| claude | 无（代理通道开启时有） | reported（缺失或全 0 → missing）；每轮 usage 经代理通道补全 |
 | codex | 有 | reported |
 | droid | 无 | 恒 missing |
