@@ -205,28 +205,37 @@ def _translate(rec, state):
     if turn < 1:
         turn = 1
 
-    # user messages from request
+    # user messages from request (跟 count_real_user_turns 同口径过滤
+    # CONTEXT 注入, 避免 <system-reminder> 被当 user 消息写入)
+    from ata.project import is_context_text as _is_ctx
     for m in req.get("messages") or []:
         if not isinstance(m, dict) or m.get("role") != "user":
+            continue
+        # 先把 content 拼成 preview_text, 跟 count_real_user_turns 一致判断
+        content = m.get("content")
+        if isinstance(content, str):
+            preview_text = content
+        elif isinstance(content, list):
+            preview_text = "\n".join(
+                b.get("text", "") for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+                and isinstance(b.get("text"), str)
+            )
+        else:
+            preview_text = ""
+        if not preview_text or _is_ctx(preview_text):
             continue
         mid = str(m.get("id") or f"{sid}:user:{m.get('index', '')}")
         if mid in seen:
             continue
         seen.add(mid)
-        content = m.get("content")
         if isinstance(content, str):
-            texts = [content]
             blocks = [{"type": "text", "text": content}]
         elif isinstance(content, list):
-            texts, blocks = [], []
-            for b in content:
-                if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str):
-                    texts.append(b["text"])
-                if isinstance(b, dict):
-                    blocks.append(b)
+            blocks = [b for b in content if isinstance(b, dict)]
         else:
-            texts, blocks = [], []
-        text_joined = "\n".join(texts)
+            blocks = []
+        text_joined = preview_text
         # 跳过纯 tool_result 块 (没有文本 user)
         if not text_joined and not any(
             isinstance(b, dict) and b.get("type") != "tool_result" for b in blocks

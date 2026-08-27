@@ -433,5 +433,55 @@ class CaptureToolEmitTest(unittest.TestCase):
         self.assertIn("file.txt", (ends[0]["payload"].get("result") or ""))
 
 
+class UserContextFilterTest(unittest.TestCase):
+    """emit 路径必须跟 count_real_user_turns 同口径过滤 CONTEXT 注入,
+    否则 <system-reminder> 会被当 user 消息写入账本,投影层显示错乱。"""
+
+    def _rec(self, messages, sid="ctx-1"):
+        return {
+            "agent_id": "claude", "path": "/v1/messages",
+            "request_headers": {"x-claude-code-session-id": sid},
+            "request_body": json.dumps({
+                "model": "claude-3-5-sonnet", "messages": messages,
+            }).encode(),
+            "response_content_type": "application/json",
+            "response_body": json.dumps({
+                "id": "msg_resp_ctx", "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }).encode(),
+            "started_at_ms": 1000, "completed_at_ms": 2000,
+        }
+
+    def test_system_reminder_user_not_emitted(self):
+        from ata.plugins.capture import translate_capture
+        msgs = [
+            {"role": "user", "content": [{"type": "text",
+                "text": "<system-reminder>\nctx</system-reminder>"}]},
+        ]
+        events = translate_capture(self._rec(msgs), {"session_id": "ctx-1"})
+        user_upserts = [e for e in events
+                        if e["type"] == "message.upserted"
+                        and e["payload"].get("role") == "user"]
+        self.assertEqual(user_upserts, [])
+
+    def test_real_user_emitted_after_context(self):
+        from ata.plugins.capture import translate_capture
+        msgs = [
+            {"role": "user", "content": [{"type": "text",
+                "text": "<system-reminder>\nctx</system-reminder>"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "ack"}]},
+            {"role": "user", "content": [{"type": "text",
+                "text": "真 user 问题"}]},
+        ]
+        events = translate_capture(self._rec(msgs), {"session_id": "ctx-2"})
+        user_upserts = [e for e in events
+                        if e["type"] == "message.upserted"
+                        and e["payload"].get("role") == "user"]
+        self.assertEqual(len(user_upserts), 1)
+        self.assertEqual(user_upserts[0]["payload"]["text"], "真 user 问题")
+
+
 if __name__ == "__main__":
     unittest.main()
