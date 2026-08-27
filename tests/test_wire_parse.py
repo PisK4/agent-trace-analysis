@@ -57,6 +57,59 @@ class WireParseTest(unittest.TestCase):
         s2 = parse_response("/v1/messages", {}, "application/json", b"\xff\xfe")
         self.assertFalse(s2["json_valid"])
 
+    def test_chat_completions_path_dispatches_to_openai(self):
+        chat_req = (
+            b'{"model":"gpt-4o","stream":false,'
+            b'"messages":[{"role":"system","content":"You are droid."},'
+            b'{"role":"user","content":"hello"}],'
+            b'"tools":[{"type":"function","function":{"name":"Read",'
+            b'"description":"read a file","parameters":{"type":"object"}}}]}'
+        )
+        s = parse_request("/v1/chat/completions", {}, chat_req)
+        self.assertEqual(s["parser"]["family"], "openai")
+        self.assertEqual(s["api_family"], "openai-chat-completions")
+        self.assertTrue(s["json_valid"])
+        self.assertEqual(s["system_prompts"], ["You are droid."])
+        self.assertEqual([t["name"] for t in s["tool_items"]], ["Read"])
+
+    def test_responses_path_dispatches_to_openai(self):
+        s = parse_request("/v1/responses", {}, (
+            b'{"model":"o3","stream":false,'
+            b'"instructions":"You are codex.",'
+            b'"input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],'
+            b'"tools":[{"type":"function","name":"Bash",'
+            b'"description":"run shell","parameters":{"type":"object"}}]}'
+        ))
+        self.assertEqual(s["parser"]["family"], "openai")
+        self.assertEqual(s["api_family"], "openai-responses")
+        self.assertTrue(s["json_valid"])
+        self.assertIn("You are codex.", s["system_prompts"])
+        self.assertEqual([t["name"] for t in s["tool_items"]], ["Bash"])
+
+    def test_chat_completions_sse_response_parses(self):
+        body = (
+            b'data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"he"}}]}\n\n'
+            b'data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"llo"},'
+            b'"finish_reason":"stop"}]}\n\n'
+            b'data: [DONE]\n\n'
+        )
+        s = parse_response("/v1/chat/completions", {}, "text/event-stream", body)
+        self.assertEqual(s["response_id"], "chatcmpl-1")
+        self.assertEqual(s["response_text"], "hello")
+        self.assertEqual(s["finish_reasons"], ["stop"])
+
+    def test_chat_completions_json_response_usage(self):
+        body = (
+            b'{"id":"chatcmpl-2","choices":[{"message":{"role":"assistant","content":"ok"},'
+            b'"finish_reason":"stop"}],'
+            b'"usage":{"prompt_tokens":12,"completion_tokens":4}}'
+        )
+        s = parse_response("/v1/chat/completions", {}, "application/json", body)
+        self.assertEqual(s["response_id"], "chatcmpl-2")
+        self.assertEqual(s["response_text"], "ok")
+        self.assertEqual(s["usage"]["prompt_tokens"], 12)
+        self.assertEqual(s["usage"]["completion_tokens"], 4)
+
 
 if __name__ == "__main__":
     unittest.main()

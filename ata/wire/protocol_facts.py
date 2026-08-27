@@ -44,6 +44,14 @@ from .anthropic_parser import (
     parse_anthropic_request,
     parse_anthropic_response,
 )
+from .openai_parser import (
+    parse_openai_request,
+    parse_openai_response,
+)
+
+#: openai 族的 api_family 字符串集合,与 ava openai_parser.API_FAMILIES 反向对齐
+#: 以避免漂移。ata seam 不消费此集合,只用其作 _OpenAI.api_families 声明。
+OPENAI_API_FAMILIES = ("openai-chat-completions", "openai-responses")
 
 #: Bumped when the shape of a parser summary changes, not when an adapter is added.
 #: `parser` publishes this inside every summary and that value is on stored records, so
@@ -119,6 +127,44 @@ class _AnthropicMessages:
         return parse_anthropic_response(content_type, body)
 
 
+class _OpenAI:
+    """OpenAI Chat Completions + Responses API 的 ata seam 适配器。
+
+    内部委托给 ava 同款解析函数(ata/wire/openai_parser.py),wrapper 把
+    ata seam 多给的 headers 透传丢弃——ava 的 metadata 从 payload 走,
+    不读 request header,headers 在 ata 暂未消费。
+    """
+
+    family = "openai"
+    provider = "openai"
+    api_families = OPENAI_API_FAMILIES
+
+    @staticmethod
+    def _claims(path: str) -> bool:
+        normalized = path.split("?", 1)[0].rstrip("/")
+        return (
+            normalized.endswith("/chat/completions")
+            or normalized.endswith("/responses")
+        )
+
+    def handles(self, path: str) -> bool:
+        return self._claims(path)
+
+    def parse_request(
+        self, path: str, headers: dict[str, str], body: bytes
+    ) -> dict[str, Any]:
+        # headers: ata seam 形参;ava parse_openai_request 不消费,占位显式标注。
+        _ = headers
+        return parse_openai_request(path, body)
+
+    def parse_response(
+        self, path: str, headers: dict[str, str], content_type: str, body: bytes
+    ) -> dict[str, Any]:
+        # path/headers: ata seam 形参;ava parse_openai_response 不消费。
+        _ = path, headers
+        return parse_openai_response(content_type, body)
+
+
 class _OpenAICompatible:
     """未注册协议的默认 reader：只标注 family，不做结构化解析。
 
@@ -152,7 +198,7 @@ def registered() -> tuple[ProtocolParser, ...]:
     the registry; recording that mistake being made once already, on the other
     interface.
     """
-    return (_AnthropicMessages(),)
+    return (_AnthropicMessages(), _OpenAI())
 
 
 def registered_fallback() -> ProtocolParser:

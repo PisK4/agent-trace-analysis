@@ -1,45 +1,147 @@
 import json
 import unittest
 
-from ata.plugins.capture import count_real_user_turns, resolve_session_id
+from ata.plugins.capture import (
+    _user_text_from_item,
+    count_real_user_turns,
+    resolve_session_id,
+)
 
 
 def user_msg(text):
+    # 给 REQ1.messages 喂的原始请求形态：content blocks 数组。
     return {"role": "user", "content": [{"type": "text", "text": text}]}
+
+
+def wire_item(text):
+    # 给 _user_text_from_item / count_real_user_turns 喂的 wire summary 摘要
+    # 形态（anthropic_parser 产出，protocol_facts.py:57）：
+    # content blocks 已被压平成 text 字段。
+    return {"role": "user", "text": text}
 
 
 class ResolveSessionTest(unittest.TestCase):
     def test_claude_header_case_insensitive(self):
-        h = {"x-claude-code-session-id": "abc-123"}
-        self.assertEqual(resolve_session_id(h, "claude"), "abc-123")
+        rec = {"request_headers": {"x-claude-code-session-id": "abc-123"}}
+        self.assertEqual(resolve_session_id(rec, "claude"), "abc-123")
 
     def test_missing_header_returns_none(self):
+        self.assertIsNone(resolve_session_id(
+            {"request_headers": {}}, "claude"))
+        self.assertIsNone(resolve_session_id(
+            {"request_headers": {"user-agent": "claude-cli"}}, "claude"))
+
+    def test_none_rec_safe(self):
         self.assertIsNone(resolve_session_id({}, "claude"))
-        self.assertIsNone(resolve_session_id({"user-agent": "claude-cli"}, "claude"))
+        self.assertIsNone(resolve_session_id({"request_headers": None}, "claude"))
+
+
+class CodexBodyPathTest(unittest.TestCase):
+    def test_metadata_session_id(self):
+        body = json.dumps({"metadata": {"session_id": "codex-s-1"}}).encode()
+        rec = {"request_headers": {}, "request_body": body}
+        self.assertEqual(resolve_session_id(rec, "codex"), "codex-s-1")
+
+    def test_nested_metadata_deep(self):
+        # plan 里的占位 deep 路径 metadata.user.session_id 不在声明里——
+        # 计划只声明 metadata.session_id 一条。此测试验证 _dig 在该声明
+        # 下的实际可达深度（两层）。
+        body = json.dumps({
+            "metadata": {"session_id": "deep-1", "extra": "x"}
+        }).encode()
+        rec = {"request_headers": {}, "request_body": body}
+        self.assertEqual(resolve_session_id(rec, "codex"), "deep-1")
+
+    def test_header_takes_precedence_over_body(self):
+        # headers 路径优先（claude 走 headers；codex 走 body 但 headers 命中也算）
+        rec = {
+            "request_headers": {"x-codex-window-id": "win-1"},
+            "request_body": json.dumps({"metadata": {"session_id": "codex-s-1"}}).encode(),
+        }
+        # codex 暂未在 _SESSION_HEADERS 声明 x-codex-window-id；body 路径胜出
+        self.assertEqual(resolve_session_id(rec, "codex"), "codex-s-1")
+
+    def test_missing_metadata_returns_none(self):
+        body = json.dumps({"metadata": {"other": "x"}}).encode()
+        rec = {"request_headers": {}, "request_body": body}
+        self.assertIsNone(resolve_session_id(rec, "codex"))
+
+    def test_garbage_body_returns_none(self):
+        rec = {"request_headers": {}, "request_body": b"\xff\xfe"}
+        self.assertIsNone(resolve_session_id(rec, "codex"))
+
+    def test_empty_body_returns_none(self):
+        rec = {"request_headers": {}, "request_body": b""}
+        self.assertIsNone(resolve_session_id(rec, "codex"))
+
+
+class DroidNamespaceTest(unittest.TestCase):
+    def test_droid_returns_none_for_now(self):
+        # droid 走代理：headers 路径未声明（待真实流量回填具体头名），
+        # body 路径未声明（droid 是否用 body metadata 未知）。
+        # 暂返回 None → 走 ingest_capture 的 ValueError 路径被吞掉。
+        # 2026-08-27 e2e 验证：droid 真实请求 17878 既不带 x-droid-* 头、
+        # 也不在 body metadata.session_id,sid 完全不在 wire traffic 上。
+        # capture_proxy 因此**无法**为 droid 恢复 sid;这条 sid 来自 droid
+        # daemon 自身的 transcript 适配器(file watcher 扫 ~/.factory/sessions),
+        # 走 capture_proxy 通道无法合并同一 session。
+        rec = {
+            "request_headers": {"x-droid-trace-id": "d-1"},
+            "request_body": b'{"some": "json"}',
+        }
+        self.assertIsNone(resolve_session_id(rec, "droid"))
 
 
 class CountTurnsTest(unittest.TestCase):
     def test_counts_real_user_messages(self):
-        msgs = [
-            user_msg("first"),
-            {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
-            user_msg("second"),
-            {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
-            user_msg("third"),
+        # 喂 wire summary 的 message_items 摘要形态：text 字段已压平。
+        items = [
+            wire_item("first"),
+            {"role": "assistant", "text": "ok"},
+            wire_item("second"),
+            {"role": "assistant", "text": "done"},
+            wire_item("third"),
         ]
-        self.assertEqual(count_real_user_turns(msgs), 3)
+        self.assertEqual(count_real_user_turns(items), 3)
 
     def test_context_injection_does_not_count(self):
-        msgs = [
-            user_msg("first"),
-            user_msg("<system-reminder>context noise</system-reminder>"),
-            user_msg("second"),
+        items = [
+            wire_item("first"),
+            wire_item("<system-reminder>context noise</system-reminder>"),
+            wire_item("second"),
         ]
-        self.assertEqual(count_real_user_turns(msgs), 2)
+        self.assertEqual(count_real_user_turns(items), 2)
 
     def test_empty_and_malformed(self):
         self.assertEqual(count_real_user_turns([]), 0)
-        self.assertEqual(count_real_user_turns([{"role": "user"}, None, "junk"]), 0)
+        self.assertEqual(
+            count_real_user_turns([{"role": "user"}, None, "junk"]), 0)
+
+
+class WireItemsTurnsTest(unittest.TestCase):
+    def test_text_block(self):
+        item = {"role": "user", "text": "hi"}
+        self.assertEqual(_user_text_from_item(item), "hi")
+
+    def test_assistant_returns_empty(self):
+        item = {"role": "assistant", "text": "ok"}
+        self.assertEqual(_user_text_from_item(item), "")
+
+    def test_non_dict_returns_empty(self):
+        self.assertEqual(_user_text_from_item(None), "")
+        self.assertEqual(_user_text_from_item("junk"), "")
+        self.assertEqual(_user_text_from_item([]), "")
+
+    def test_missing_text_returns_empty(self):
+        item = {"role": "user"}
+        self.assertEqual(_user_text_from_item(item), "")
+
+    def test_non_string_text_returns_empty(self):
+        # 防止 None / int 之类的退化值漏到 is_context_text 判 CONTEXT 段。
+        self.assertEqual(
+            _user_text_from_item({"role": "user", "text": None}), "")
+        self.assertEqual(
+            _user_text_from_item({"role": "user", "text": 42}), "")
 
 
 class TranslateCaptureTest(unittest.TestCase):

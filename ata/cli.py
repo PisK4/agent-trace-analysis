@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ata.schema import envelope
 
-DEFAULT_URL = "http://127.0.0.1:8787"
+DEFAULT_URL = "http://127.0.0.1:17877"
 REGRESSION_DIR = Path.home() / ".ata" / "regression"
 TASKS_FILE = REGRESSION_DIR / "tasks.jsonl"
 RUNS_DIR = REGRESSION_DIR / "runs"

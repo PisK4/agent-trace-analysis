@@ -11,6 +11,8 @@ usage 两块。
 """
 from __future__ import annotations
 
+from ata.schema import envelope
+
 # claude/codex/droid 的「耗时未知」占位约定：转录不带耗时统一写 1，
 # 消费端 summarize_timing 按 >PLACEHOLDER_MS 过滤。与 project.PLACEHOLDER_MS 同值。
 PLACEHOLDER_MS = 1
@@ -30,19 +32,6 @@ _CONTEXT_PREFIXES = (
 def is_context_text(text):
     raw = (text or "").lstrip()
     return any(raw.startswith(prefix) for prefix in _CONTEXT_PREFIXES)
-
-
-def make_ev(eid, agent_id, session_id, ts, typ, turn, payload):
-    return {
-        "v": 1,
-        "id": eid,
-        "agent_id": agent_id,
-        "session_id": session_id,
-        "ts": int(ts),
-        "type": typ,
-        "turn": turn,
-        "payload": payload,
-    }
 
 
 _MISSING_SHAPE = {
@@ -113,8 +102,13 @@ def bump_turn_if_real_user(state, texts, agent_id, session_id, ts, emit):
     turn = state["turn"]
     if turn not in state.setdefault("started_turns", set()):
         state["started_turns"].add(turn)
-        emit(make_ev(
-            f"{session_id}:turn:{turn}:start", agent_id, session_id, ts,
-            "turn.started", turn, {},
+        emit(envelope(
+            agent_id=agent_id,
+            session_id=session_id,
+            type_="turn.started",
+            payload={},
+            turn=turn,
+            ts=ts,
+            eid=f"{session_id}:turn:{turn}:start",
         ))
     return turn
