@@ -86,6 +86,30 @@ class WireParseTest(unittest.TestCase):
         self.assertIn("You are codex.", s["system_prompts"])
         self.assertEqual([t["name"] for t in s["tool_items"]], ["Bash"])
 
+    def test_chat_completions_sse_response_parses(self):
+        body = (
+            b'data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"he"}}]}\n\n'
+            b'data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"llo"},'
+            b'"finish_reason":"stop"}]}\n\n'
+            b'data: [DONE]\n\n'
+        )
+        s = parse_response("/v1/chat/completions", {}, "text/event-stream", body)
+        self.assertEqual(s["response_id"], "chatcmpl-1")
+        self.assertEqual(s["response_text"], "hello")
+        self.assertEqual(s["finish_reasons"], ["stop"])
+
+    def test_chat_completions_json_response_usage(self):
+        body = (
+            b'{"id":"chatcmpl-2","choices":[{"message":{"role":"assistant","content":"ok"},'
+            b'"finish_reason":"stop"}],'
+            b'"usage":{"prompt_tokens":12,"completion_tokens":4}}'
+        )
+        s = parse_response("/v1/chat/completions", {}, "application/json", body)
+        self.assertEqual(s["response_id"], "chatcmpl-2")
+        self.assertEqual(s["response_text"], "ok")
+        self.assertEqual(s["usage"]["prompt_tokens"], 12)
+        self.assertEqual(s["usage"]["completion_tokens"], 4)
+
 
 if __name__ == "__main__":
     unittest.main()
