@@ -483,5 +483,63 @@ class UserContextFilterTest(unittest.TestCase):
         self.assertEqual(user_upserts[0]["payload"]["text"], "真 user 问题")
 
 
+class UserMidDerivationTest(unittest.TestCase):
+    """anthropic wire 真实 user 消息没有 id 字段; 测试必须不手工塞 id,
+    派生 mid 必须从 message_items[i].index 拿, 避免 f'{sid}:user:' 空尾巴
+    导致所有 user 撞同一 mid 一起被 seen 吞。"""
+
+    def _rec(self, messages, sid="mid-1", resp_id="msg_r"):
+        return {
+            "agent_id": "claude", "path": "/v1/messages",
+            "request_headers": {"x-claude-code-session-id": sid},
+            "request_body": json.dumps({
+                "model": "claude-3-5-sonnet", "messages": messages,
+            }).encode(),
+            "response_content_type": "application/json",
+            "response_body": json.dumps({
+                "id": resp_id, "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }).encode(),
+            "started_at_ms": 1000, "completed_at_ms": 2000,
+        }
+
+    def test_user_mid_includes_index(self):
+        from ata.plugins.capture import translate_capture
+        msgs = [
+            {"role": "user", "content": [{"type": "text", "text": "first"}]},
+        ]
+        events = translate_capture(
+            self._rec(msgs, sid="mid-A", resp_id="r1"),
+            {"session_id": "mid-A"})
+        user_ev = next(e for e in events
+                       if e["type"] == "message.upserted"
+                       and e["payload"].get("role") == "user")
+        # mid 必须包含 index=0, 不能是空尾巴
+        self.assertIn("mid-A:user:1:0", user_ev["payload"]["message_id"])
+
+    def test_two_user_messages_get_different_mids(self):
+        from ata.plugins.capture import translate_capture
+        msgs = [
+            {"role": "user", "content": [{"type": "text", "text": "first"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "ack"}]},
+            {"role": "user", "content": [{"type": "text", "text": "second"}]},
+        ]
+        events = translate_capture(
+            self._rec(msgs, sid="mid-B", resp_id="r2"),
+            {"session_id": "mid-B"})
+        user_evs = [e for e in events
+                    if e["type"] == "message.upserted"
+                    and e["payload"].get("role") == "user"]
+        mids = [e["payload"]["message_id"] for e in user_evs]
+        self.assertEqual(len(mids), 2)
+        # 不撞同 mid
+        self.assertNotEqual(mids[0], mids[1])
+        # 都含 :user:N:index 形状
+        for m in mids:
+            self.assertRegex(m, r"mid-B:user:\d+:\d+")
+
+
 if __name__ == "__main__":
     unittest.main()

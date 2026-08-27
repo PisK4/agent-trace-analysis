@@ -225,7 +225,19 @@ def _translate(rec, state):
             preview_text = ""
         if not preview_text or _is_ctx(preview_text):
             continue
-        mid = str(m.get("id") or f"{sid}:user:{m.get('index', '')}")
+        # wire 真实 user 消息没有 id 字段; 从 user 消息在 messages 里的
+        # 下标派生 mid, turn + user 消息下标双键保证唯一性, 跨 turn 不撞。
+        # 有 id 时直接用 id (与 v2 升级前一致)。
+        raw_mid = m.get("id")
+        if not raw_mid:
+            user_idx = 0
+            for m2 in req.get("messages") or []:
+                if m2 is m:
+                    break
+                if isinstance(m2, dict) and m2.get("role") == "user":
+                    user_idx += 1
+            raw_mid = f"{sid}:user:{turn}:{user_idx}"
+        mid = raw_mid
         if mid in seen:
             continue
         seen.add(mid)
