@@ -44,7 +44,7 @@ JSONL 读取器（`ata/plugins/jsonl.py`）无状态机，只做「字节偏移 
 
 | 项 | 规则 |
 | --- | --- |
-| 触发前缀 | `<system-reminder>`、`<system-notification>`、`Skill "`、`Skill '` |
+| 触发前缀 | `<system-reminder>`、`<system-notification>`、`Skill "`、`Skill '`、`<session>`、`<task-notification>`、`<command-name>`、`<command-message>`、`<local-command-stdout>`、`<local-command-caveat>` |
 | 翻译裁决 | 仍走 `user` 角色；不开新轮；不计入 turns |
 | 投影层 | `is_context_text` 同吃，标 `CONTEXT` 与 dsh 对齐 |
 | 出处 | 唯一归属地在 `ata/plugins/common.py`；投影层 `ata/project.py` 复用同函数 |

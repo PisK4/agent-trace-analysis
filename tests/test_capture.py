@@ -500,6 +500,70 @@ class UserContextFilterTest(unittest.TestCase):
         self.assertEqual(len(user_upserts), 1)
         self.assertEqual(user_upserts[0]["payload"]["text"], "真 user 问题")
 
+    def test_session_injection_not_emitted(self):
+        """<session> 注入 (harness 把 handoff 内容用 <session> 块包起来送进
+        wire) 跟 <system-reminder> 一样属于 CONTEXT 注入, 不能当 user 写入。
+        真实流量见 sid dfe9247a (2026-08-27) T1 user 旁被污染的样本。"""
+        from ata.plugins.capture import translate_capture
+        msgs = [
+            {"role": "user", "content": [{"type": "text",
+                "text": "<session>\n@repos/ata/foo</session>"}]},
+        ]
+        events = translate_capture(self._rec(msgs, sid="ctx-sess"),
+                                    {"session_id": "ctx-sess"})
+        user_upserts = [e for e in events
+                        if e["type"] == "message.upserted"
+                        and e["payload"].get("role") == "user"]
+        self.assertEqual(user_upserts, [])
+
+    def test_task_notification_injection_not_emitted(self):
+        """<task-notification> 是 harness 后台任务回报, 不是 user 提问。"""
+        from ata.plugins.capture import translate_capture
+        msgs = [
+            {"role": "user", "content": [{"type": "text",
+                "text": "<task-notification>\n<task-id>abc</task-id>\n"
+                         "foo</task-notification>"}]},
+        ]
+        events = translate_capture(self._rec(msgs, sid="ctx-task"),
+                                    {"session_id": "ctx-task"})
+        user_upserts = [e for e in events
+                        if e["type"] == "message.upserted"
+                        and e["payload"].get("role") == "user"]
+        self.assertEqual(user_upserts, [])
+
+    def test_command_name_and_message_not_emitted(self):
+        """<command-name>/<command-message> 是 slash 命令 (e.g. /clear /design)
+        的 harness 注入, 同样不是 user 消息本体。"""
+        from ata.plugins.capture import translate_capture
+        for sid, txt in [
+            ("ctx-cmd1", "<command-name>/clear</command-name>"),
+            ("ctx-cmd2", "<command-message>ata</command-message>"),
+        ]:
+            msgs = [{"role": "user", "content": [{"type": "text", "text": txt}]}]
+            events = translate_capture(self._rec(msgs, sid=sid),
+                                        {"session_id": sid})
+            user_upserts = [e for e in events
+                            if e["type"] == "message.upserted"
+                            and e["payload"].get("role") == "user"]
+            self.assertEqual(user_upserts, [], f"failed for {sid}")
+
+    def test_local_command_stderr_not_emitted(self):
+        """<local-command-stdout>/<local-command-caveat> 是本地命令的 harness
+        旁路回流 (例如 set model 后的 stdout), 走的是 user role wire 但语义
+        是 harness 输出, 不当 user 消息写入。"""
+        from ata.plugins.capture import translate_capture
+        for sid, txt in [
+            ("ctx-loc1", "<local-command-stdout>Set model to Sonnet</local-command-stdout>"),
+            ("ctx-loc2", "<local-command-caveat>Caveat: foo</local-command-caveat>"),
+        ]:
+            msgs = [{"role": "user", "content": [{"type": "text", "text": txt}]}]
+            events = translate_capture(self._rec(msgs, sid=sid),
+                                        {"session_id": sid})
+            user_upserts = [e for e in events
+                            if e["type"] == "message.upserted"
+                            and e["payload"].get("role") == "user"]
+            self.assertEqual(user_upserts, [], f"failed for {sid}")
+
 
 class UserMidDerivationTest(unittest.TestCase):
     """anthropic wire 真实 user 消息没有 id 字段; 测试必须不手工塞 id,

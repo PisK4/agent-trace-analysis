@@ -22,10 +22,22 @@ PLACEHOLDER_MS = 1
 # 用户消息、不开新轮」是翻译裁决（CONTEXT.md 明文挂在 CONTEXT 词条下），
 # 唯一归属地在翻译内核；投影层改标 CONTEXT 同吃这份判定。
 _CONTEXT_PREFIXES = (
+    # 内置 harness 注入: Claude Code 系统级提醒 / 通知
     "<system-reminder>",
     "<system-notification>",
+    # Skill 自动加载提示
     "Skill \"",
     "Skill '",
+    # 会话上下文 / handoff 引用 (harness 把 handoff 内容用 <session> 块包起来)
+    "<session>",
+    # 后台任务回报
+    "<task-notification>",
+    # 用户 slash 命令名 / 携带消息 (例如 /clear /design /plugin /model)
+    "<command-name>",
+    "<command-message>",
+    # 本地命令输出 / caveat 回流 (不属 user, 是 harness 的 stdout 旁路)
+    "<local-command-stdout>",
+    "<local-command-caveat>",
 )
 
 
