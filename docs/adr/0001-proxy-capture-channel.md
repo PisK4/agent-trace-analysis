@@ -123,3 +123,39 @@ mtime/offset 检测失活导致 tool 行漂到 seq 2000+ 之后）仍存在。
   投影层只看到 end 状态。待 tool dedupe_key 拆成 `None`（下轮）。
 - 不再依赖 transcript tail 的 mtime/offset 检测：long session 上 tool
   漂到 seq 2000+ 的根因 #3 自此不再可能。
+
+### v2 已知限制（2026-08-27 增补）
+
+落地后跑 fbc74609-c590-4261-8c12-2904acbb3200 复测，识别出两条
+已知限制，明确不在本轮修复：
+
+- **SSE thinking 块未还原**：`anthropic_parser._finalize_sse_block`
+  把 `text_delta` 与 `thinking_delta` 合并到 `text` 字段（行 358-361
+  把两者都写进 `_text_parts`），所以 `response_blocks` 走到
+  `capture.py:_translate` 提取 thinking 时永远拿不到 `b["thinking"]`
+  —— 只能拿到 `b["text"]`（其中已混着 thinking）。代理端
+  `thinking=None` 是这一行的必然结果。如需还原，单独立项：让
+  `_finalize_sse_block` 把 thinking 拆到 `b["thinking"]` 字段。
+- **tool dedupe_key 折叠**（已在上面"后果"节末段提过）：本轮没修。
+  投影层 `fbc74609` 的 tool 行全部 `status=completed` 看不到 pending 状态。
+  修法：把 `tool.upserted:{cid}` 的 dedupe_key 拆成 `None`，让 ledger
+  保留多行同 cid 的 eid 折叠（start / end 共存）。
+
+### v2 待办（按收益 / 风险排序）
+
+1. **tool dedupe_key 拆 `None`**：解锁投影层 pending → completed 状态机。
+   工作量小，收益直接（fbc74609 立刻可看 tool 状态变化）。
+2. **SSE thinking 还原**：把 `_finalize_sse_block` 的 `text_delta` /
+   `thinking_delta` 分流。capture 端不需要改，代理 emit 即时获得
+   `thinking` 字段。
+3. **droid / codex 走代理**：`droid` 真实流量在 wire 上无 sid（无
+   `x-droid-*` 头、body 无 `metadata.session_id`），代理 `resolve_session_id`
+   失败 → `ingest_capture` 抛 `ValueError` 被吞 → 走 `capture_proxy._VIRTUAL_SID_AGENTS`
+   兜底产生 `droid-wire-<ts>-<rand>` 虚拟 sid，归并失败，droid 仍走
+   jsonl。codex 走 OpenAI Responses API，`openai_parser` 已移植但
+   `system/tools` 提取走 fallback。本轮无影响（jsonl 仍发 message），
+   但 droid / codex 走代理后才算"完整 v2"覆盖。
+4. **capture.py 拆小函数**：`_translate` 现在 ~200 行嵌套 4 层
+   （message → content → block → text），可拆 `_user_messages(req)` /
+   `_assistant_text_thinking(blocks)` / `_tool_results(req)` 三个
+   私有函数,降低维护成本。不紧急。
