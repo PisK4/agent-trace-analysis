@@ -48,6 +48,13 @@ class ProjectTest(unittest.TestCase):
         self.assertFalse(row["start"])
 
     def test_context_does_not_open_turn(self):
+        """Round 2 收窄后: 代理主发 turn, 投影层不再 remap context.turn。
+
+        老逻辑: project.py L213-224 把 context 行的 turn 拉回前一条 user 的
+        turn, 防止"第 2 轮"挂在 reminder 上。代理主发后, context 的 turn 由
+        上游写入的 turn 决定 (可能与 user 同 turn, 也可能独立), 投影层不再
+        干预 — 所以本测试 context 的 turn 保留原值 2 (老测试期望被改回 1)。
+        """
         recs = [
             rec(1, {"v":1,"id":"o","agent_id":"droid","session_id":"d","ts":1,"type":"session.opened","turn":None,"payload":{"title":"d"}}),
             rec(2, {"v":1,"id":"u","agent_id":"droid","session_id":"d","ts":2,"type":"message.upserted","turn":1,"payload":{
@@ -64,11 +71,33 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual([r["kind"] for r in rows], ["user", "context", "assistant"])
         self.assertEqual(rows[0]["turn"], 1)
         self.assertTrue(rows[0]["start"])
-        self.assertEqual(rows[1]["turn"], 1)
+        # Round 2: context.turn 保留原值 2 (代理端决定), 不再 remap 到 1
+        self.assertEqual(rows[1]["turn"], 2)
         self.assertFalse(rows[1]["start"])
-        self.assertEqual(rows[2]["turn"], 1)
-        self.assertFalse(rows[2]["start"])
-        self.assertEqual(project_session("d", "droid", recs)["turns"], 1)
+        # 新行为: assistant.turn=2 是新轮起点, start=True (老 remap 把 a1
+        # 也压回 turn=1 时代 assistant.start=False)
+        self.assertEqual(rows[2]["turn"], 2)
+        self.assertTrue(rows[2]["start"])
+
+    def test_orphan_assistant_not_remapped_to_one(self):
+        """Round 2: 代理主发 turn, 投影不再把"无前导 user 的 assistant 行"
+        remap 回 turn=1 (老 last_user_turn remap 的副作用)。"""
+        recs = [
+            rec(1, {"v":1,"id":"o","agent_id":"pi","session_id":"s","ts":1,"type":"session.opened","turn":None,"payload":{"title":"s"}}),
+            rec(2, {"v":1,"id":"u","agent_id":"pi","session_id":"s","ts":2,"type":"message.upserted","turn":1,"payload":{
+                "message_id":"u1","role":"user","text":"hi","status":"completed","request_no":None,
+                "usage":None,"started_at":2,"duration_ms":1,"output_text":None}}),
+            rec(3, {"v":1,"id":"a1","agent_id":"pi","session_id":"s","ts":3,"type":"message.upserted","turn":1,"payload":{
+                "message_id":"a1","role":"assistant","text":"a1","status":"completed","request_no":1,
+                "usage":None,"started_at":3,"duration_ms":1,"output_text":"a1"}}),
+            rec(4, {"v":1,"id":"a2","agent_id":"pi","session_id":"s","ts":4,"type":"message.upserted","turn":2,"payload":{
+                "message_id":"a2","role":"assistant","text":"a2","status":"completed","request_no":2,
+                "usage":None,"started_at":4,"duration_ms":1,"output_text":"a2"}}),
+        ]
+        rows = project_session("s", "pi", recs)["rows"]
+        # a2 保留 turn=2 (没有前导 user, 投影不再 remap 到 1)
+        a2 = next(r for r in rows if r.get("text") == "a2")
+        self.assertEqual(a2["turn"], 2)
 
     def test_tools_index_merges_catalog(self):
         # system.upserted 的 tools_catalog 按名字合并成 toolsIndex，后写覆盖前写，

@@ -209,19 +209,11 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
         for tool in row.get("toolsCatalog") or []:
             if isinstance(tool, dict) and tool.get("name"):
                 tools_index[str(tool["name"])] = tool
-    # 已入库的 CONTEXT 仍可能带着适配器按 user 递增的 turn。
-    # 投影时把这类孤儿轮次并回上一条真实用户轮次，避免 T2/T3 落在 reminder 上。
-    last_user_turn = None
-    remap = {}
-    for row in rows:
-        if row["kind"] == "user" and row.get("turn") is not None:
-            last_user_turn = row["turn"]
-        elif row["kind"] == "context" and last_user_turn is not None:
-            if row.get("turn") != last_user_turn:
-                remap[row["turn"]] = last_user_turn
-            row["turn"] = last_user_turn
-        elif row.get("turn") in remap:
-            row["turn"] = remap[row["turn"]]
+    # Round 2 收窄: 代理主发 turn 后, 投影不再 remap 孤儿 context / 孤儿
+    # assistant 行的 turn 字段。context / assistant 的 turn 由 ingest 端
+    # (代理 / droid / codex / pi 适配器) 决定, 投影层透传原值。
+    # 老逻辑(last_user_turn / remap)已被根因 #4 验证为「压回 turn=1」污染源
+    # (handoff §1 根因 #4), 代理主发后无孤儿 turn, 删之。
 
     seen_turn = set()
     for row in rows:
