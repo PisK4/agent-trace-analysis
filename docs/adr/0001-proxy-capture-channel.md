@@ -88,3 +88,38 @@ claude transcript 侧永久缺失 SYSTEM 快照、tools 目录、每轮 usage
 落档白名单 `x-droid-` namespace **占位存在**，让 STORAGE_HEADER_NAMESPACES
 含三家的事实**被一处声明**而不是散落。真实头名回填时，在
 `STORAGE_HEADER_NAMESPACES` 不动、`_SESSION_HEADERS` 加具体头名。
+
+### v2 升级：代理主发 message / tool（2026-08-27 增补）
+
+v1 明确「代理不发 message / tool」的理由（双通道 natural-key 写序竞态）
+在 transcript 跨 step state 持久化（2026-08-27 Round 1，commit fb74ff2）
+落地后被重新审视：两条通道拿到的是**两形态 message_id** —— 代理拿
+`resp.response_id`（`msg_01xxx`），transcript 拿 `gen-...`。dedupe 按
+message_id 不去重，投影会出现重复行。Round 1 只解决了 jsonl 侧
+`turn` 累加器丢失 + `pending` 攒齐 block，但根因 #3（jsonl tail 的
+mtime/offset 检测失活导致 tool 行漂到 seq 2000+ 之后）仍存在。
+
+裁决（v2）：
+
+- 代理主发 `message.upserted`（user 从 `req.messages`，assistant 从
+  `resp.response_blocks`）/ `tool.upserted`（start 从 `resp.response_tool_calls`，
+  end 从下一轮 request 的 `tool_result` 块）。
+- transcript `claude.py` 收窄为元数据通道：ai-title → `session.opened` /
+  `compact_boundary` / `system.api_error` 兜底 / attachment / mode / last-prompt。
+  `translate_line` 对 user / assistant 行直接 return，不再 emit
+  `message.upserted` / `tool.upserted` / `turn.started`。
+- `state["turn"]` 累加器从 transcript 迁到代理端 capture state，jsonl 侧
+  state dict 仍保留 turn 字段（不影响行为，后续清理）。
+- `project.py:last_user_turn` remap 删除（代理主发后无孤儿 turn；老 remap
+  是 handoff §1 根因 #4 的污染源）。
+
+后果：
+
+- 长 session 上 tool 行不再集中漂到 seq 2000+（根因 #3 根治）。
+- 投影层 assistant 行 turn 字段与 ingest 端发出的 turn 一致（无 remap
+  压回 turn=1 的污染）。
+- `tool.upserted` 双行 eid（`{sid}:tool:{cid}:start` / `:end`）与 dedupe_key
+  冲突是已知遗留：dedupe 按 `tool.upserted:{cid}` 折叠，start 行被吞；
+  投影层只看到 end 状态。待 tool dedupe_key 拆成 `None`（下轮）。
+- 不再依赖 transcript tail 的 mtime/offset 检测：long session 上 tool
+  漂到 seq 2000+ 的根因 #3 自此不再可能。
