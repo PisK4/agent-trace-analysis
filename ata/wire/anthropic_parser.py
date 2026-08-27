@@ -189,6 +189,11 @@ def _message_items(messages: Any) -> dict[str, Any]:
         message_tool_ids: list[str] = []
         if isinstance(message.get("id"), str):
             item_ids.append(message["id"])
+        # has_id: 这条 user 消息的 message 块带 wire id 字段。harness 自造
+        # 注入块时从不打 id, 真 user 消息 wire 带 id 是协议级不变量 —
+        # capture.py 的 is_context_text 据此守门, 形态学启发式绝不会误伤
+        # 真 user 写 <xxx> 形态的样本。
+        message_has_id = bool(isinstance(message.get("id"), str) and message["id"])
 
         for block in blocks:
             block_type = _block_type(block)
@@ -219,6 +224,7 @@ def _message_items(messages: Any) -> dict[str, Any]:
                 "role": role,
                 "content_types": content_types,
                 "text": "\n".join(message_texts),
+                "has_id": message_has_id,
                 # Keep position order: parallel same-name tool_use must not collapse.
                 "tool_call_names": list(message_tool_names),
                 "tool_call_ids": list(message_tool_ids),

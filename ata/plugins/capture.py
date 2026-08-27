@@ -95,18 +95,28 @@ def _user_text_from_item(item):
     return text if isinstance(text, str) else ""
 
 
+def _user_has_id_from_item(item):
+    """message_item 是否带 wire id 字段 (anthropic_parser._message_items
+    在 2026-08-27 治本改造里透出 has_id, 给 is_context_text 当 id 守门用)。
+    缺字段视为 False (没 id 视为注入嫌疑, 让形态学判)。"""
+    if not isinstance(item, dict):
+        return False
+    return bool(item.get("has_id"))
+
+
 def count_real_user_turns(message_items):
     """wire message_items 里的真实 user 消息数 = 当前轮次号。
 
     与 jsonl 侧 bump_turn_if_real_user 同口径：CONTEXT 注入不开轮
     （复用 ata.project.is_context_text，懒加载避免循环导入）。
+    id 守门: 块带 wire id 时豁免形态学判据, 避免误杀真 user 写 <xxx> 形态。
     """
     from ata.project import is_context_text
 
     count = 0
     for item in message_items or []:
         text = _user_text_from_item(item)
-        if not text or is_context_text(text):
+        if not text or is_context_text(text, has_id=_user_has_id_from_item(item)):
             continue
         count += 1
     return count
@@ -223,7 +233,7 @@ def _translate(rec, state):
             )
         else:
             preview_text = ""
-        if not preview_text or _is_ctx(preview_text):
+        if not preview_text or _is_ctx(preview_text, has_id=isinstance(m.get("id"), str)):
             continue
         # wire 真实 user 消息没有 id 字段; 从 user 消息在 messages 里的
         # 下标派生 mid, turn + user 消息下标双键保证唯一性, 跨 turn 不撞。

@@ -564,6 +564,72 @@ class UserContextFilterTest(unittest.TestCase):
                             and e["payload"].get("role") == "user"]
             self.assertEqual(user_upserts, [], f"failed for {sid}")
 
+    def test_bracket_keyword_injection_not_emitted(self):
+        """[BRACKETED_KEY] 形态注入 (harness 自动加的 [CURRENT_TIME] /
+        [MATERIAL_WINDOW] 等) 走形态学兜底, 不要求闭合 / 不要求 tag 在
+        已知列表里。"""
+        from ata.plugins.capture import translate_capture
+        for sid, txt in [
+            ("ctx-brk1", "[CURRENT_TIME]2026-08-27 19:15 (UTC+08:00)"),
+            ("ctx-brk2", "[MATERIAL_WINDOW]2026-08-27T09:29:25+"),
+        ]:
+            msgs = [{"role": "user", "content": [{"type": "text", "text": txt}]}]
+            events = translate_capture(self._rec(msgs, sid=sid),
+                                        {"session_id": sid})
+            user_upserts = [e for e in events
+                            if e["type"] == "message.upserted"
+                            and e["payload"].get("role") == "user"]
+            self.assertEqual(user_upserts, [], f"failed for {sid}")
+
+    def test_unclosed_injection_still_filtered(self):
+        """治本路径: 不要求闭合块, harness 出新形态 (<ide_selection> /
+        <uploaded_file> 等) 自动命中 <xxx> 兜底, 永远不漏。"""
+        from ata.plugins.capture import translate_capture
+        for sid, txt in [
+            ("ctx-fut1", "<ide_selection>selected text</ide_selection>"),
+            ("ctx-fut2", "<uploaded_file>/tmp/x.png</uploaded_file>"),
+            # 不闭合 (罕见但 harness 偶尔发)
+            ("ctx-unc1", "<system-reminder>incomplete no closing tag"),
+            # claudeMd / tool-result (ava trace_graph.py 同款 tag)
+            ("ctx-ava1", "<claudeMd>project memo</claudeMd>"),
+            ("ctx-ava2", "<tool-result>tool output</tool-result>"),
+        ]:
+            msgs = [{"role": "user", "content": [{"type": "text", "text": txt}]}]
+            events = translate_capture(self._rec(msgs, sid=sid),
+                                        {"session_id": sid})
+            user_upserts = [e for e in events
+                            if e["type"] == "message.upserted"
+                            and e["payload"].get("role") == "user"]
+            self.assertEqual(user_upserts, [], f"failed for {sid}")
+
+    def test_id_gate_protects_real_user_with_xml_text(self):
+        """id 守门: 真 user 消息 wire 带 id 字段, 即使文本是 <u>HTML</u> 或
+        [tag]foo 形态, is_context_text 也豁免, 不被误杀。
+        数据点: ~/.ata/ata.sqlite 统计所有 <xxx>...</xxx> 形态 user 消息
+        100% 是 harness 注入 (真 user 写 HTML 0 样本), 但 id 守门是协议级
+        不变量, 防未来真 user 真的写 XML 形态。"""
+        from ata.plugins.capture import translate_capture
+        for sid, txt in [
+            ("ctx-gt1", "<u>强调</u>"),
+            ("ctx-gt2", "[tag]bracketed-prefix"),
+        ]:
+            # 带 wire id 的真 user 消息
+            msgs = [{
+                "role": "user",
+                "content": [{"type": "text", "text": txt}],
+                "id": f"msg_real_{sid}",
+            }]
+            events = translate_capture(self._rec(msgs, sid=sid),
+                                        {"session_id": sid})
+            user_upserts = [e for e in events
+                            if e["type"] == "message.upserted"
+                            and e["payload"].get("role") == "user"]
+            self.assertEqual(len(user_upserts), 1,
+                             f"id gate should protect real user {sid}")
+            # 透传的 mid 应是 wire id (不是 sid:user:turn:user_idx 派生)
+            self.assertEqual(user_upserts[0]["payload"]["message_id"],
+                             f"msg_real_{sid}")
+
 
 class UserMidDerivationTest(unittest.TestCase):
     """anthropic wire 真实 user 消息没有 id 字段; 测试必须不手工塞 id,
