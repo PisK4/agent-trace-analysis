@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 from ata.plugins.common import (
     PLACEHOLDER_MS,
@@ -15,6 +16,27 @@ from ata.plugins.jsonl import translate_file as _jfile
 from ata.schema import envelope
 
 
+def _emit(state, events):
+    """把本行新增事件入 state["_buffer"] 队列, 由 translate_file 收尾按行序统一输出。
+    
+    走队列而非直接返回 out, 解决 trace 显示异常根因 #2: message.upserted(按 mid
+    攒齐后 file 收尾 emit) 与 tool.upserted(行内立即 emit) 的相对顺序错位。
+    file 收尾时 translate_file 把队列事件按产生时的 line_seq 升序 emit, 保证
+    jsonl 行内的事件相对位置不变(同 mid 内的 message.upserted 在 tool 之前)。
+    
+    老路径(state["_emit_immediate"]=True): 直接返回 events 供 translate_line 用。
+    """
+    if not events:
+        return
+    if state.get("_emit_immediate"):
+        # 老路径: 调用方 translate_line 直接拿到 events 当 out 返回
+        return events
+    buf = state.setdefault("_buffer", [])
+    line_seq = state.get("_line_seq", 0)
+    for ev in events:
+        buf.append((line_seq, ev))
+
+
 def translate_line(raw: dict, state: dict) -> list[dict]:
     typ = raw.get("type")
     session_id = raw.get("sessionId") or state.get("session_id") or "claude-session"
@@ -22,6 +44,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
     agent_id = "claude"
     ts = _ts(raw, state)
     state["ts"] = ts
+    state["_line_seq"] = state.get("_line_seq", -1) + 1
     out = []
     if not state.get("opened"):
         state["opened"] = True
@@ -46,11 +69,17 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 ts=ts,
                 eid=f"{session_id}:opened:title",
             ))
-        return out
+        emitted = _emit(state, out)
+        return emitted or out
     if typ == "system":
-        return _system_line(raw, state, ts, out)
+        _system_line(raw, state, ts, out)
+        emitted = _emit(state, out)
+        return emitted or out
     if typ not in {"user", "assistant"}:
-        return out
+        if out:
+            emitted = _emit(state, out)
+            return emitted or out
+        return []
     msg = raw.get("message")
     if isinstance(msg, str):
         content = msg
@@ -59,9 +88,9 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         content = msg.get("content") or ""
         role = msg.get("role")
     else:
-        return out
+        return out if state.get("_emit_immediate") else (_emit(state, out) or [])
     if role not in {"user", "assistant"}:
-        return out
+        return out if state.get("_emit_immediate") else (_emit(state, out) or [])
     texts, thinking = _split(content)
     is_tool_only = role == "user" and texts == "" and _has_tool_result(content)
     if not is_tool_only:
@@ -83,27 +112,59 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
         model = msg.get("model") if isinstance(msg, dict) else None
         if isinstance(model, str) and (not model or model.startswith("<")):
             model = None
-        out.append(envelope(
-            agent_id=agent_id,
-            session_id=session_id,
-            type_="message.upserted",
-            payload={
-                "message_id": mid,
-                "role": role,
-                "text": (texts or "")[:200],
-                "status": "completed",
-                "request_no": state.get("request_no") if role == "assistant" else None,
-                "usage": usage,
-                "started_at": ts,
-                "duration_ms": PLACEHOLDER_MS,
-                "output_text": texts if role == "assistant" else None,
-                "thinking": thinking or None,
-                "model": model,
-            },
-            turn=state.get("turn") or 1,
-            ts=ts,
-            eid=f"{session_id}:msg:{mid}",
-        ))
+        if state.get("_emit_immediate"):
+            # 老路径: 直接 emit message.upserted, 不走 pending 攒齐。
+            out.append(envelope(
+                agent_id="claude",
+                session_id=session_id,
+                type_="message.upserted",
+                payload={
+                    "message_id": mid,
+                    "role": role,
+                    "text": (texts or "")[:200],
+                    "status": "completed",
+                    "request_no": state.get("request_no") if role == "assistant" else None,
+                    "usage": usage,
+                    "started_at": ts,
+                    "duration_ms": PLACEHOLDER_MS,
+                    "output_text": texts if role == "assistant" else None,
+                    "thinking": thinking or None,
+                    "model": model,
+                },
+                turn=state.get("turn") or 1,
+                ts=ts,
+                eid=f"{session_id}:msg:{mid}",
+            ))
+        # 按 message_id 攒齐 block: 同 mid 跨多行(同 assistant 含 thinking+text+tool_use
+        # 多个 content block 时 jsonl 写成多行)合并为单条 message.upserted。一律攒
+        # pending,file 收尾 flush——保证 message.upserted 顺序按 mid 首次出现的
+        # jsonl 行序(pending dict 插入序)。tool_use / tool_result 走 out 立即 emit,
+        # 它们的双行协议 start/end 事件 id 已拆分,与 message.upserted 排序互不冲突。
+        pending = state.setdefault("pending_msg", {})
+        prior = pending.pop(mid, None)
+        if prior is not None:
+            # 同 mid 续行: 合并 texts/thinking, 保留 prior 的 usage/model。
+            merged_texts = (prior["texts"] + ("\n" if prior["texts"] and texts else "") + texts)
+            merged_thinking = (prior["thinking"] + ("\n" if prior["thinking"] and thinking else "") + thinking)
+        else:
+            merged_texts = texts
+            merged_thinking = thinking
+        # 同 mid 多行的 usage/model 只在 API 主行(通常是第一行)有,后续行留空;
+        # 这里 prior 的优先,避免被空覆盖。
+        is_first = prior is None
+        pending[mid] = {
+            "role": role,
+            "texts": merged_texts,
+            "thinking": merged_thinking,
+            "usage": (prior.get("usage") if prior else None) or usage,
+            "model": (prior.get("model") if prior else None) or model,
+            "request_no": state.get("request_no") if role == "assistant" else None,
+            "ts": ts,
+            "status": (prior.get("status") if prior else None) or "completed",
+            "_first_line_seq": (prior.get("_first_line_seq") if prior else None) or state.get("_line_seq", 0),
+        }
+        # 真正 emit 推迟到 file 收尾的 flush_pending_messages(state)——这样同 mid
+        # 跨多行 block 一定合并为单条 message.upserted。
     for block in _blocks(content):
         if block.get("type") == "tool_use":
             cid = str(block.get("id") or "")
@@ -141,11 +202,101 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 ts=ts,
                 eid=f"{session_id}:tool:{cid}:end",
             ))
+    emitted = _emit(state, out)
+    if state.get("_emit_immediate"):
+        return emitted or out
+    return []
+
+
+def _flush_pending_to_events(pending, session_id, state):
+    """把 pending_msg dict 转成 message.upserted 事件列表(纯转, 不入 buffer)。"""
+    out = []
+    for mid, p in pending.items():
+        out.append(envelope(
+            agent_id="claude",
+            session_id=session_id,
+            type_="message.upserted",
+            payload={
+                "message_id": mid,
+                "role": p["role"],
+                "text": (p["texts"] or "")[:200],
+                "status": p.get("status") or "completed",
+                "request_no": p.get("request_no"),
+                "usage": p.get("usage"),
+                "started_at": p.get("ts"),
+                "duration_ms": PLACEHOLDER_MS,
+                "output_text": p["texts"] if p["role"] == "assistant" else None,
+                "thinking": p.get("thinking") or None,
+                "model": p.get("model"),
+            },
+            turn=state.get("turn") or 1,
+            ts=p.get("ts"),
+            eid=f"{session_id}:msg:{mid}",
+        ))
     return out
 
 
-def translate_file(path, offset: int = 0):
-    return _jfile(path, translate_line, offset)
+def translate_file(path, offset: int = 0, state: dict | None = None):
+    if state is None:
+        # 老路径: 每次调用都重建 state 桶,无跨 step 持久。translate_line 返回
+        # 的 events 直接累计, message.upserted 在 translate_line 内部就走老逻辑
+        # (单行 per translate_file 模式)——为了兼容老测试, 这里回退到不攒齐。
+        # 实现: 把 _emit 切到「直接 out 模式」(buffer 不用)。
+        state = {"session_id": Path(path).stem, "_emit_immediate": True}
+        events, new_offset = _jfile(path, translate_line, offset, state)
+        return events, new_offset
+    path_key = str(Path(path).resolve())
+    # 跨 file 切换: 旧 file 的 buffer + pending 先入 _pre_flush, 再清。
+    if state.get("_current_path") and state["_current_path"] != path_key:
+        old_sid = state.get("session_id") or Path(state["_current_path"]).stem
+        pre = state.setdefault("_pre_flush", [])
+        buf_events = [ev for _, ev in state.get("_buffer", [])]
+        pending_events = _flush_pending_to_events(
+            state.get("pending_msg", {}), old_sid, state)
+        pre.extend(buf_events)
+        pre.extend(pending_events)
+        state["_buffer"] = []
+        state["pending_msg"] = {}
+        state["_line_seq"] = -1
+    state["_current_path"] = path_key
+    events, new_offset = _jfile(path, translate_line, offset, state)
+    session_id = state.get("session_id") or Path(path).stem
+    # 收尾: drain buffer (含 pending 嵌入), 输出按 line_seq 排序
+    pre = list(state.get("_pre_flush") or [])
+    state["_pre_flush"] = []
+    combined = list(state.get("_buffer", []))
+    for mid, p in (state.get("pending_msg") or {}).items():
+        first_seq = p.get("_first_line_seq")
+        if first_seq is None:
+            continue
+        ev = envelope(
+            agent_id="claude",
+            session_id=session_id,
+            type_="message.upserted",
+            payload={
+                "message_id": mid,
+                "role": p["role"],
+                "text": (p["texts"] or "")[:200],
+                "status": p.get("status") or "completed",
+                "request_no": p.get("request_no"),
+                "usage": p.get("usage"),
+                "started_at": p.get("ts"),
+                "duration_ms": PLACEHOLDER_MS,
+                "output_text": p["texts"] if p["role"] == "assistant" else None,
+                "thinking": p.get("thinking") or None,
+                "model": p.get("model"),
+            },
+            turn=state.get("turn") or 1,
+            ts=p.get("ts"),
+            eid=f"{session_id}:msg:{mid}",
+        )
+        combined.append((first_seq, ev))
+    combined.sort(key=lambda x: x[0])
+    out = pre + [ev for _, ev in combined]
+    state["_buffer"] = []
+    state["pending_msg"] = {}
+    state["_line_seq"] = -1
+    return out, new_offset
 
 
 def _system_line(raw, state, ts, out):
@@ -181,26 +332,49 @@ def _system_line(raw, state, ts, out):
         if attempt is not None and max_r is not None:
             bits.append(f"retry {attempt}/{max_r}")
         mid = str(raw.get("uuid") or f"{session_id}:api-error:{turn}:{ts}")
-        out.append(envelope(
-            agent_id="claude",
-            session_id=session_id,
-            type_="message.upserted",
-            payload={
-                "message_id": mid,
-                "role": "assistant",
-                "text": " · ".join(bits),
-                "status": "failed",
-                "request_no": None,
-                "usage": None,
-                "started_at": ts,
-                "duration_ms": PLACEHOLDER_MS,
-                "output_text": " · ".join(bits),
-                "thinking": None,
-            },
-            turn=turn,
-            ts=ts,
-            eid=f"{session_id}:msg:{mid}",
-        ))
+        if state.get("_emit_immediate"):
+            # 老路径: 直接 emit message.upserted (failed), 不走 pending。
+            texts = " · ".join(bits)
+            out.append(envelope(
+                agent_id="claude",
+                session_id=session_id,
+                type_="message.upserted",
+                payload={
+                    "message_id": mid,
+                    "role": "assistant",
+                    "text": texts[:200],
+                    "status": "failed",
+                    "request_no": None,
+                    "usage": None,
+                    "started_at": ts,
+                    "duration_ms": PLACEHOLDER_MS,
+                    "output_text": texts,
+                    "thinking": None,
+                    "model": None,
+                },
+                turn=turn,
+                ts=ts,
+                eid=f"{session_id}:msg:{mid}",
+            ))
+            return out
+        # 也走 pending_msg 攒齐, file 收尾 flush——保 message.upserted 事件顺序
+        # 按 jsonl 行序, 不让后续 error 抢到正常 user/assistant 行前面。
+        pending = state.setdefault("pending_msg", {})
+        prior = pending.pop(mid, None)
+        texts = " · ".join(bits)
+        if prior:
+            texts = prior["texts"] + "\n" + texts
+        pending[mid] = {
+            "role": "assistant",
+            "texts": texts,
+            "thinking": "",
+            "usage": None,
+            "model": None,
+            "request_no": None,
+            "ts": ts,
+            "status": "failed",
+            "_first_line_seq": state.get("_line_seq", 0),
+        }
     return out
 
 
