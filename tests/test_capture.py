@@ -177,10 +177,21 @@ class TranslateCaptureTest(unittest.TestCase):
         self.assertIsNone(u["cost"])
 
     def test_system_not_reemitted_when_unchanged(self):
-        r = record(json.dumps(REQ1).encode(), json.dumps(RESP1).encode())
-        self.translate(r, self.state)
-        evs = self.translate(r, self.state)
-        self.assertEqual([e["type"] for e in evs], ["turn.ended"])
+        import tempfile
+        from pathlib import Path
+        from ata.ledger import Ledger
+        from ata.plugins.capture import ingest_capture
+        with tempfile.TemporaryDirectory() as d:
+            led = Ledger(Path(d))
+            r = record(json.dumps(REQ1).encode(), json.dumps(RESP1).encode())
+            ingest_capture(led, r)
+            rows1 = len(led.read("s1"))
+            led2 = Ledger(Path(d))  # 新实例 (state 空, system_hash 重算)
+            ingest_capture(led2, r)
+            rows2 = len(led2.read("s1"))
+            # 第二次: system + 两条 message 走 dedupe_key UPDATE 不增行;
+            # turn.ended 走 PRIMARY KEY (event_id) 幂等, 也不增行。
+            self.assertEqual(rows2, rows1)
 
     def test_system_reemitted_when_prompt_changes(self):
         self.translate(record(json.dumps(REQ1).encode(),
@@ -330,15 +341,22 @@ class CaptureMessageEmitTest(unittest.TestCase):
         self.assertEqual(asst["payload"]["status"], "completed")
 
     def test_same_mid_not_reemitted_across_translations(self):
-        """同 sid + 同 message_id 在 state 已 emit 过的不再 emit。"""
-        from ata.plugins.capture import translate_capture
-        state = {"session_id": "cap-msg-4"}
-        translate_capture(self._rec(sid="cap-msg-4"), state)
-        # 第二次同 sid 同 user-msg-1: 已被 seen, user 块不重发
-        events2 = translate_capture(self._rec(sid="cap-msg-4"), state)
-        user_evs = [e for e in events2 if e["type"] == "message.upserted"
-                    and e["payload"]["role"] == "user"]
-        self.assertEqual(user_evs, [])
+        """同 sid + 同 message_id 走 events.dedupe_key 跨进程持久,
+        translate 是纯函数不挡重, 由 ingest_capture 的 ledger 兜底。"""
+        import tempfile
+        from pathlib import Path
+        from ata.ledger import Ledger
+        from ata.plugins.capture import ingest_capture
+        with tempfile.TemporaryDirectory() as d:
+            led = Ledger(Path(d))
+            ingest_capture(led, self._rec(sid="cap-msg-4"))
+            led2 = Ledger(Path(d))  # 新实例 (模拟 ata 重启)
+            led2.read("cap-msg-4")
+            recs = led2.read("cap-msg-4")
+            user_evs = [r for r in recs
+                        if r["event"]["type"] == "message.upserted"
+                        and r["event"]["payload"].get("role") == "user"]
+            self.assertEqual(len(user_evs), 1)
 
 
 class CaptureToolEmitTest(unittest.TestCase):
@@ -539,6 +557,54 @@ class UserMidDerivationTest(unittest.TestCase):
         # 都含 :user:N:index 形状
         for m in mids:
             self.assertRegex(m, r"mid-B:user:\d+:\d+")
+
+
+class SeenPersistedAcrossInstancesTest(unittest.TestCase):
+    """seen 不能只在 capture.py 内存 set, ata 重启后空 mid 又能 emit
+    一次会跟历史去重键冲突。seen 必须走 events.dedupe_key UNIQUE 索引
+    跨进程持久。"""
+
+    def test_second_ledger_instance_dedupes_via_dedupe_key(self):
+        import tempfile
+        from pathlib import Path
+        from ata.ledger import Ledger
+        from ata.plugins.capture import ingest_capture
+
+        rec = lambda sid, mid: {
+            "agent_id": "claude", "path": "/v1/messages",
+            "request_headers": {"x-claude-code-session-id": sid},
+            "request_body": json.dumps({
+                "model": "claude-3-5-sonnet",
+                "messages": [{"role": "user",
+                              "content": [{"type": "text", "text": "hi"}]}],
+            }).encode(),
+            "response_content_type": "application/json",
+            "response_body": json.dumps({
+                "id": "msg_r", "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }).encode(),
+            "started_at_ms": 1000, "completed_at_ms": 2000,
+        }
+        with tempfile.TemporaryDirectory() as d:
+            led1 = Ledger(Path(d))
+            ingest_capture(led1, rec("pers-1", "user-msg-1"))
+            recs1 = led1.read("pers-1")
+            user_upserts1 = [r for r in recs1
+                             if r["event"]["type"] == "message.upserted"
+                             and r["event"]["payload"].get("role") == "user"]
+            self.assertEqual(len(user_upserts1), 1)
+
+            # 同一账本文件, 全新 Ledger 实例 (模拟 ata 重启)
+            led2 = Ledger(Path(d))
+            ingest_capture(led2, rec("pers-1", "user-msg-1"))
+            recs2 = led2.read("pers-1")
+            user_upserts2 = [r for r in recs2
+                             if r["event"]["type"] == "message.upserted"
+                             and r["event"]["payload"].get("role") == "user"]
+            # 第二次没新行, dedupe_key UNIQUE 拦了
+            self.assertEqual(len(user_upserts2), 1)
 
 
 if __name__ == "__main__":

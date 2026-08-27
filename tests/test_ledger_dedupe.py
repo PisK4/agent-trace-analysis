@@ -85,5 +85,19 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(rows[0]["event"]["payload"]["status"], "completed")
 
 
+class DedupeKeyRoleTest(unittest.TestCase):
+    def test_message_user_dedupe_key(self):
+        from ata.ledger import _dedupe_key
+        ev = {"type": "message.upserted",
+              "payload": {"role": "user", "message_id": "abc"}}
+        self.assertEqual(_dedupe_key(ev), "message.upserted:user:abc")
+
+    def test_message_assistant_dedupe_key(self):
+        from ata.ledger import _dedupe_key
+        ev = {"type": "message.upserted",
+              "payload": {"role": "assistant", "message_id": "xyz"}}
+        self.assertEqual(_dedupe_key(ev), "message.upserted:assistant:xyz")
+
+
 if __name__ == "__main__":
     unittest.main()

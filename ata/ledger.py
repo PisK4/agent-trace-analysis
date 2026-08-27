@@ -21,7 +21,9 @@ def _dedupe_key(event: dict) -> str | None:
     typ = event.get("type")
     payload = event.get("payload") or {}
     if typ == "message.upserted" and payload.get("message_id"):
-        return f"{typ}:{payload['message_id']}"
+        # role 命名空间: user / assistant 撞同 message_id 时不互吞
+        role = payload.get("role") or "unknown"
+        return f"{typ}:{role}:{payload['message_id']}"
     if typ == "tool.upserted" and payload.get("tool_call_id"):
         return f"{typ}:{payload['tool_call_id']}"
     if typ == "session.opened":
@@ -117,7 +119,8 @@ class Ledger:
                 UPDATE events SET dedupe_key = CASE
                     WHEN type='message.upserted'
                          AND json_extract(event_json,'$.payload.message_id') IS NOT NULL
-                        THEN type || ':' || json_extract(event_json,'$.payload.message_id')
+                        THEN type || ':' || COALESCE(json_extract(event_json,'$.payload.role'),'unknown')
+                             || ':' || json_extract(event_json,'$.payload.message_id')
                     WHEN type='tool.upserted'
                          AND json_extract(event_json,'$.payload.tool_call_id') IS NOT NULL
                         THEN type || ':' || json_extract(event_json,'$.payload.tool_call_id')

@@ -198,8 +198,8 @@ def _translate(rec, state):
 
     # message.upserted (user + assistant): 代理主发, transcript 侧不再发
     # message 行 (transcript 仍发 ai-title / compact_boundary / system.api_error
-    # 等元数据)。state["_capture_emit"] 跟踪本 sid 已 emit 的 message_id, 防重。
-    seen = state.setdefault("_capture_emit", set())
+    # 等元数据)。防重走 events.dedupe_key UNIQUE 索引, 跨进程持久,
+    # 不再在内存维护 seen set (跨进程丢, 重启后空 mid 又能 emit)。
     message_items = req.get("message_items") or []
     turn = count_real_user_turns(message_items)
     if turn < 1:
@@ -238,9 +238,6 @@ def _translate(rec, state):
                     user_idx += 1
             raw_mid = f"{sid}:user:{turn}:{user_idx}"
         mid = raw_mid
-        if mid in seen:
-            continue
-        seen.add(mid)
         if isinstance(content, str):
             blocks = [{"type": "text", "text": content}]
         elif isinstance(content, list):
@@ -278,42 +275,41 @@ def _translate(rec, state):
     # assistant message from response (only if response_id present)
     resp_id = resp.get("response_id")
     if isinstance(resp_id, str) and resp_id:
-        if resp_id not in seen:
-            seen.add(resp_id)
-            blocks = resp.get("response_blocks") or []
-            texts, thinking_parts = [], []
-            for b in blocks:
-                if isinstance(b, dict):
-                    btype = b.get("type")
-                    if btype == "text" and isinstance(b.get("text"), str):
-                        texts.append(b["text"])
-                    elif btype == "thinking" and isinstance(b.get("thinking"), str):
-                        thinking_parts.append(b["thinking"])
-            text_joined = "\n".join(texts)
-            thinking_joined = "\n".join(thinking_parts) or None
-            out.append(envelope(
-                agent_id=agent_id,
-                session_id=sid,
-                type_="message.upserted",
-                payload={
-                    "message_id": resp_id,
-                    "role": "assistant",
-                    "text": text_joined[:200],
-                    "status": "completed",
-                    "request_no": turn,
-                    "usage": usage_from_counts(
-                        inp, outp, cr, cw,
-                        total_tokens=inp + outp + cr + cw) if (inp or outp or cr or cw) else None,
-                    "started_at": started,
-                    "duration_ms": duration,
-                    "output_text": text_joined or None,
-                    "thinking": thinking_joined,
-                    "model": req.get("model"),
-                },
-                turn=turn,
-                ts=ts,
-                eid=f"{sid}:msg:{resp_id}",
-            ))
+        # dedupe_key 走 Ledger 层兜底, 翻译层不再用 seen 内存 set
+        blocks = resp.get("response_blocks") or []
+        texts, thinking_parts = [], []
+        for b in blocks:
+            if isinstance(b, dict):
+                btype = b.get("type")
+                if btype == "text" and isinstance(b.get("text"), str):
+                    texts.append(b["text"])
+                elif btype == "thinking" and isinstance(b.get("thinking"), str):
+                    thinking_parts.append(b["thinking"])
+        text_joined = "\n".join(texts)
+        thinking_joined = "\n".join(thinking_parts) or None
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=sid,
+            type_="message.upserted",
+            payload={
+                "message_id": resp_id,
+                "role": "assistant",
+                "text": text_joined[:200],
+                "status": "completed",
+                "request_no": turn,
+                "usage": usage_from_counts(
+                    inp, outp, cr, cw,
+                    total_tokens=inp + outp + cr + cw) if (inp or outp or cr or cw) else None,
+                "started_at": started,
+                "duration_ms": duration,
+                "output_text": text_joined or None,
+                "thinking": thinking_joined,
+                "model": req.get("model"),
+            },
+            turn=turn,
+            ts=ts,
+            eid=f"{sid}:msg:{resp_id}",
+        ))
 
     if inp or outp or cr or cw:
         if turn >= 1:
@@ -399,6 +395,31 @@ def _translate(rec, state):
     return out
 
 
+def _append_with_dedupe(ledger, events):
+    """逐条 append; 命中 events.dedupe_key UNIQUE 索引时静默跳过。
+    跨进程 seen 持久化兜底; 不再在内存维护 seen set。
+
+    整批先尝试 append_many (单事务快, e2e 跟得上 ingest 节奏);
+    失败时 (某条 UNIQUE 冲突) 回退到单条, 让 IntegrityError 走吞掉。
+    """
+    import sqlite3
+    if not events:
+        return 0
+    try:
+        ledger.append_many(events)
+        return len(events)
+    except sqlite3.IntegrityError:
+        pass
+    written = 0
+    for ev in events:
+        try:
+            ledger.append(ev)
+            written += 1
+        except sqlite3.IntegrityError:
+            continue
+    return written
+
+
 def ingest_capture(ledger, rec):
     """解析 → 校验 → 入账本。返回写入数；校验失败抛 ValidationError。
 
@@ -415,5 +436,5 @@ def ingest_capture(ledger, rec):
     state["session_id"] = sid
     events = [parse_event(ev) for ev in translate_capture(rec, state)]
     if events:
-        ledger.append_many(events)
-    return len(events)
+        return _append_with_dedupe(ledger, events)
+    return 0
