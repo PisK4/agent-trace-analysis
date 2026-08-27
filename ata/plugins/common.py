@@ -37,6 +37,14 @@ _BRACKET_HEAD = "["
 _SKILL_HEAD_DOUBLE = 'Skill "'
 _SKILL_HEAD_SINGLE = "Skill '"
 
+# 纯文本形态的 harness 注入 (无 <xxx> / [KEY] 标记, 形态学抓不到, 只能
+# 按已知前缀枚举)。新形态优先观察是否带 wire id 走 id 守门, 真要漏再进
+# 这张表 — 表越长误杀风险越大, 保持最小集。
+_PLAIN_INJECTION_PREFIXES: tuple[str, ...] = (
+    # Claude Code: user 走开后的自动 recap 指令 (sid 74736c29 user:3:11 实证)
+    "The user stepped away and is coming back.",
+)
+
 
 def is_context_text(text, *, has_id: bool = False):
     """返回 True 表示文本是 CONTEXT 注入 (harness 注入), 不是真 user 提问。
@@ -50,6 +58,9 @@ def is_context_text(text, *, has_id: bool = False):
     raw = (text or "").lstrip()
     if not raw:
         return False
+    # 纯文本已知注入前缀 (recap 指令等)
+    if raw.startswith(_PLAIN_INJECTION_PREFIXES):
+        return True
     # 形态学贪心: <xxx> 任意 tag, 不枚举, 不要求闭合
     if raw[0] == "<":
         return True

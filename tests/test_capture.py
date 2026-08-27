@@ -664,8 +664,12 @@ class UserMidDerivationTest(unittest.TestCase):
         user_ev = next(e for e in events
                        if e["type"] == "message.upserted"
                        and e["payload"].get("role") == "user")
-        # mid 必须包含 index=0, 不能是空尾巴
-        self.assertIn("mid-A:user:1:0", user_ev["payload"]["message_id"])
+        # mid 形状 {sid}:user:{user_idx}:{content_hash8} — user_idx 定位,
+        # hash8 防同下标不同内容。不含 turn 号 (跨轮稳定, 详见
+        # StableUserMidTest)。
+        import re
+        self.assertRegex(user_ev["payload"]["message_id"],
+                         r"^mid-A:user:0:[0-9a-f]{8}$")
 
     def test_two_user_messages_get_different_mids(self):
         from ata.plugins.capture import translate_capture
@@ -684,9 +688,9 @@ class UserMidDerivationTest(unittest.TestCase):
         self.assertEqual(len(mids), 2)
         # 不撞同 mid
         self.assertNotEqual(mids[0], mids[1])
-        # 都含 :user:N:index 形状
+        # 都含 :user:N:hash8 形状
         for m in mids:
-            self.assertRegex(m, r"mid-B:user:\d+:\d+")
+            self.assertRegex(m, r"mid-B:user:\d+:[0-9a-f]{8}")
 
 
 class SeenPersistedAcrossInstancesTest(unittest.TestCase):
@@ -735,6 +739,197 @@ class SeenPersistedAcrossInstancesTest(unittest.TestCase):
                              and r["event"]["payload"].get("role") == "user"]
             # 第二次没新行, dedupe_key UNIQUE 拦了
             self.assertEqual(len(user_upserts2), 1)
+
+
+class BlockLevelContextFilterTest(unittest.TestCase):
+    """block 级过滤: harness 注入与真实提问共存于同一 user 消息的相邻
+    text block 时 (Claude Code 真实形态, sid 74736c29 2026-08-27 实证:
+    <local-command-caveat>/<command-name> 块与「你是谁」同一消息),
+    只杀注入块, 不能整条消息连带真实提问一起杀。
+
+    旧实现把全部 text block 拼成一串再判 is_context_text, 开头的 <xxx>
+    把整条消息判成 CONTEXT —「你是谁」三轮请求里轮轮在场、轮轮被杀,
+    账本里 user:1:* 编号从未出现过 (磁盘 jsonl line 10 有, 账本无)。"""
+
+    def _rec(self, messages, sid="blk-1", resp_id="msg_blk"):
+        return {
+            "agent_id": "claude", "path": "/v1/messages",
+            "request_headers": {"x-claude-code-session-id": sid},
+            "request_body": json.dumps({
+                "model": "claude-3-5-sonnet", "messages": messages,
+            }).encode(),
+            "response_content_type": "application/json",
+            "response_body": json.dumps({
+                "id": resp_id, "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }).encode(),
+            "started_at_ms": 1000, "completed_at_ms": 2000,
+        }
+
+    def test_injection_block_alongside_real_question(self):
+        """注入块 + 真实提问同消息: 真实提问必须 emit。"""
+        from ata.plugins.capture import translate_capture
+        msgs = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text":
+                    "<local-command-caveat>Caveat: local</local-command-caveat>"},
+                {"type": "text", "text": "你是谁"},
+            ],
+        }]
+        events = translate_capture(
+            self._rec(msgs, sid="blk-mix"), {"session_id": "blk-mix"})
+        user_upserts = [e for e in events
+                        if e["type"] == "message.upserted"
+                        and e["payload"].get("role") == "user"]
+        self.assertEqual(len(user_upserts), 1)
+        self.assertEqual(user_upserts[0]["payload"]["text"], "你是谁")
+
+    def test_injection_alone_still_filtered(self):
+        """纯注入消息 (单 block) 依旧整条过滤, 不因粒度变细而漏。"""
+        from ata.plugins.capture import translate_capture
+        msgs = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "<command-name>/model</command-name>"},
+                {"type": "text", "text":
+                    "<local-command-stdout>Set model</local-command-stdout>"},
+            ],
+        }]
+        events = translate_capture(
+            self._rec(msgs, sid="blk-pure"), {"session_id": "blk-pure"})
+        user_upserts = [e for e in events
+                        if e["type"] == "message.upserted"
+                        and e["payload"].get("role") == "user"]
+        self.assertEqual(user_upserts, [])
+
+    def test_turn_count_survives_mixed_block(self):
+        """count_real_user_turns 与 emit 同口径: 混合消息算一条真实 user
+        (turn 号不因 block 级过滤漂移)。"""
+        from ata.plugins.capture import translate_capture
+        msgs = [
+            {"role": "user", "content": [
+                {"type": "text", "text": "<command-name>/model</command-name>"},
+                {"type": "text", "text": "你是谁"},
+            ]},
+            {"role": "assistant", "content": [{"type": "text", "text": "答"}]},
+            {"role": "user", "content": [
+                {"type": "text", "text": "你能做什么?"},
+            ]},
+        ]
+        events = translate_capture(
+            self._rec(msgs, sid="blk-turn"), {"session_id": "blk-turn"})
+        user_evs = [e for e in events
+                    if e["type"] == "message.upserted"
+                    and e["payload"].get("role") == "user"]
+        # 两条真实 user 消息都 emit, 且 turn 号分别是 1 / 2
+        self.assertEqual(len(user_evs), 2)
+        self.assertEqual(sorted(e["turn"] for e in user_evs), [1, 2])
+
+
+class StableUserMidTest(unittest.TestCase):
+    """user mid 跨轮稳定: 每轮请求都重放全部历史 user 消息, mid 含 turn 号
+    时同一条消息每轮换新 mid 重复入账 (sid 74736c29「你能做什么?」记了 3 次)。
+    mid 改 {sid}:user:{user_idx}:{content_hash8} 后跨轮重放命中同 dedupe_key
+    被吸收。"""
+
+    def _rec(self, messages, sid, resp_id):
+        return {
+            "agent_id": "claude", "path": "/v1/messages",
+            "request_headers": {"x-claude-code-session-id": sid},
+            "request_body": json.dumps({
+                "model": "claude-3-5-sonnet", "messages": messages,
+            }).encode(),
+            "response_content_type": "application/json",
+            "response_body": json.dumps({
+                "id": resp_id, "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }).encode(),
+            "started_at_ms": 1000, "completed_at_ms": 2000,
+        }
+
+    def test_replayed_history_not_duplicated(self):
+        """第二轮请求重放第一轮的 user 消息: ingest 两次后账本里只有 1 条。"""
+        import tempfile
+        from pathlib import Path
+        from ata.ledger import Ledger
+        from ata.plugins.capture import ingest_capture
+        turn1_msgs = [
+            {"role": "user", "content": [{"type": "text", "text": "你是谁"}]},
+        ]
+        turn2_msgs = [
+            {"role": "user", "content": [{"type": "text", "text": "你是谁"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "答"}]},
+            {"role": "user", "content": [{"type": "text", "text": "你能做什么?"}]},
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            led = Ledger(Path(d))
+            ingest_capture(led, self._rec(turn1_msgs, "stbl-1", "r1"))
+            ingest_capture(led, self._rec(turn2_msgs, "stbl-1", "r2"))
+            recs = led.read("stbl-1")
+            user_texts = sorted(
+                r["event"]["payload"]["text"]
+                for r in recs
+                if r["event"]["type"] == "message.upserted"
+                and r["event"]["payload"].get("role") == "user")
+            # 重放的「你是谁」被 dedupe 吸收, 不再出现两份
+            self.assertEqual(user_texts, ["你是谁", "你能做什么?"])
+
+    def test_mid_has_no_turn_component(self):
+        """mid 形状: {sid}:user:{user_idx}:{hash8}, 不含 turn 号。"""
+        from ata.plugins.capture import translate_capture
+        msgs = [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+        events = translate_capture(
+            self._rec(msgs, "stbl-2", "r1"), {"session_id": "stbl-2"})
+        user_ev = next(e for e in events
+                       if e["type"] == "message.upserted"
+                       and e["payload"].get("role") == "user")
+        import re
+        self.assertRegex(user_ev["payload"]["message_id"],
+                         r"^stbl-2:user:0:[0-9a-f]{8}$")
+
+
+class RecapInjectionTest(unittest.TestCase):
+    """recap 注入 (user 走开后 harness 自动生成的 40 词总结指令) 无
+    <xxx>/[KEY] 形态学特征, 漏过过滤被记成真人发言 (sid 74736c29
+    user:3:11)。补已知纯文本注入前缀。"""
+
+    def test_recap_directive_not_emitted(self):
+        from ata.plugins.capture import translate_capture
+        for sid, txt in [
+            ("recap-1", "The user stepped away and is coming back. "
+                        "Recap in under 40 words, 1-2 plain sentences, "
+                        "no markdown. Lead with the overall goal and "
+                        "current task, then the one next action."),
+            ("recap-2", "The user stepped away and is coming back. "
+                        "Give a one-sentence status update."),
+        ]:
+            msgs = [{"role": "user",
+                     "content": [{"type": "text", "text": txt}]}]
+            rec = {
+                "agent_id": "claude", "path": "/v1/messages",
+                "request_headers": {"x-claude-code-session-id": sid},
+                "request_body": json.dumps({
+                    "model": "m", "messages": msgs,
+                }).encode(),
+                "response_content_type": "application/json",
+                "response_body": json.dumps({
+                    "id": "msg_recap", "role": "assistant",
+                    "content": [{"type": "text", "text": "ok"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                }).encode(),
+                "started_at_ms": 1000, "completed_at_ms": 2000,
+            }
+            events = translate_capture(rec, {"session_id": sid})
+            user_upserts = [e for e in events
+                            if e["type"] == "message.upserted"
+                            and e["payload"].get("role") == "user"]
+            self.assertEqual(user_upserts, [], f"failed for {sid}")
 
 
 if __name__ == "__main__":

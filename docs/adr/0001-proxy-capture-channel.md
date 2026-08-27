@@ -165,6 +165,38 @@ mtime/offset 检测失活导致 tool 行漂到 seq 2000+ 之后）仍存在。
 旧 sid `e6d514c5-...` 的账本残留不修(用户确认「让它过去」); 修复后
 产生的事件按新逻辑, 旧事件留在原处。
 
+### v2.2 解除: block 级过滤 + mid 跨轮稳定 + recap 注入 (2026-08-28 增补)
+
+复测 sid 74736c29-4070-455b-b5c0-7da6305abb99 发现 v2.1 修复在真实
+Claude Code 流量下仍暴露三个问题, 对照磁盘 jsonl
+(`~/.claude/projects/.../74736c29....jsonl`) 钉死根因后当日修复:
+
+- **注入块与真实提问同消息共存, 整串判形态学连带杀掉真实提问**:
+  Claude Code 把 `<local-command-caveat>` / `<command-name>` 等注入与
+  真实提问放进**同一条 user 消息的相邻 text block**。v2.1 的过滤把全部
+  block 拼成一串再判 `is_context_text`, 开头的 `<xxx>` 把整条消息判成
+  CONTEXT —「你是谁」三轮请求里轮轮在场、轮轮被杀, 账本里
+  `user:1:*` 编号从未出现 (证据: usage 轮 1 的 assistant 回答存在而
+  user 提问缺失; mid 派生的 user_idx 每轮从 1 起跳, idx 0 恒被杀)。
+  修复: 过滤粒度降到 block 级 (`real_user_blocks`), anthropic_parser /
+  openai_parser 的 message_items 透出 `texts` (block 级文本列表) 与
+  `id` (wire 消息 id) 字段。
+- **mid 含 turn 号, 跨轮重放重复入账**: 每轮请求都重放全部历史 user
+  消息, `f"{sid}:user:{turn}:{user_idx}"` 的 turn 随轮增长, 同一条消息
+  每轮换新 mid 绕过 dedupe 重复写入 (「你能做什么?」记了 3 次)。
+  修复: mid 改 `f"{sid}:user:{user_idx}:{content_hash8}"`, 跨轮稳定,
+  重放靠 events.dedupe_key 吸收。
+- **recap 注入无形态学特征漏过过滤**: 「The user stepped away and is
+  coming back. Recap…」纯文本无 `<xxx>` / `[KEY]` 前缀, 被记成真人
+  发言 (user:3:11)。修复: `common._PLAIN_INJECTION_PREFIXES` 已知前缀
+  表 (保持最小集, 新形态优先走 id 守门)。
+- 顺带: user 消息的 turn 字段改标各自序号 (第 N 条真实 user = turn N),
+  与 turn.ended 的轮号自然对齐; 旧实现全部标当前轮号, 跨轮消息 turn
+  错位。
+
+旧 sid 74736c29 / 90afef9d 等的账本残留不修 (同 v2.1 口径「让它过去」);
+修复后新会话按新逻辑。
+
 ### v2 待办（按收益 / 风险排序）
 
 1. **tool dedupe_key 拆 `None`**：解锁投影层 pending → completed 状态机。
