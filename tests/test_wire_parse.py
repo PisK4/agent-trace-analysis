@@ -72,6 +72,20 @@ class WireParseTest(unittest.TestCase):
         self.assertEqual(s["system_prompts"], ["You are droid."])
         self.assertEqual([t["name"] for t in s["tool_items"]], ["Read"])
 
+    def test_responses_path_dispatches_to_openai(self):
+        s = parse_request("/v1/responses", {}, (
+            b'{"model":"o3","stream":false,'
+            b'"instructions":"You are codex.",'
+            b'"input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],'
+            b'"tools":[{"type":"function","name":"Bash",'
+            b'"description":"run shell","parameters":{"type":"object"}}]}'
+        ))
+        self.assertEqual(s["parser"]["family"], "openai")
+        self.assertEqual(s["api_family"], "openai-responses")
+        self.assertTrue(s["json_valid"])
+        self.assertIn("You are codex.", s["system_prompts"])
+        self.assertEqual([t["name"] for t in s["tool_items"]], ["Bash"])
+
 
 if __name__ == "__main__":
     unittest.main()
