@@ -57,6 +57,21 @@ class WireParseTest(unittest.TestCase):
         s2 = parse_response("/v1/messages", {}, "application/json", b"\xff\xfe")
         self.assertFalse(s2["json_valid"])
 
+    def test_chat_completions_path_dispatches_to_openai(self):
+        chat_req = (
+            b'{"model":"gpt-4o","stream":false,'
+            b'"messages":[{"role":"system","content":"You are droid."},'
+            b'{"role":"user","content":"hello"}],'
+            b'"tools":[{"type":"function","function":{"name":"Read",'
+            b'"description":"read a file","parameters":{"type":"object"}}}]}'
+        )
+        s = parse_request("/v1/chat/completions", {}, chat_req)
+        self.assertEqual(s["parser"]["family"], "openai")
+        self.assertEqual(s["api_family"], "openai-chat-completions")
+        self.assertTrue(s["json_valid"])
+        self.assertEqual(s["system_prompts"], ["You are droid."])
+        self.assertEqual([t["name"] for t in s["tool_items"]], ["Read"])
+
 
 if __name__ == "__main__":
     unittest.main()
