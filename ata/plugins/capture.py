@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from ata.plugins.common import usage_from_counts
+from ata.plugins.common import tool_end_payload, tool_start_payload, usage_from_counts
 from ata.schema import envelope
 from ata.wire import parse_request as _wire_req
 from ata.wire import parse_response as _wire_resp
@@ -192,6 +192,9 @@ def _translate(rec, state):
     outp = int(usage.get("output_tokens") or 0)
     cr = int(usage.get("cache_read_input_tokens") or 0)
     cw = int(usage.get("cache_creation_input_tokens") or 0)
+    started = int(rec.get("started_at_ms") or ts)
+    completed = int(rec.get("completed_at_ms") or ts)
+    duration = completed - started
 
     # message.upserted (user + assistant): 代理主发, transcript 侧不再发
     # message 行 (transcript 仍发 ai-title / compact_boundary / system.api_error
@@ -240,8 +243,8 @@ def _translate(rec, state):
                 "status": "completed",
                 "request_no": None,
                 "usage": None,
-                "started_at": int(rec.get("started_at_ms") or ts),
-                "duration_ms": int((rec.get("completed_at_ms") or ts) - (rec.get("started_at_ms") or ts)),
+                "started_at": started,
+                "duration_ms": duration,
                 "output_text": None,
                 "thinking": None,
                 "model": None,
@@ -280,8 +283,8 @@ def _translate(rec, state):
                     "usage": usage_from_counts(
                         inp, outp, cr, cw,
                         total_tokens=inp + outp + cr + cw) if (inp or outp or cr or cw) else None,
-                    "started_at": int(rec.get("started_at_ms") or ts),
-                    "duration_ms": int((rec.get("completed_at_ms") or ts) - (rec.get("started_at_ms") or ts)),
+                    "started_at": started,
+                    "duration_ms": duration,
                     "output_text": text_joined or None,
                     "thinking": thinking_joined,
                     "model": req.get("model"),
@@ -308,6 +311,7 @@ def _translate(rec, state):
     # tool.upserted: start 从 response.tool_calls 提, end 从本 request 的
     # tool_result 块提 (响应里没有 result — 它在下一次请求里)。
     tools_state = state.setdefault("_capture_tools", {})
+    response_id = resp.get("response_id")
 
     # start
     for tc in resp.get("response_tool_calls") or []:
@@ -321,25 +325,18 @@ def _translate(rec, state):
         name = tc.get("name") or "tool"
         args = tc.get("input") if isinstance(tc.get("input"), dict) else {}
         text = args.get("path") or args.get("pattern") or name
+        # 字段名与 common.tool_end_payload 期望对齐 (parent_message_id / payload /
+        # text / started_at, 缺失 fallback 走 captured 路径)。
         tools_state[cid] = {
-            "name": name, "args": args, "text": text,
-            "started_at": int(rec.get("started_at_ms") or ts),
+            "name": name, "payload": args, "text": text,
+            "parent_message_id": response_id,
+            "started_at": started,
         }
         out.append(envelope(
             agent_id=agent_id,
             session_id=sid,
             type_="tool.upserted",
-            payload={
-                "tool_call_id": cid,
-                "parent_message_id": resp.get("response_id"),
-                "name": name,
-                "text": text,
-                "status": "pending",
-                "payload": args,
-                "result": None,
-                "started_at": tools_state[cid]["started_at"],
-                "duration_ms": None,
-            },
+            payload=tool_start_payload(cid, response_id, name, args, text, started),
             turn=turn,
             ts=ts,
             eid=f"{sid}:tool:{cid}:start",
@@ -372,17 +369,7 @@ def _translate(rec, state):
                 agent_id=agent_id,
                 session_id=sid,
                 type_="tool.upserted",
-                payload={
-                    "tool_call_id": cid,
-                    "parent_message_id": prev.get("parent_message_id") or resp.get("response_id"),
-                    "name": prev.get("name") or "tool",
-                    "text": prev.get("text") or res_text[:200] or cid,
-                    "status": "completed",
-                    "payload": prev.get("args"),
-                    "result": res_text,
-                    "started_at": prev.get("started_at") or int(rec.get("started_at_ms") or ts),
-                    "duration_ms": int((rec.get("completed_at_ms") or ts) - prev.get("started_at", ts or 0)),
-                },
+                payload=tool_end_payload(prev, cid, response_id, res_text, completed),
                 turn=turn,
                 ts=ts,
                 eid=f"{sid}:tool:{cid}:end",

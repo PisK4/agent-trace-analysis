@@ -2,13 +2,8 @@
 
 代理主发 message/tool/turn 之后, transcript 退到补录通道: 只负责
 session.opened (ai-title) / compaction.boundary / system.api_error 等
-账本里别处拿不到的事实。
-
-历史: fb74ff2 落 state 跨 step 持久 + pending 攒齐是为 jsonl 通道自管
-message 而设计, Round 2 之后 message/tool 走代理, jsonl 不再需要 pending
-攒齐 — 但 pending / _buffer 基础设施保留 (兼容老 _emit_immediate 路径的
-测试)。state["turn"] 累加器在 transcript 侧不再 bump (代理端自管),
-state dict 仍保留 turn 字段 (后续清理)。
+账本里别处拿不到的事实。state["turn"] 累加器在 transcript 侧不再 bump
+(代理端自管), state dict 仍保留 turn 字段 (后续清理)。
 """
 from __future__ import annotations
 
@@ -19,18 +14,6 @@ from ata.plugins.jsonl import translate_file as _jfile
 from ata.schema import envelope
 
 
-def _emit(state, events):
-    """新路径 (Round 2 起): events 直接返回 (无 buffer, 无 line_seq 排序, 无
-    pending)。老路径 (state["_emit_immediate"]=True) 仍走 buffer 模式以保留
-    第 1 轮 (state 跨 step 持久) 的测试基线。
-    """
-    if not events:
-        return
-    if state.get("_emit_immediate"):
-        return events
-    return events
-
-
 def translate_line(raw: dict, state: dict) -> list[dict]:
     typ = raw.get("type")
     session_id = raw.get("sessionId") or state.get("session_id") or "claude-session"
@@ -38,7 +21,6 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
     agent_id = "claude"
     ts = _ts(raw, state)
     state["ts"] = ts
-    state["_line_seq"] = state.get("_line_seq", -1) + 1
     out = []
     if not state.get("opened"):
         state["opened"] = True
@@ -63,29 +45,20 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 ts=ts,
                 eid=f"{session_id}:opened:title",
             ))
-        emitted = _emit(state, out)
-        return emitted or out
+        return out
     if typ == "system":
         _system_line(raw, state, ts, out)
-        emitted = _emit(state, out)
-        return emitted or out
+        return out
     # user / assistant 行: 代理主发 message/tool, transcript 不再 emit。
     # 仍返回 out (含 session.opened 兜底), 不调 bump_turn / 不发 turn.started。
-    if out:
-        emitted = _emit(state, out)
-        return emitted or out
-    return []
+    return out
 
 
 def translate_file(path, offset: int = 0, state: dict | None = None):
     if state is None:
-        # 老路径: 每次调用都重建 state 桶, 无跨 step 持久。translate_line 返回
-        # 的 events 直接累计, 走 _emit_immediate 兼容老测试。
-        state = {"session_id": Path(path).stem, "_emit_immediate": True}
-        events, new_offset = _jfile(path, translate_line, offset, state)
-        return events, new_offset
-    events, new_offset = _jfile(path, translate_line, offset, state)
-    return events, new_offset
+        # 测试专用老路径: 每次调用都重建 state 桶, 无跨 step 持久。
+        state = {"session_id": Path(path).stem}
+    return _jfile(path, translate_line, offset, state)
 
 
 def _system_line(raw, state, ts, out):
@@ -113,9 +86,9 @@ def _system_line(raw, state, ts, out):
         ))
         return out
     if sub == "api_error":
-        # Round 2 收窄后: 代理端已主发 message/tool, transcript 这条 api_error
-        # 行也只发一个 envelope 兜底(让人工能定位一次失败响应),不再写
-        # message.upserted / pending。文本是错误摘要。
+        # 代理端主发 message 后, transcript 这条 api_error 行只发一个 envelope
+        # 兜底 (让人工能定位一次失败响应)。代理失败响应不走 translate_capture
+        # (没 usage / response_id), 不会冲突。
         err = raw.get("error") if isinstance(raw.get("error"), dict) else {}
         bits = ["api_error"]
         if err.get("status") is not None:
@@ -160,3 +133,4 @@ def _ts(raw, state):
         except ValueError:
             pass
     return int(state.get("ts") or 1)
+
