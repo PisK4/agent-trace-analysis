@@ -204,6 +204,23 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
             return 400, {"ok": False, "error": str(exc)}
         return 200, {"ok": True, "seq": seqs[-1] if seqs else 0, "seqs": seqs}
 
+    def h_droid_hooks(m, qs, body):
+        """Droid CLI 7 类 hook 事件接收器。
+
+        droid hooks.json command 用 `curl ... --data-binary @-` 把
+        整个 JSON payload POST 到这里。 ata 不实时落账（避免与 file
+        watcher 的 droid transcript 通道产生幂等竞态），仅追加一行
+        audit log 到 ~/.ata/droid_hooks.jsonl，后续异步分析用。
+        必须 200 fast —— PreToolUse 钩子超时或非零退出 droid 会
+        AgentAbortError 杀 agent（binary 硬编码）。
+        """
+        audit_path = Path.home() / ".ata" / "droid_hooks.jsonl"
+        from ata.wire.droid_hooks import write_hook_event
+        if isinstance(body, dict):
+            write_hook_event(audit_path, body)
+            return 200, {"ok": True, "received_at_ms": int(time.time() * 1000)}
+        return 400, {"ok": False, "error": "expected JSON object body"}
+
     def h_capture(m, qs, body):
         # 代理采集通道的 HTTP 入口（外部壳/测试用）：record 的 JSON 形式，
         # request_body/response_body 为 base64（JSON 不安全字节）。
@@ -235,6 +252,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         ("GET", re.compile(r"^/api/sessions/(?P<rest>.+)$"), h_session),
         ("POST", re.compile(r"^/api/captures$"), h_capture),
         ("POST", re.compile(r"^/api/pi-hooks$"), h_pi_hooks),
+        ("POST", re.compile(r"^/api/hooks/droid$"), h_droid_hooks),
         ("POST", re.compile(r"^/api/runs$"), h_create_run),
         ("POST", re.compile(r"^/api/runs/(?P<rid>[^/]+)/name$"), h_rename_run),
         ("POST", re.compile(r"^/api/sessions/(?P<sid>[^/]+)/title$"), h_rename_session),
