@@ -141,6 +141,30 @@ mtime/offset 检测失活导致 tool 行漂到 seq 2000+ 之后）仍存在。
   修法：把 `tool.upserted:{cid}` 的 dedupe_key 拆成 `None`，让 ledger
   保留多行同 cid 的 eid 折叠（start / end 共存）。
 
+### v2.1 解除: user 消息正确 emit + seen 跨进程持久化 (2026-08-27 增补)
+
+复测 fbc74609-... 识别出 user 消息丢失的三个串联根因, 在 2026-08-27
+`fix(capture)` 系列 commit 落地:
+
+- **emit 不过滤 CONTEXT 注入** → `fix(capture): emit user 消息时过滤 CONTEXT 注入`
+  (commit adbbc31) emit 路径加 is_context_text 过滤, 跟
+  count_real_user_turns 同口径, 避免 `<system-reminder>` / harness
+  注入的上下文文本被当 user 消息写入账本。
+- **mid fallback 空尾巴撞车** → `fix(capture): user mid 派生走
+  message_items index` (commit b2f79cd) anthropic wire 真实 user
+  消息没有 id 字段, 旧 fallback `f'{sid}:user:{m.get("index", "")}'`
+  在 index 也缺失时产出空尾巴 mid, 改 `f'{sid}:user:{turn}:{user_idx}'`
+  用 turn + user 消息下标双键。
+- **seen 跨进程丢** → `fix(capture): seen 走 events.dedupe_key
+  跨进程持久` (commit 80a247f) `_capture_emit` 内存 set 跨进程丢,
+  ata 重启后空 mid 又能 emit 一次, 跟历史去重键冲突。改走
+  `events.dedupe_key` UNIQUE 索引兜底(零新表), 同时 dedupe_key
+  加 role 段 (`:user:mID` / `:assistant:mID`), 避免 user/assistant
+  偶发撞同 message_id 被一起吞。
+
+旧 sid `e6d514c5-...` 的账本残留不修(用户确认「让它过去」); 修复后
+产生的事件按新逻辑, 旧事件留在原处。
+
 ### v2 待办（按收益 / 风险排序）
 
 1. **tool dedupe_key 拆 `None`**：解锁投影层 pending → completed 状态机。

@@ -87,6 +87,7 @@ flowchart LR
 | dev 脚本 | `./scripts/serve-dev.sh`，设 `ATA_PROXY_PORT=8319` 即开代理通道 |
 | 代理未拿到 SYSTEM | 检查请求头是否带宿主 `x-claude-code-session-id`（或对应宿主头）；缺则被丢弃 |
 | sessions 列表没新行 | 预期空窗；等 transcript tail 扫到宿主文件 |
+| 账本里 user 消息只剩 1 条且是 `<system-reminder>` | `fix(capture): emit user 消息时过滤 CONTEXT 注入` (adbbc31) + `fix(capture): user mid 派生走 message_items index` (b2f79cd) | 旧 sid 不修,新事件按新逻辑 |
 
 ## 引用边界
 
