@@ -33,7 +33,13 @@ claude transcript 侧永久缺失 SYSTEM 快照、tools 目录、每轮 usage
 - 数据边界速记表中 claude 的 SYSTEM 快照从「无」变为「代理通道开启时有」。
 - 两条采集通道写同一 session，靠幂等键收敛；代理刻意不发 message/tool
   行以避免 natural-key 写序竞态。
-- OpenAI 族解析（codex 可用）暂缓，ata/wire 的注册表 seam 已预留。
+- ~~OpenAI 族解析（codex 可用）暂缓，ata/wire 的注册表 seam 已预留。~~
+  **2026-08-27 已落地**——见 `docs/superpowers/plans/2026-08-27-openai-parser-port.md`,
+  `ata/wire/openai_parser.py` 1:1 移植自 ava 1095 行,
+  `protocol_facts._OpenAI` 注册到 `/v1/chat/completions` 与 `/v1/responses`。
+  droid 走 17878 代理能产出 `system.upserted` / `turn.ended`（e2e 验证通过）。
+  codex 走 Responses API 解析已就位,只需 codex 端把 `OPENAI_BASE_URL` 切到 17878
+  (用户已说明先不做,本计划不动 codex 配置)。
 
 ### 已知限制
 
