@@ -192,10 +192,106 @@ def _translate(rec, state):
     outp = int(usage.get("output_tokens") or 0)
     cr = int(usage.get("cache_read_input_tokens") or 0)
     cw = int(usage.get("cache_creation_input_tokens") or 0)
+
+    # message.upserted (user + assistant): 代理主发, transcript 侧不再发
+    # message 行 (transcript 仍发 ai-title / compact_boundary / system.api_error
+    # 等元数据)。state["_capture_emit"] 跟踪本 sid 已 emit 的 message_id, 防重。
+    seen = state.setdefault("_capture_emit", set())
+    message_items = req.get("message_items") or []
+    turn = count_real_user_turns(message_items)
+    if turn < 1:
+        turn = 1
+
+    # user messages from request
+    for m in req.get("messages") or []:
+        if not isinstance(m, dict) or m.get("role") != "user":
+            continue
+        mid = str(m.get("id") or f"{sid}:user:{m.get('index', '')}")
+        if mid in seen:
+            continue
+        seen.add(mid)
+        content = m.get("content")
+        if isinstance(content, str):
+            texts = [content]
+            blocks = [{"type": "text", "text": content}]
+        elif isinstance(content, list):
+            texts, blocks = [], []
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str):
+                    texts.append(b["text"])
+                if isinstance(b, dict):
+                    blocks.append(b)
+        else:
+            texts, blocks = [], []
+        text_joined = "\n".join(texts)
+        # 跳过纯 tool_result 块 (没有文本 user)
+        if not text_joined and not any(
+            isinstance(b, dict) and b.get("type") != "tool_result" for b in blocks
+        ):
+            continue
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=sid,
+            type_="message.upserted",
+            payload={
+                "message_id": mid,
+                "role": "user",
+                "text": text_joined[:200],
+                "status": "completed",
+                "request_no": None,
+                "usage": None,
+                "started_at": int(rec.get("started_at_ms") or ts),
+                "duration_ms": int((rec.get("completed_at_ms") or ts) - (rec.get("started_at_ms") or ts)),
+                "output_text": None,
+                "thinking": None,
+                "model": None,
+            },
+            turn=turn,
+            ts=ts,
+            eid=f"{sid}:msg:{mid}",
+        ))
+
+    # assistant message from response (only if response_id present)
+    resp_id = resp.get("response_id")
+    if isinstance(resp_id, str) and resp_id:
+        if resp_id not in seen:
+            seen.add(resp_id)
+            blocks = resp.get("response_blocks") or []
+            texts, thinking_parts = [], []
+            for b in blocks:
+                if isinstance(b, dict):
+                    btype = b.get("type")
+                    if btype == "text" and isinstance(b.get("text"), str):
+                        texts.append(b["text"])
+                    elif btype == "thinking" and isinstance(b.get("thinking"), str):
+                        thinking_parts.append(b["thinking"])
+            text_joined = "\n".join(texts)
+            thinking_joined = "\n".join(thinking_parts) or None
+            out.append(envelope(
+                agent_id=agent_id,
+                session_id=sid,
+                type_="message.upserted",
+                payload={
+                    "message_id": resp_id,
+                    "role": "assistant",
+                    "text": text_joined[:200],
+                    "status": "completed",
+                    "request_no": turn,
+                    "usage": usage_from_counts(
+                        inp, outp, cr, cw,
+                        total_tokens=inp + outp + cr + cw) if (inp or outp or cr or cw) else None,
+                    "started_at": int(rec.get("started_at_ms") or ts),
+                    "duration_ms": int((rec.get("completed_at_ms") or ts) - (rec.get("started_at_ms") or ts)),
+                    "output_text": text_joined or None,
+                    "thinking": thinking_joined,
+                    "model": req.get("model"),
+                },
+                turn=turn,
+                ts=ts,
+                eid=f"{sid}:msg:{resp_id}",
+            ))
+
     if inp or outp or cr or cw:
-        # 用 wire 已解析的 message_items 算轮次，不重复 json.loads。
-        message_items = req.get("message_items") or []
-        turn = count_real_user_turns(message_items)
         if turn >= 1:
             rid = resp.get("response_id")
             out.append(envelope(

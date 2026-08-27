@@ -158,8 +158,13 @@ class TranslateCaptureTest(unittest.TestCase):
     def test_first_capture_emits_system_and_turn_end(self):
         evs = self.translate(record(json.dumps(REQ1).encode(),
                                     json.dumps(RESP1).encode()), self.state)
-        self.assertEqual([e["type"] for e in evs], ["system.upserted", "turn.ended"])
-        sys_ev, end_ev = (self.parse_event(e) for e in evs)
+        # Round 2: 代理主发 message.upserted (user + assistant), system + turn.ended 仍按原条件发。
+        self.assertEqual([e["type"] for e in evs],
+                         ["system.upserted", "message.upserted",
+                          "message.upserted", "turn.ended"])
+        sys_ev, end_ev = evs[0], evs[-1]
+        sys_ev = self.parse_event(sys_ev)
+        end_ev = self.parse_event(end_ev)
         self.assertIsNone(sys_ev["turn"])
         self.assertEqual(sys_ev["payload"]["prompt_text"], "You are ATA.")
         self.assertEqual(sys_ev["payload"]["tools_catalog"][0]["name"], "Read")
@@ -190,17 +195,22 @@ class TranslateCaptureTest(unittest.TestCase):
                 {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
                 user_msg("second")]
         req2 = dict(REQ1, messages=msgs)
-        _, end = (self.parse_event(e) for e in self.translate(
+        evs = self.translate(
             record(json.dumps(req2).encode(), json.dumps(RESP1).encode()),
-            self.state))
+            self.state)
+        end = self.parse_event(evs[-1])
+        self.assertEqual(end["type"], "turn.ended")
         self.assertEqual(end["turn"], 2)
 
     def test_missing_usage_emits_nothing(self):
         resp = dict(RESP1, usage={})
         evs = self.translate(record(json.dumps(REQ1).encode(),
                                     json.dumps(resp).encode()), self.state)
-        # system 快照仍要发；turn.ended 没有 usage 就不发
-        self.assertEqual([e["type"] for e in evs], ["system.upserted"])
+        # system 快照仍要发; turn.ended 没有 usage 就不发; message.upserted 仍按
+        # 请求/响应形状发 (Round 2 起代理主发 message, 与 usage 解耦)。
+        self.assertEqual([e["type"] for e in evs],
+                         ["system.upserted", "message.upserted",
+                          "message.upserted"])
 
     def test_sse_response_parses(self):
         sse = (
@@ -251,6 +261,84 @@ def record(req_body, resp_body, sid="s1", ct="application/json",
         "started_at_ms": started,
         "completed_at_ms": completed,
     }
+
+
+class CaptureMessageEmitTest(unittest.TestCase):
+    """Round 2: 代理主发 message.upserted, transcript 退到补录。
+
+    关键 invariants:
+    - 代理从 req.messages 提 user 块, emit message.upserted (role=user)
+    - 代理从 resp 提 assistant 块, emit message.upserted (role=assistant)
+    - assistant 的 message_id 取 resp.response_id (msg_xxx), 不是 gen-...
+    - turn 字段: 本 request 的真实 user 数(与 turn.ended 同口径)
+    - 同 sid 重复同 mid 不重复发(state._capture_emit 防重)
+    """
+
+    def _rec(self, sid="cap-msg-1", request_body=None, response_body=None):
+        return {
+            "agent_id": "claude",
+            "path": "/v1/messages",
+            "request_headers": {"x-claude-code-session-id": sid},
+            "request_body": request_body or json.dumps({
+                "model": "claude-3-5-sonnet",
+                "messages": [
+                    {"role": "user", "id": "user-msg-1",
+                     "content": [{"type": "text", "text": "hello"}]},
+                ],
+            }).encode(),
+            "response_content_type": "application/json",
+            "response_body": response_body or json.dumps({
+                "id": "msg_resp_1", "role": "assistant",
+                "content": [{"type": "text", "text": "hi"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }).encode(),
+            "started_at_ms": 1000, "completed_at_ms": 2000,
+        }
+
+    def test_user_message_emitted_from_request(self):
+        from ata.plugins.capture import translate_capture
+        state = {"session_id": "cap-msg-1"}
+        events = translate_capture(self._rec(), state)
+        upserts = [e for e in events if e["type"] == "message.upserted"]
+        roles = {e["payload"]["role"] for e in upserts}
+        self.assertEqual(roles, {"user", "assistant"})
+        user_ev = next(e for e in upserts if e["payload"]["role"] == "user")
+        self.assertEqual(user_ev["payload"]["message_id"], "user-msg-1")
+        self.assertEqual(user_ev["payload"]["text"], "hello")
+        self.assertEqual(user_ev["turn"], 1)
+
+    def test_assistant_message_uses_response_id(self):
+        from ata.plugins.capture import translate_capture
+        state = {"session_id": "cap-msg-2"}
+        events = translate_capture(self._rec(sid="cap-msg-2"), state)
+        asst = next(e for e in events
+                    if e["type"] == "message.upserted"
+                    and e["payload"]["role"] == "assistant")
+        self.assertEqual(asst["payload"]["message_id"], "msg_resp_1")
+        # usage 透传
+        self.assertEqual(asst["payload"]["usage"]["input"], 10)
+        self.assertEqual(asst["payload"]["usage"]["output"], 5)
+
+    def test_assistant_message_status_completed(self):
+        from ata.plugins.capture import translate_capture
+        state = {"session_id": "cap-msg-3"}
+        events = translate_capture(self._rec(sid="cap-msg-3"), state)
+        asst = next(e for e in events
+                    if e["type"] == "message.upserted"
+                    and e["payload"]["role"] == "assistant")
+        self.assertEqual(asst["payload"]["status"], "completed")
+
+    def test_same_mid_not_reemitted_across_translations(self):
+        """同 sid + 同 message_id 在 state 已 emit 过的不再 emit。"""
+        from ata.plugins.capture import translate_capture
+        state = {"session_id": "cap-msg-4"}
+        translate_capture(self._rec(sid="cap-msg-4"), state)
+        # 第二次同 sid 同 user-msg-1: 已被 seen, user 块不重发
+        events2 = translate_capture(self._rec(sid="cap-msg-4"), state)
+        user_evs = [e for e in events2 if e["type"] == "message.upserted"
+                    and e["payload"]["role"] == "user"]
+        self.assertEqual(user_evs, [])
 
 
 if __name__ == "__main__":

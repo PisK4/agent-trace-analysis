@@ -57,10 +57,12 @@ class CaptureHttpTest(unittest.TestCase):
         status, body = self.post(payload)
         self.assertEqual(status, 200)
         self.assertEqual(body["ok"], True)
-        self.assertEqual(body["count"], 2)
+        # Round 2: 代理主发 message.upserted (user + assistant), count 从 2 变 4。
+        self.assertEqual(body["count"], 4)
         recs = self.ledger.read("sess-9")
         self.assertEqual(sorted(r["event"]["type"] for r in recs),
-                         ["system.upserted", "turn.ended"])
+                         ["message.upserted", "message.upserted",
+                          "system.upserted", "turn.ended"])
 
     def test_missing_session_header_is_400(self):
         payload = {

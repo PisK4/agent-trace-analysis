@@ -103,9 +103,12 @@ class CaptureProxyTest(unittest.TestCase):
         types = sorted(r["event"]["type"] for r in recs)
         # 转发侧契约：认证头必须能到上游（上游网关靠它鉴权）；
         # 落档侧红线：认证头不进 record（sk-secret 断言在下方）。
+        # Round 2: 代理主发 message.upserted (user + assistant)。
         self.assertEqual(SEEN_HEADERS.get("x-api-key"),
                          "sk-secret-must-not-leak")
-        self.assertEqual(types, ["system.upserted", "turn.ended"])
+        self.assertEqual(types,
+                         ["message.upserted", "message.upserted",
+                          "system.upserted", "turn.ended"])
         dumped = json.dumps(recs)
         self.assertNotIn("sk-secret", dumped)
 
