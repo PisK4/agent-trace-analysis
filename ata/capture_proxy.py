@@ -94,7 +94,7 @@ def start_capture_proxy(host, port, upstream, agent_id, ingest):
             try:
                 ingest(record)
             except Exception as exc:  # noqa: BLE001
-                print(f"capture ingest error: {exc}")
+                print(f"capture ingest error: {exc}", flush=True)
 
         do_POST = _relay
         do_GET = _relay

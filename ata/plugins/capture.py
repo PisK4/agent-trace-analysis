@@ -24,18 +24,14 @@ from ata.wire import parse_response as _wire_resp
 # 头名匹配大小写不敏感；命中即返回（不再走 body 路径）。
 _SESSION_HEADERS: dict[str, tuple[str, ...]] = {
     "claude": ("x-claude-code-session-id",),
-    # droid: 头名是推断候选,实际形态待 droid daemon 真实流量回填确认;
-    # 若 droid 不发此头,resolve_session_id 走 body 路径(下)。
-    "droid": ("x-droid-session-id",),
 }
 
 # 各家宿主把会话 id 放在请求体字段（按 JSON 嵌套路径定位）。
 # codex 走 OpenAI Responses API，session_id 在 metadata.session_id。
-# droid 同款候选(与 _SESSION_HEADERS["droid"] 平行): 两条都声明让任一形态
-# 都能恢复 sid,实际只有一条会命中。后续 droid 真实流量回填后保留命中那条。
+# droid 路径占位（具体字段名待真实流量回填——若 droid 用 body metadata，
+# 在此加；若是 header，移到 _SESSION_HEADERS）。
 _BODY_SESSION_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
     "codex": (("metadata", "session_id"),),
-    "droid": (("metadata", "session_id"),),
 }
 
 

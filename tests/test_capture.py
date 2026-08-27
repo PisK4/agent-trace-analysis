@@ -76,37 +76,17 @@ class CodexBodyPathTest(unittest.TestCase):
 
 
 class DroidNamespaceTest(unittest.TestCase):
-    def test_droid_header_x_droid_session_id(self):
-        # 2026-08-27: capture_proxy e2e 验证 droid 走 `x-droid-session-id` 头能
-        # 恢复 sid（真实 droid exec 客户端在 17878 上发请求, capture_proxy 把
-        # 该头过白名单后由 resolve_session_id 命中）。
+    def test_droid_returns_none_for_now(self):
+        # droid 走代理：headers 路径未声明（待真实流量回填具体头名），
+        # body 路径未声明（droid 是否用 body metadata 未知）。
+        # 暂返回 None → 走 ingest_capture 的 ValueError 路径被吞掉。
+        # 2026-08-27 e2e 验证：droid 真实请求 17878 既不带 x-droid-* 头、
+        # 也不在 body metadata.session_id,sid 完全不在 wire traffic 上。
+        # capture_proxy 因此**无法**为 droid 恢复 sid;这条 sid 来自 droid
+        # daemon 自身的 transcript 适配器(file watcher 扫 ~/.factory/sessions),
+        # 走 capture_proxy 通道无法合并同一 session。
         rec = {
-            "request_headers": {"x-droid-session-id": "d-sid-1"},
-            "request_body": b'{"unrelated": "json"}',
-        }
-        self.assertEqual(resolve_session_id(rec, "droid"), "d-sid-1")
-
-    def test_droid_body_metadata_session_id(self):
-        # droid 走 OpenAI Chat Completions 也可能在 body 放 metadata.session_id
-        # （与 codex 平行）。两条路径都声明,任一命中都恢复 sid。
-        rec = {
-            "request_headers": {"x-droid-trace-id": "ignored"},
-            "request_body": b'{"metadata": {"session_id": "d-sid-2"}}',
-        }
-        self.assertEqual(resolve_session_id(rec, "droid"), "d-sid-2")
-
-    def test_droid_header_takes_precedence_over_body(self):
-        # 与 codex 同款:header 路径先匹配,命中即返回(不再走 body 路径)。
-        rec = {
-            "request_headers": {"x-droid-session-id": "from-header"},
-            "request_body": b'{"metadata": {"session_id": "from-body"}}',
-        }
-        self.assertEqual(resolve_session_id(rec, "droid"), "from-header")
-
-    def test_droid_no_match_returns_none(self):
-        # droid 头/body 都不命中(其他 x-droid-* 头、缺 metadata)→ None。
-        rec = {
-            "request_headers": {"x-droid-trace-id": "x"},
+            "request_headers": {"x-droid-trace-id": "d-1"},
             "request_body": b'{"some": "json"}',
         }
         self.assertIsNone(resolve_session_id(rec, "droid"))
