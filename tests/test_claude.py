@@ -6,56 +6,45 @@ from ata.project import project_session
 
 
 class ClaudeTest(unittest.TestCase):
+    """Round 2 收窄后, transcript 只发元数据 (session.opened / compaction.boundary /
+    system.api_error)。message / tool / turn.started 走代理主发, transcript 不再发。
+    本测试反映新行为, 不再断言 message.upserted / turn.started / tool.upserted 的
+    数量/字段 (那些由 capture 端单测覆盖)。"""
+
     def test_maps_verified_types(self):
         evs, _ = translate_file(Path("testdata/vendor/claude-sample.jsonl"))
         types = [e["type"] for e in evs]
+        # 元数据通道
         self.assertIn("session.opened", types)
-        self.assertIn("turn.started", types)
-        self.assertIn("message.upserted", types)
-        self.assertIn("tool.upserted", types)
-        self.assertNotIn("system.upserted", types)
+        self.assertIn("compaction.boundary", types)
+        # transcript 不再发
+        self.assertNotIn("turn.started", types)
         self.assertNotIn("turn.ended", types)
+        self.assertNotIn("tool.upserted", types)
+        self.assertNotIn("system.upserted", types)
         # title 被 ai-title 覆盖
         titles = [e["payload"]["title"] for e in evs if e["type"] == "session.opened"]
         self.assertEqual(titles[-1], "claude fixture title")
-        # 5 条消息：u1 / a1 / a2 / u3 / api_error（u2 是 tool_result-only，不算新轮不产消息行）
-        msgs = [e for e in evs if e["type"] == "message.upserted"]
-        self.assertEqual(len(msgs), 5)
-        self.assertEqual(msgs[2]["payload"]["message_id"], "msg-a2")
-        # 工具 start/end 拆 id
-        tools = [e for e in evs if e["type"] == "tool.upserted"]
-        self.assertEqual(len(tools), 2)
-        self.assertTrue(tools[0]["id"].endswith(":start"))
-        self.assertTrue(tools[1]["id"].endswith(":end"))
-        self.assertNotEqual(tools[0]["id"], tools[1]["id"])
-        # usage 驼峰 → ATA 蛇形
-        asst = next(e for e in evs if e["type"] == "message.upserted" and e["payload"]["role"] == "assistant")
-        self.assertEqual(asst["payload"]["usage"]["status"], "reported")
-        self.assertEqual(asst["payload"]["usage"]["cache_read"], 10)
-        self.assertEqual(asst["payload"]["usage"]["cache_write"], 5)
-        self.assertEqual(asst["payload"]["usage"]["total_tokens"], None)
-        self.assertEqual(asst["payload"]["model"], "claude-opus-4")
+        # compaction.boundary 字段透传
         compact = next(e for e in evs if e["type"] == "compaction.boundary")
         self.assertEqual(compact["payload"]["pre_tokens"], 8000)
         self.assertEqual(compact["payload"]["post_tokens"], 1200)
-        err = next(e for e in evs if e["type"] == "message.upserted" and e["payload"].get("status") == "failed")
+        # system.api_error 仍以 message.upserted(failed) 兜底, 便于人工定位
+        err = next(e for e in evs if e["type"] == "message.upserted"
+                   and e["payload"].get("status") == "failed")
         self.assertIn("503", err["payload"]["text"])
         self.assertIn("retry 1/10", err["payload"]["text"])
 
     def test_projection(self):
+        """Round 2 投影只剩 compacted + api_error 兜底 message。代理发的 message
+        走另一条 ingest 路径, 不进入本 fixture 的 projection 数据。"""
         evs, _ = translate_file(Path("testdata/vendor/claude-sample.jsonl"))
         recs = [{"seq": i + 1, "event": e} for i, e in enumerate(evs)]
         sess = project_session("claude-verify", "claude", recs)
         self.assertEqual(sess["title"], "claude fixture title")
         kinds = [r["kind"] for r in sess["rows"]]
-        self.assertEqual(kinds, ["user", "assistant", "assistant", "tool", "user", "compacted", "assistant"])
-        tool = next(r for r in sess["rows"] if r["kind"] == "tool")
-        self.assertEqual(tool["status"], "completed")
-        self.assertEqual(tool["result"], "type=user")
-        self.assertEqual(tool["parentId"], "msg-a2")
-        self.assertEqual(sess["turns"], 2)
-        asst = next(r for r in sess["rows"] if r["kind"] == "assistant")
-        self.assertEqual(asst["model"], "claude-opus-4")
+        # transcript 这条路径只剩 compacted + api_error 那条 assistant
+        self.assertEqual(kinds, ["compacted", "assistant"])
         compacted = next(r for r in sess["rows"] if r["kind"] == "compacted")
         self.assertIn("8000 → 1200", compacted["note"])
         failed = next(r for r in sess["rows"] if r["status"] == "failed")
