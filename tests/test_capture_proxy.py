@@ -6,8 +6,10 @@ import unittest
 import urllib.request
 from pathlib import Path
 
+from ata import capture_proxy
 from ata.capture_proxy import start_capture_proxy
 from ata.ledger import Ledger
+from ata.plugins.capture import resolve_session_id
 
 
 UPSTREAM_RESP = {
@@ -115,6 +117,73 @@ class CaptureProxyTest(unittest.TestCase):
         with urllib.request.urlopen(req) as resp:
             self.assertEqual(resp.status, 200)  # 代理照常工作
         self.assertEqual(self.ledger.sessions(), [])  # 只是不采集
+
+
+class VirtualSidTest(unittest.TestCase):
+    def setUp(self):
+        # 测试间清空模块级 cache + lock
+        with capture_proxy._virtual_sid_lock:
+            capture_proxy._virtual_sid_cache.clear()
+
+    def test_same_client_port_within_window_reuses_sid(self):
+        # 同一 client_port 在 5min 内复用同一 sid
+        t0 = 1_700_000_000_000
+        a = capture_proxy._virtual_sid("droid", 52345, t0)
+        b = capture_proxy._virtual_sid("droid", 52345, t0 + 60_000)  # 1min 后
+        self.assertEqual(a, b)
+        self.assertTrue(a.startswith("droid-wire-52345-"))
+
+    def test_different_client_port_gets_different_sid(self):
+        # 不同 client_port → 不同 sid
+        t0 = 1_700_000_000_000
+        a = capture_proxy._virtual_sid("droid", 52345, t0)
+        b = capture_proxy._virtual_sid("droid", 52346, t0)  # 同一时刻不同 port
+        self.assertNotEqual(a, b)
+        self.assertTrue(a.startswith("droid-wire-52345-"))
+        self.assertTrue(b.startswith("droid-wire-52346-"))
+
+    def test_window_exceeded_yields_new_sid(self):
+        # 跨 5min 窗口拿新 sid
+        t0 = 1_700_000_000_000
+        a = capture_proxy._virtual_sid("droid", 52345, t0)
+        b = capture_proxy._virtual_sid(
+            "droid", 52345, t0 + capture_proxy._VIRTUAL_SID_WINDOW_MS + 1)
+        self.assertNotEqual(a, b)
+        # 边界: b 之后 c 在窗口内仍复用最近一次 (b) 的 sid
+        c = capture_proxy._virtual_sid(
+            "droid", 52345, t0 + capture_proxy._VIRTUAL_SID_WINDOW_MS)
+        self.assertEqual(b, c)
+
+    def test_sid_format_stable(self):
+        # sid 格式: {agent}-wire-{port}-{8hex}
+        sid = capture_proxy._virtual_sid("droid", 12345, 1_700_000_000_000)
+        parts = sid.split("-")
+        # "droid-wire-12345-abcd1234" → 4 段
+        self.assertEqual(parts[0], "droid")
+        self.assertEqual(parts[1], "wire")
+        self.assertEqual(parts[2], "12345")
+        self.assertEqual(len(parts[3]), 8)
+        self.assertTrue(all(c in "0123456789abcdef" for c in parts[3]))
+
+    def test_resolve_session_id_prefers_caller_injected(self):
+        # caller 注入的 sid 优先于 headers/body 解析
+        rec = {
+            "session_id": "droid-wire-52345-abcd1234",
+            "request_headers": {"x-droid-session-id": "should-be-ignored"},
+            "request_body": b'{"metadata": {"session_id": "should-be-ignored-too"}}',
+        }
+        self.assertEqual(
+            resolve_session_id(rec, "droid"),
+            "droid-wire-52345-abcd1234")
+
+    def test_resolve_session_id_falls_back_when_no_injection(self):
+        # 没注入时仍走原 headers/body 路径
+        rec = {
+            "request_headers": {"x-claude-code-session-id": "real-sid"},
+            "request_body": b'{}',
+        }
+        self.assertEqual(resolve_session_id(rec, "claude"), "real-sid")
+        # claude 不在 _VIRTUAL_SID_AGENTS, 走原解析
 
 
 if __name__ == "__main__":

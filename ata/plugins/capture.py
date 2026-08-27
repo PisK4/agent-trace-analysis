@@ -52,7 +52,15 @@ def resolve_session_id(rec, agent_id):
 
     优先 headers 路径（claude 走此），回退 body 路径（codex 走 OpenAI
     Responses API 的 metadata.session_id）。两条路径都未声明 = 暂未支持。
+
+    caller 已注入 `rec["session_id"]` 时（如 capture_proxy 给 droid 注入
+    虚拟 sid）优先使用——这是「caller 已识别该 record 归属」的明确信号,
+    避免重复解析 headers / body。
     """
+    if rec and isinstance(rec.get("session_id"), str):
+        injected = rec["session_id"].strip()
+        if injected:
+            return injected
     headers = (rec or {}).get("request_headers") or {}
     low = {str(k).lower(): v for k, v in headers.items()}
     for name in _SESSION_HEADERS.get(agent_id, ()):

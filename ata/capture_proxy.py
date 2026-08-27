@@ -11,10 +11,13 @@ frozen dataclass 贴 property），这里全部不复制：计时显式测量、
 from __future__ import annotations
 
 import http.client
+import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
+from ata.plugins.capture import resolve_session_id
 from ata.wire.storage_headers import record_headers_for_storage
 
 MAX_CAPTURE_BYTES = 8 * 1024 * 1024
@@ -23,6 +26,47 @@ _CHUNK = 65536
 # 「认证头不落账本」而不是「不转发」，上游网关需要客户端的 key。
 # record 的 request_headers 只收 x-claude-*，这是落档侧的那道闸。
 _HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding"}
+
+#: agent 走反代时**没**任何 wire 字段携带 sid (e2e 验证: droid 真实请求
+#: 既不发 x-droid-* 头, 也不在 body metadata.session_id)。 ingest_capture 的
+#: 「无 sid 就丢弃」硬约束会让所有 droid-wire 流量被吞掉, 反代白过。
+#: 这里用「虚拟 sid」兜底: 仅对 droid 注入 `droid-wire-<client_port>-<rand>`
+#: 让 translate_capture 正常补 system.upserted / turn.ended。 该虚拟 sid 与
+#: droid transcript 适配器给出的真 sid 不归并 (后续时间窗归并是独立 todo)。
+#:
+#: 多 daemon 区分: 同一 client_port 短时间内(默认 5min) 复用同一虚拟 sid,
+#: 不同的 droid daemon 各自用自己的 17878 连接(client port 不同) 拿不同虚拟
+#: sid。 droid daemon 重连会让 client_port 变 → 新虚拟 sid, 这是设计取舍。
+_VIRTUAL_SID_AGENTS = frozenset({"droid"})
+
+#: 同一 client_port 复用虚拟 sid 的时间窗 (ms)。 5 分钟覆盖普通对话
+#: 一轮的间隔, 超过此间隔视作"新 session"换新虚拟 sid。
+_VIRTUAL_SID_WINDOW_MS = 5 * 60 * 1000
+
+#: client_port → (virtual_sid, last_used_ms)。 进程内 dict, 多线程需加锁。
+#: BaseHTTPRequestHandler 每个请求新建实例, state 必须放类外。
+_virtual_sid_cache: dict[int, tuple[str, int]] = {}
+_virtual_sid_lock = threading.Lock()
+
+
+def _virtual_sid(agent_id, client_port, started_at_ms):
+    """droid-wire 流量的兜底 sid, 按 client_port + 时间窗复用。
+
+    同一 client_port 在 _VIRTUAL_SID_WINDOW_MS 内的所有 record 拿同一 sid,
+    跨窗或新 client_port → 新 sid。 client_port 来自 droid 客户端的 17878
+    连接本地端口(每 daemon 实例不同), 这把多 droid CLI 实例区分开。
+    """
+    now_ms = int(started_at_ms)
+    with _virtual_sid_lock:
+        entry = _virtual_sid_cache.get(client_port)
+        if entry is not None:
+            cached_sid, last_ms = entry
+            if now_ms - last_ms <= _VIRTUAL_SID_WINDOW_MS:
+                _virtual_sid_cache[client_port] = (cached_sid, now_ms)
+                return cached_sid
+        sid = f"{agent_id}-wire-{client_port}-{uuid.uuid4().hex[:8]}"
+        _virtual_sid_cache[client_port] = (sid, now_ms)
+        return sid
 
 
 def start_capture_proxy(host, port, upstream, agent_id, ingest):
@@ -91,6 +135,21 @@ def start_capture_proxy(host, port, upstream, agent_id, ingest):
                 "started_at_ms": int(started * 1000),
                 "completed_at_ms": int(completed * 1000),
             }
+            # droid 等 agent 的真实 wire traffic 不带 sid (e2e 验证: 既无
+            # x-droid-* 头也无 body metadata.session_id)。 resolve_session_id
+            # 拿不到时, ingest_capture 会抛 ValueError 整条 record 被吞。 这里
+            # 在 ingest 之前给 record 注入虚拟 sid, 让 translate_capture 走完
+            # system.upserted / turn.ended 链路。 虚拟 sid 与 droid transcript
+            # 真 sid 不归并 — 后续时间窗归并是独立 todo。
+            #
+            # 多 daemon 区分: 虚拟 sid 含 client_port, 不同 droid CLI 实例
+            # 各自用自己的 17878 连接 → 不同 client_port → 不同虚拟 sid。
+            if agent_id in _VIRTUAL_SID_AGENTS:
+                sid = resolve_session_id(record, agent_id)
+                if not sid:
+                    record["session_id"] = _virtual_sid(
+                        agent_id, self.client_address[1],
+                        record["started_at_ms"])
             try:
                 ingest(record)
             except Exception as exc:  # noqa: BLE001
