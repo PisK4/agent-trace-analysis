@@ -304,6 +304,90 @@ def _translate(rec, state):
                 ts=ts,
                 eid=f"{sid}:turn:{turn}:ended:{rid or ts}",
             ))
+
+    # tool.upserted: start 从 response.tool_calls 提, end 从本 request 的
+    # tool_result 块提 (响应里没有 result — 它在下一次请求里)。
+    tools_state = state.setdefault("_capture_tools", {})
+
+    # start
+    for tc in resp.get("response_tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        cid = tc.get("id")
+        if not isinstance(cid, str) or not cid:
+            continue
+        if cid in tools_state:
+            continue
+        name = tc.get("name") or "tool"
+        args = tc.get("input") if isinstance(tc.get("input"), dict) else {}
+        text = args.get("path") or args.get("pattern") or name
+        tools_state[cid] = {
+            "name": name, "args": args, "text": text,
+            "started_at": int(rec.get("started_at_ms") or ts),
+        }
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=sid,
+            type_="tool.upserted",
+            payload={
+                "tool_call_id": cid,
+                "parent_message_id": resp.get("response_id"),
+                "name": name,
+                "text": text,
+                "status": "pending",
+                "payload": args,
+                "result": None,
+                "started_at": tools_state[cid]["started_at"],
+                "duration_ms": None,
+            },
+            turn=turn,
+            ts=ts,
+            eid=f"{sid}:tool:{cid}:start",
+        ))
+
+    # end: 扫本 request 全部 messages 的 tool_result 块
+    for m in req.get("messages") or []:
+        if not isinstance(m, dict):
+            continue
+        content = m.get("content")
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if not isinstance(b, dict) or b.get("type") != "tool_result":
+                continue
+            cid = b.get("tool_use_id")
+            if not isinstance(cid, str) or not cid:
+                continue
+            if cid not in tools_state:
+                continue  # 没有对应 start (代理漏了一次响应), 不发 end
+            prev = tools_state.pop(cid)
+            res = b.get("content")
+            if isinstance(res, list):
+                res = "\n".join(
+                    bb.get("text", "") for bb in res
+                    if isinstance(bb, dict) and isinstance(bb.get("text"), str)
+                )
+            res_text = res if isinstance(res, str) else ""
+            out.append(envelope(
+                agent_id=agent_id,
+                session_id=sid,
+                type_="tool.upserted",
+                payload={
+                    "tool_call_id": cid,
+                    "parent_message_id": prev.get("parent_message_id") or resp.get("response_id"),
+                    "name": prev.get("name") or "tool",
+                    "text": prev.get("text") or res_text[:200] or cid,
+                    "status": "completed",
+                    "payload": prev.get("args"),
+                    "result": res_text,
+                    "started_at": prev.get("started_at") or int(rec.get("started_at_ms") or ts),
+                    "duration_ms": int((rec.get("completed_at_ms") or ts) - prev.get("started_at", ts or 0)),
+                },
+                turn=turn,
+                ts=ts,
+                eid=f"{sid}:tool:{cid}:end",
+            ))
+
     return out
 
 

@@ -341,5 +341,97 @@ class CaptureMessageEmitTest(unittest.TestCase):
         self.assertEqual(user_evs, [])
 
 
+class CaptureToolEmitTest(unittest.TestCase):
+    """Round 2: 代理主发 tool.upserted (start from response, end from next request)。
+
+    - start: response.tool_calls → tool_use 块 → status=pending
+    - end: 下一轮 request 里的 tool_result 块 → status=completed
+    - 缺失 start 的 tool_use_id: 不发 end (代理漏了一次响应, 视为外部异常)
+    """
+
+    def _base_rec(self, sid="cap-tool-1", request_messages=None, response=None):
+        return {
+            "agent_id": "claude",
+            "path": "/v1/messages",
+            "request_headers": {"x-claude-code-session-id": sid},
+            "request_body": json.dumps({
+                "model": "m",
+                "messages": request_messages or [
+                    {"role": "user", "id": "u-1", "content": [{"type": "text", "text": "q"}]},
+                ],
+            }).encode(),
+            "response_content_type": "application/json",
+            "response_body": json.dumps(response or {
+                "id": "msg_resp", "role": "assistant",
+                "content": [{"type": "text", "text": "answer"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }).encode(),
+            "started_at_ms": 1000, "completed_at_ms": 2000,
+        }
+
+    def test_tool_start_from_response(self):
+        from ata.plugins.capture import translate_capture
+        rec = self._base_rec(
+            response={
+                "id": "msg_resp", "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "toolu_01", "name": "Read",
+                     "input": {"path": "/x"}},
+                ],
+                "stop_reason": "tool_use",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            })
+        events = translate_capture(rec, {"session_id": "cap-tool-1"})
+        starts = [e for e in events if e["type"] == "tool.upserted"
+                  and e["id"].endswith(":start")]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0]["payload"]["tool_call_id"], "toolu_01")
+        self.assertEqual(starts[0]["payload"]["name"], "Read")
+        self.assertEqual(starts[0]["payload"]["status"], "pending")
+
+    def test_tool_end_from_next_request(self):
+        """tool_result 出现在**下一轮** request 里 — 模拟 claude 实际行为。"""
+        from ata.plugins.capture import translate_capture
+        state = {"session_id": "cap-tool-2"}
+        # 第一轮: tool_use
+        rec1 = self._base_rec(
+            sid="cap-tool-2",
+            response={
+                "id": "msg_resp_1", "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "toolu_02", "name": "Bash",
+                     "input": {"cmd": "ls"}},
+                ],
+                "stop_reason": "tool_use",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            })
+        translate_capture(rec1, state)
+        # 第二轮: 同一 session, user 带 tool_result
+        rec2 = self._base_rec(
+            sid="cap-tool-2",
+            request_messages=[
+                {"role": "user", "id": "u-1",
+                 "content": [{"type": "text", "text": "q"}]},
+                {"role": "assistant", "id": "msg_resp_1",
+                 "content": [
+                     {"type": "tool_use", "id": "toolu_02", "name": "Bash",
+                      "input": {"cmd": "ls"}},
+                 ]},
+                {"role": "user", "id": "u-2",
+                 "content": [
+                     {"type": "tool_result", "tool_use_id": "toolu_02",
+                      "content": "file.txt\n"},
+                 ]},
+            ])
+        events = translate_capture(rec2, state)
+        ends = [e for e in events if e["type"] == "tool.upserted"
+                and e["id"].endswith(":end")]
+        self.assertEqual(len(ends), 1)
+        self.assertEqual(ends[0]["payload"]["tool_call_id"], "toolu_02")
+        self.assertEqual(ends[0]["payload"]["status"], "completed")
+        self.assertIn("file.txt", (ends[0]["payload"].get("result") or ""))
+
+
 if __name__ == "__main__":
     unittest.main()
