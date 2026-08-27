@@ -27,21 +27,26 @@ _CHUNK = 65536
 # record 的 request_headers 只收 x-claude-*，这是落档侧的那道闸。
 _HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding"}
 
-#: agent 走反代时**没**任何 wire 字段携带 sid (e2e 验证: droid 真实请求
-#: 既不发 x-droid-* 头, 也不在 body metadata.session_id)。 ingest_capture 的
-#: 「无 sid 就丢弃」硬约束会让所有 droid-wire 流量被吞掉, 反代白过。
-#: 这里用「虚拟 sid」兜底: 仅对 droid 注入 `droid-wire-<client_port>-<rand>`
-#: 让 translate_capture 正常补 system.upserted / turn.ended。 该虚拟 sid 与
-#: droid transcript 适配器给出的真 sid 不归并 (后续时间窗归并是独立 todo)。
+#: 哪些 wire 路径的请求走「虚拟 sid」兜底(代理壳不知道发起方是哪个
+#: host——droid 真实流量既无 x-droid-* 头也无 body metadata.session_id,
+#: 唯一可观察信号是 HTTP path)。 当前只覆盖 OpenAI Chat Completions /
+#: Responses 两条(都是 droid / codex 走 OpenAI 协议用的 path 后缀)。
 #:
 #: 多 daemon 区分: 同一 client_port 短时间内(默认 5min) 复用同一虚拟 sid,
-#: 不同的 droid daemon 各自用自己的 17878 连接(client port 不同) 拿不同虚拟
-#: sid。 droid daemon 重连会让 client_port 变 → 新虚拟 sid, 这是设计取舍。
-_VIRTUAL_SID_AGENTS = frozenset({"droid"})
+#: 不同的 daemon 各自用自己的 17878 连接(client port 不同) 拿不同虚拟
+#: sid。 daemon 重连会让 client_port 变 → 新虚拟 sid, 这是设计取舍。
+_VIRTUAL_SID_PATH_SUFFIXES = (
+    "/v1/chat/completions", "/v1/responses")
 
 #: 同一 client_port 复用虚拟 sid 的时间窗 (ms)。 5 分钟覆盖普通对话
 #: 一轮的间隔, 超过此间隔视作"新 session"换新虚拟 sid。
 _VIRTUAL_SID_WINDOW_MS = 5 * 60 * 1000
+
+
+def _needs_virtual_sid(path: str) -> bool:
+    """HTTP path 是否触发虚拟 sid 注入(剥离 query / 尾斜杠后比对)。"""
+    normalized = (path or "").split("?", 1)[0].rstrip("/")
+    return any(normalized.endswith(sfx) for sfx in _VIRTUAL_SID_PATH_SUFFIXES)
 
 #: client_port → (virtual_sid, last_used_ms)。 进程内 dict, 多线程需加锁。
 #: BaseHTTPRequestHandler 每个请求新建实例, state 必须放类外。
@@ -50,11 +55,11 @@ _virtual_sid_lock = threading.Lock()
 
 
 def _virtual_sid(agent_id, client_port, started_at_ms):
-    """droid-wire 流量的兜底 sid, 按 client_port + 时间窗复用。
+    """OpenAI 协议流量的兜底 sid, 按 client_port + 时间窗复用。
 
     同一 client_port 在 _VIRTUAL_SID_WINDOW_MS 内的所有 record 拿同一 sid,
-    跨窗或新 client_port → 新 sid。 client_port 来自 droid 客户端的 17878
-    连接本地端口(每 daemon 实例不同), 这把多 droid CLI 实例区分开。
+    跨窗或新 client_port → 新 sid。 client_port 来自 droid/codex 客户端的
+    17878 连接本地端口(每 daemon 实例不同), 这把多 daemon 实例区分开。
     """
     now_ms = int(started_at_ms)
     with _virtual_sid_lock:
@@ -135,16 +140,17 @@ def start_capture_proxy(host, port, upstream, agent_id, ingest):
                 "started_at_ms": int(started * 1000),
                 "completed_at_ms": int(completed * 1000),
             }
-            # droid 等 agent 的真实 wire traffic 不带 sid (e2e 验证: 既无
-            # x-droid-* 头也无 body metadata.session_id)。 resolve_session_id
-            # 拿不到时, ingest_capture 会抛 ValueError 整条 record 被吞。 这里
-            # 在 ingest 之前给 record 注入虚拟 sid, 让 translate_capture 走完
-            # system.upserted / turn.ended 链路。 虚拟 sid 与 droid transcript
-            # 真 sid 不归并 — 后续时间窗归并是独立 todo。
+            # droid/codex 等 agent 的真实 wire traffic 不带 sid (e2e 验证:
+            # droid 既无 x-droid-* 头也无 body metadata.session_id; codex 也
+            # 仅在 codex-via-cli 模式下有 metadata.session_id, 走代理时未必
+            # 携带)。 代理壳按 path 后缀识别 OpenAI 协议流量, 给这些 record
+            # 注入「虚拟 sid」兜底, 避免 ingest_capture 因拿不到 sid 整条吞掉。
             #
             # 多 daemon 区分: 虚拟 sid 含 client_port, 不同 droid CLI 实例
             # 各自用自己的 17878 连接 → 不同 client_port → 不同虚拟 sid。
-            if agent_id in _VIRTUAL_SID_AGENTS:
+            # 虚拟 sid 与 droid transcript 真 sid 不归并 — 后续时间窗归并是
+            # 独立 todo(且 droid 一旦接 hook 通道, 这条兜底路径可退役)。
+            if _needs_virtual_sid(record["path"]):
                 sid = resolve_session_id(record, agent_id)
                 if not sid:
                     record["session_id"] = _virtual_sid(

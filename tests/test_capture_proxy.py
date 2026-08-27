@@ -186,5 +186,111 @@ class VirtualSidTest(unittest.TestCase):
         # claude 不在 _VIRTUAL_SID_AGENTS, 走原解析
 
 
+class NeedsVirtualSidTest(unittest.TestCase):
+    """path-触发的兜底判断: 代理壳不知道发起方是哪个 host, 只能按 path
+    推测。 任何走到 /v1/chat/completions 或 /v1/responses 的请求都触发
+    虚拟 sid 注入(无论 agent_id 是 claude 还是 droid / codex)。
+    """
+
+    def test_chat_completions_triggers(self):
+        self.assertTrue(capture_proxy._needs_virtual_sid("/v1/chat/completions"))
+
+    def test_responses_triggers(self):
+        self.assertTrue(capture_proxy._needs_virtual_sid("/v1/responses"))
+
+    def test_claude_messages_does_not_trigger(self):
+        # claude 走 /v1/messages, 由 headers 提供 sid, 不需要兜底
+        self.assertFalse(capture_proxy._needs_virtual_sid("/v1/messages"))
+
+    def test_query_string_ignored(self):
+        self.assertTrue(capture_proxy._needs_virtual_sid(
+            "/v1/chat/completions?stream=true"))
+
+    def test_trailing_slash_ignored(self):
+        self.assertTrue(capture_proxy._needs_virtual_sid("/v1/chat/completions/"))
+
+    def test_empty_path_returns_false(self):
+        self.assertFalse(capture_proxy._needs_virtual_sid(""))
+        self.assertFalse(capture_proxy._needs_virtual_sid(None))
+
+
+class OpenAIProxyPathTest(unittest.TestCase):
+    """集成验证: 代理壳跑起来, 发到 /v1/chat/completions 的无 sid 请求
+    应该走虚拟 sid 兜底, 事件落账; /v1/messages 没 sid 时按原逻辑不采集。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.ledger = Ledger(Path(self.tmp.name))
+        self.upstream = make_upstream([UPSTREAM_RESP])
+        self.upstream_port = self.upstream.server_address[1]
+        threading.Thread(target=self.upstream.serve_forever, daemon=True).start()
+        # 清虚拟 sid cache 避免跨测试污染
+        with capture_proxy._virtual_sid_lock:
+            capture_proxy._virtual_sid_cache.clear()
+
+    def tearDown(self):
+        self.upstream.shutdown()
+        self.upstream.server_address  # noqa
+        self.upstream.server_close()
+        self.tmp.cleanup()
+        with capture_proxy._virtual_sid_lock:
+            capture_proxy._virtual_sid_cache.clear()
+
+    def _start_proxy(self):
+        from ata.plugins.capture import ingest_capture
+
+        httpd = start_capture_proxy(
+            "127.0.0.1", 0, f"http://127.0.0.1:{self.upstream_port}",
+            "claude", lambda rec: ingest_capture(self.ledger, rec))
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        return port
+
+    def test_openai_path_injects_virtual_sid_and_lands_events(self):
+        port = self._start_proxy()
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/chat/completions",
+            data=json.dumps({
+                "model": "claude-sonnet-5",
+                "messages": [{"role": "user", "content": "hi"}],
+            }).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+        # 等虚拟 sid 注入的 record 落账 (≤5s)
+        deadline = time.time() + 5
+        sids = []
+        while time.time() < deadline:
+            sids = self.ledger.sessions()
+            if sids:
+                break
+            time.sleep(0.05)
+        self.assertEqual(len(sids), 1, f"expected 1 session, got {sids}")
+        virtual_sid = sids[0]["id"]
+        self.assertTrue(
+            virtual_sid.startswith("claude-wire-"),
+            f"unexpected sid format: {virtual_sid}")
+        recs = self.ledger.read(virtual_sid)
+        types = sorted(r["event"]["type"] for r in recs)
+        self.assertIn("turn.ended", types)
+
+    def test_claude_path_without_sid_still_drops(self):
+        # /v1/messages 没有 x-claude-code-session-id → 仍按原契约不采集
+        port = self._start_proxy()
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/messages",
+            data=json.dumps({"messages": []}).encode(),
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+        time.sleep(0.3)  # 给 ingest 一点时间跑(它会抛错被吞)
+        self.assertEqual(self.ledger.sessions(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
