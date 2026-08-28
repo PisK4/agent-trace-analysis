@@ -12,16 +12,49 @@ ALLOWED_TYPES = {
     "compaction.boundary",
     "session.scored",
     "session.score.cleared",
-    "session.assigned",
-    "session.unassigned",
     "session.renamed",
+    "run.started",
+    "run.ended",
+    "run.lifecycle.conflict",
 }
 ALLOWED_AGENTS = {"pi", "cue", "droid", "claude", "codex"}
 USAGE_KEYS = ("status", "input", "output", "cache_read", "cache_write", "total_tokens", "cost")
+_SESSION_TYPES = {
+    "session.opened",
+    "session.renamed",
+    "session.closed",
+    "session.scored",
+    "session.score.cleared",
+}
+_TURN_TYPES = {"turn.started", "message.upserted", "tool.upserted", "turn.ended"}
 
 
 class ValidationError(ValueError):
     pass
+
+
+def _positive_int(value, name):
+    if type(value) is not int or value < 1:
+        raise ValidationError(f"{name} must be positive int")
+
+
+def _nullable_positive_int(value, name):
+    if value is not None:
+        _positive_int(value, name)
+
+
+def _check_identity(raw):
+    run_id = raw.get("run_id")
+    turn_number = raw.get("turn_number")
+    observed = raw.get("observed_turn_ordinal")
+    _nullable_positive_int(run_id, "run_id")
+    _nullable_positive_int(turn_number, "turn_number")
+    _nullable_positive_int(observed, "observed_turn_ordinal")
+    if turn_number is not None and run_id is None:
+        raise ValidationError("turn_number requires run_id")
+    if observed is not None and (run_id is not None or turn_number is not None):
+        raise ValidationError("canonical and observed turn identity are exclusive")
+    return run_id, turn_number, observed
 
 
 def parse_event(raw: dict) -> dict:
@@ -30,33 +63,47 @@ def parse_event(raw: dict) -> dict:
     for key in ("v", "id", "agent_id", "session_id", "ts", "type", "payload"):
         if key not in raw:
             raise ValidationError(f"missing {key}")
+    if "turn" in raw:
+        raise ValidationError("turn field removed; use turn_number")
     if raw["v"] != 1:
         raise ValidationError("v must be 1")
     if raw["agent_id"] not in ALLOWED_AGENTS:
         raise ValidationError("bad agent_id")
     if not raw["session_id"] or not raw["id"]:
         raise ValidationError("empty id")
-    if not isinstance(raw["ts"], (int, float)):
+    if not isinstance(raw["ts"], (int, float)) or isinstance(raw["ts"], bool):
         raise ValidationError("bad ts")
     if raw["type"] not in ALLOWED_TYPES:
         raise ValidationError("bad type")
     if not isinstance(raw["payload"], dict):
         raise ValidationError("payload must be object")
-    turn = raw.get("turn", None)
-    if raw["type"].startswith("session.") or raw["type"] == "system.upserted":
-        if turn is not None:
-            raise ValidationError("session/system turn must be null")
-    elif not isinstance(turn, int) or turn < 1:
-        raise ValidationError("turn must be positive int")
-    _check_payload(raw["type"], raw["payload"])
+    run_id, turn_number, observed = _check_identity(raw)
+    typ = raw["type"]
+    if typ in _SESSION_TYPES or typ == "run.lifecycle.conflict":
+        if run_id is not None or turn_number is not None or observed is not None:
+            raise ValidationError("session/conflict identity must be null")
+    elif typ in {"run.started", "run.ended"}:
+        if run_id is None or turn_number is not None or observed is not None:
+            raise ValidationError("run boundary requires run_id only")
+    elif typ in {"system.upserted", "compaction.boundary"}:
+        if turn_number is not None or observed is not None:
+            raise ValidationError("system/compaction turn identity must be null")
+    elif typ in _TURN_TYPES:
+        canonical = run_id is not None and turn_number is not None and observed is None
+        observed_only = run_id is None and turn_number is None and observed is not None
+        if not (canonical or observed_only):
+            raise ValidationError("turn event requires canonical or observed identity")
+    _check_payload(typ, raw["payload"])
     return {
         "v": 1,
         "id": str(raw["id"]),
         "agent_id": raw["agent_id"],
         "session_id": str(raw["session_id"]),
         "ts": int(raw["ts"]),
-        "type": raw["type"],
-        "turn": turn,
+        "type": typ,
+        "run_id": run_id,
+        "turn_number": turn_number,
+        "observed_turn_ordinal": observed,
         "payload": raw["payload"],
     }
 
@@ -66,6 +113,21 @@ def _check_payload(typ, p):
         raise ValidationError("title required")
     if typ == "system.upserted" and not p.get("prompt_text"):
         raise ValidationError("prompt_text required")
+    if typ in {"run.started", "run.ended"}:
+        if "external_lifecycle_id" not in p:
+            raise ValidationError("external_lifecycle_id required")
+        if p["external_lifecycle_id"] is not None and not isinstance(p["external_lifecycle_id"], str):
+            raise ValidationError("external_lifecycle_id must be string or null")
+        if not isinstance(p.get("boundary_source"), str) or not p["boundary_source"]:
+            raise ValidationError("boundary_source required")
+    if typ == "run.lifecycle.conflict":
+        if "external_lifecycle_id" not in p:
+            raise ValidationError("external_lifecycle_id required")
+        if p["external_lifecycle_id"] is not None and not isinstance(p["external_lifecycle_id"], str):
+            raise ValidationError("external_lifecycle_id must be string or null")
+        for key in ("hook_name", "reason", "semantic_fingerprint", "boundary_source"):
+            if not isinstance(p.get(key), str) or not p[key]:
+                raise ValidationError(f"{key} required")
     if typ == "message.upserted":
         if p.get("role") not in {"user", "assistant"}:
             raise ValidationError("bad role")
@@ -86,12 +148,6 @@ def _check_payload(typ, p):
             raise ValidationError("bad score value")
         if "note" in p and not isinstance(p["note"], str):
             raise ValidationError("score note must be string")
-    if typ == "session.assigned":
-        for key in ("run_id", "task_id"):
-            if not isinstance(p.get(key), str) or not p[key]:
-                raise ValidationError(f"{key} required")
-    if typ == "session.unassigned" and not p.get("run_id"):
-        raise ValidationError("run_id required")
     if typ == "session.renamed" and not (p.get("title") or "").strip():
         raise ValidationError("title required")
 
@@ -104,13 +160,19 @@ def _check_usage(u):
             raise ValidationError(f"usage missing {k}")
 
 
-def envelope(agent_id, session_id, type_, payload, turn=None, ts=None, eid=None):
-    """v1 事件信封的唯一构造入口。
-
-    账本的写入方（CLI 标注、HTTP 改名、适配器补写）都组同一个七键 dict；
-    此前各处手搓，漏键要到 parse_event 才报「missing xxx」。工厂只负责
-    形状与默认值（ts=now），不做校验——校验职责仍在 parse_event。
-    """
+def envelope(
+    agent_id,
+    session_id,
+    type_,
+    payload,
+    *,
+    run_id=None,
+    turn_number=None,
+    observed_turn_ordinal=None,
+    ts=None,
+    eid=None,
+):
+    """构造保留完整 Runtime identity 的 v1 事件信封。"""
     return {
         "v": 1,
         "id": eid if eid is not None else uuid.uuid4().hex,
@@ -118,6 +180,8 @@ def envelope(agent_id, session_id, type_, payload, turn=None, ts=None, eid=None)
         "session_id": str(session_id),
         "ts": int(ts if ts is not None else time.time() * 1000),
         "type": type_,
-        "turn": turn,
+        "run_id": run_id,
+        "turn_number": turn_number,
+        "observed_turn_ordinal": observed_turn_ordinal,
         "payload": payload,
     }

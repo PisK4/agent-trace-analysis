@@ -9,20 +9,16 @@ REAL_TS_FLOOR = 10 ** 12
 
 
 def fold_session_meta(existing, event):
-    """existing: 折叠态 dict（含 title/renamed/turns/last_ts/first_ts/
-    parent_session_id）或 None（新会话）。event: 已解析的事件 dict。
-    返回新的折叠态 dict（不改入参）。"""
+    """折叠 Session 元数据，不从 Runtime event 推导 Session-global turn。"""
     row = dict(existing) if existing else {
         "title": event.get("session_id") or "",
         "renamed": False,
-        "turns": 0,
         "last_ts": 0,
         "first_ts": 0,
         "parent_session_id": None,
     }
     # existing 允许只带部分键（调用方可能从行记录挑字段组装），缺省按折叠初值。
     row.setdefault("renamed", False)
-    row.setdefault("turns", 0)
     row.setdefault("last_ts", 0)
     row.setdefault("first_ts", 0)
     ts = int(event.get("ts") or 0)
@@ -48,7 +44,4 @@ def fold_session_meta(existing, event):
         # 用户改名：latest-wins，后续 opened 不再覆盖
         row["title"] = p.get("title") or row["title"]
         row["renamed"] = True
-    turn = event.get("turn")
-    if isinstance(turn, int) and turn > row["turns"]:
-        row["turns"] = turn
     return row
