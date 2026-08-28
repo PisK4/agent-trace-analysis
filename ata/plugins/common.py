@@ -21,17 +21,56 @@ PLACEHOLDER_MS = 1
 # TodoWrite 提醒）。ATA 语料里这些仍走 user 角色：「CONTEXT 注入不算真实
 # 用户消息、不开新轮」是翻译裁决（CONTEXT.md 明文挂在 CONTEXT 词条下），
 # 唯一归属地在翻译内核；投影层改标 CONTEXT 同吃这份判定。
-_CONTEXT_PREFIXES = (
-    "<system-reminder>",
-    "<system-notification>",
-    "Skill \"",
-    "Skill '",
+#
+# 判定走「形态学 + id 守门」双保险（2026-08-27 治本改造）：
+#   1. 形态学: 文本以 <xxx> / [BRACKETED_KEY] / Skill " 开头 → CONTEXT
+#      不枚举 tag、不要求闭合, 新形态 (<ide_selection> / <something-else>)
+#      自动命中, 永远不漏
+#   2. id 守门: 文本像 CONTEXT 但所在块带 wire id 字段 → 真 user, 不判 CONTEXT
+#      harness 自造注入时**不**给 id; 真实 user 消息 wire 带 id 是不变量
+#      (统计 ~/.ata/ata.sqlite: 所有 <xxx>...</xxx> 形态 user 消息实测 100%
+#      是 harness 注入, 真 user 写 HTML 形态 0 样本)
+#
+# 参考: repos/agent-visualization-analysis/trace_graph.py:2157-2169
+#       (ava 的 _INJECTED_BLOCK_RE 用形态学闭合块剥注入, 思路一致)
+_BRACKET_HEAD = "["
+_SKILL_HEAD_DOUBLE = 'Skill "'
+_SKILL_HEAD_SINGLE = "Skill '"
+
+# 纯文本形态的 harness 注入 (无 <xxx> / [KEY] 标记, 形态学抓不到, 只能
+# 按已知前缀枚举)。新形态优先观察是否带 wire id 走 id 守门, 真要漏再进
+# 这张表 — 表越长误杀风险越大, 保持最小集。
+_PLAIN_INJECTION_PREFIXES: tuple[str, ...] = (
+    # Claude Code: user 走开后的自动 recap 指令 (sid 74736c29 user:3:11 实证)
+    "The user stepped away and is coming back.",
 )
 
 
-def is_context_text(text):
+def is_context_text(text, *, has_id: bool = False):
+    """返回 True 表示文本是 CONTEXT 注入 (harness 注入), 不是真 user 提问。
+
+    has_id: 文本所在 message 块是否带 wire id 字段。True 时豁免所有形态学
+    判据 (id 守门保险, harness 构造注入从不打 id)。
+    """
+    if has_id:
+        # id 守门: 块带 wire id → 必真 user, 任何启发式都不判 CONTEXT
+        return False
     raw = (text or "").lstrip()
-    return any(raw.startswith(prefix) for prefix in _CONTEXT_PREFIXES)
+    if not raw:
+        return False
+    # 纯文本已知注入前缀 (recap 指令等)
+    if raw.startswith(_PLAIN_INJECTION_PREFIXES):
+        return True
+    # 形态学贪心: <xxx> 任意 tag, 不枚举, 不要求闭合
+    if raw[0] == "<":
+        return True
+    # [...] 形态, 例如 [CURRENT_TIME] / [MATERIAL_WINDOW] / 任何 [BRACKETED_KEY]
+    if raw[0] == _BRACKET_HEAD:
+        return True
+    # Skill 自动加载提示
+    if raw.startswith((_SKILL_HEAD_DOUBLE, _SKILL_HEAD_SINGLE)):
+        return True
+    return False
 
 
 _MISSING_SHAPE = {

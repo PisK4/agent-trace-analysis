@@ -479,6 +479,25 @@ def _content_to_texts(content: Any) -> list[str]:
     return []
 
 
+
+def _message_item_texts(item: dict[str, Any]) -> list[str]:
+    """block 级文本列表 (与 anthropic_parser message_items[].texts 同约定)。
+
+    顺序与 _message_text 的拼接一致: content blocks 优先, 退回 output/text/
+    arguments 字符串形态。"""
+    texts = _content_to_texts(item.get("content"))
+    if texts:
+        return texts
+    for key in ("output", "text", "arguments"):
+        value = item.get(key)
+        if isinstance(value, str):
+            return [value]
+        blocks = _content_to_texts(value)
+        if blocks:
+            return blocks
+    return []
+
+
 def _structured_tool_calls(value: Any) -> list[dict[str, Any]]:
     """Best-effort structured tool call list for Viewer Response Summary.
 
@@ -820,6 +839,7 @@ def _message_item(source: str, index: Optional[int], item: Any) -> dict[str, Any
             "role": "user",
             "type": "message",
             "text": item,
+            "texts": [item],
             "call_id": None,
             "tool_call_id": None,
             "tool_calls": [],
@@ -835,6 +855,7 @@ def _message_item(source: str, index: Optional[int], item: Any) -> dict[str, Any
             "role": "unknown",
             "type": "unknown",
             "text": text,
+            "texts": [text],
             "call_id": None,
             "tool_call_id": None,
             "tool_calls": [],
@@ -855,6 +876,9 @@ def _message_item(source: str, index: Optional[int], item: Any) -> dict[str, Any
         "type": item_type,
         "name": item.get("name"),
         "text": _message_text(item),
+        # block 级文本列表 (与 anthropic 侧 texts 字段同约定): 消费方过滤
+        # 注入块时按 block 判, 不拿拼好的 text 整串判形态学。
+        "texts": _message_item_texts(item),
         "call_id": item.get("call_id") if isinstance(item.get("call_id"), str) else None,
         "tool_call_id": item.get("tool_call_id") or item.get("call_id"),
         "tool_calls": tool_calls,

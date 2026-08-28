@@ -82,17 +82,55 @@ def resolve_session_id(rec, agent_id):
     return None
 
 
-def _user_text_from_item(item):
-    """从 wire summary 的 message_item 提 user 角色文本。
+def _user_texts_from_item(item):
+    """从 wire summary 的 message_item 提 user 角色的 block 级文本列表。
 
-    吃 anthropic_parser 已解析的 message_items 形状（role + 摘要 text 字段），
-    原始 content blocks 已被 _content_blocks 压平成 text 字符串。tool_use
-    / tool_result / 助手行都不算 user 文本。
+    吃 anthropic_parser / openai_parser 已解析的 message_items 形状。
+    texts (block 级列表) 存在时优先 — 注入块与真实提问同消息共存时按
+    block 判, 只杀注入块; 旧 shape (无 texts) 退回压平的 text 字符串
+    整串判。tool_use / tool_result / 助手行都不算 user 文本。
     """
     if not isinstance(item, dict) or item.get("role") != "user":
-        return ""
+        return []
+    texts = item.get("texts")
+    if isinstance(texts, list):
+        return [t for t in texts if isinstance(t, str)]
     text = item.get("text")
-    return text if isinstance(text, str) else ""
+    return [text] if isinstance(text, str) and text else []
+
+
+def _user_text_from_item(item):
+    """压平的 user 文本 (旧接口, 仅供兼容; 过滤请走 _user_texts_from_item)。"""
+    return "\n".join(_user_texts_from_item(item))
+
+
+def _user_has_id_from_item(item):
+    """message_item 是否带 wire id 字段 (anthropic_parser._message_items
+    在 2026-08-27 治本改造里透出 has_id, 给 is_context_text 当 id 守门用)。
+    缺字段视为 False (没 id 视为注入嫌疑, 让形态学判)。"""
+    if not isinstance(item, dict):
+        return False
+    return bool(item.get("has_id"))
+
+
+def real_user_blocks(item):
+    """一条 user message_item 过滤 CONTEXT 注入块后剩下的真实文本 block。
+
+    过滤粒度是 block 不是消息: Claude Code 常把 <local-command-caveat> 等
+    注入与真实提问放进同一 user 消息的相邻 text block, 整串判形态学时
+    开头的 <xxx> 会把真实提问连带杀掉 (sid 74736c29「你是谁」实证)。
+    消息带 wire id 时整条豁免 (id 守门)。
+    """
+    from ata.project import is_context_text
+
+    if not isinstance(item, dict):
+        return []
+    texts = _user_texts_from_item(item)
+    if not texts:
+        return []
+    if _user_has_id_from_item(item):
+        return texts
+    return [t for t in texts if t and not is_context_text(t)]
 
 
 def count_real_user_turns(message_items):
@@ -100,15 +138,13 @@ def count_real_user_turns(message_items):
 
     与 jsonl 侧 bump_turn_if_real_user 同口径：CONTEXT 注入不开轮
     （复用 ata.project.is_context_text，懒加载避免循环导入）。
+    一条消息只剩注入块时不计数; 混合消息 (注入块 + 真实提问) 算一条。
+    id 守门: 块带 wire id 时豁免形态学判据, 避免误杀真 user 写 <xxx> 形态。
     """
-    from ata.project import is_context_text
-
     count = 0
     for item in message_items or []:
-        text = _user_text_from_item(item)
-        if not text or is_context_text(text):
-            continue
-        count += 1
+        if real_user_blocks(item):
+            count += 1
     return count
 
 
@@ -198,46 +234,45 @@ def _translate(rec, state):
 
     # message.upserted (user + assistant): 代理主发, transcript 侧不再发
     # message 行 (transcript 仍发 ai-title / compact_boundary / system.api_error
-    # 等元数据)。state["_capture_emit"] 跟踪本 sid 已 emit 的 message_id, 防重。
-    seen = state.setdefault("_capture_emit", set())
+    # 等元数据)。防重走 events.dedupe_key UNIQUE 索引, 跨进程持久,
+    # 不再在内存维护 seen set (跨进程丢, 重启后空 mid 又能 emit)。
     message_items = req.get("message_items") or []
     turn = count_real_user_turns(message_items)
     if turn < 1:
         turn = 1
 
-    # user messages from request
-    for m in req.get("messages") or []:
-        if not isinstance(m, dict) or m.get("role") != "user":
+    # user messages from request: block 级过滤 CONTEXT 注入 (同一消息里
+    # 注入块 + 真实提问共存时只杀注入块, 整串判会连带杀掉真实提问),
+    # 与 count_real_user_turns 同口径 (real_user_blocks)。
+    # 每条真实 user 消息的 turn = 它的序号 (第 N 条真实 user = turn N),
+    # 与 turn.ended 的 turn (总数 count) 自然对齐: 最后一条真实 user 的
+    # turn 恰是本轮号, 历史 user 标各自的历史轮号。
+    user_idx = -1   # user 消息下标 (含纯注入消息, mid 定位用)
+    real_ordinal = 0  # 真实 user 序号 (turn 字段用)
+    for item in message_items:
+        if not isinstance(item, dict) or item.get("role") != "user":
             continue
-        mid = str(m.get("id") or f"{sid}:user:{m.get('index', '')}")
-        if mid in seen:
+        user_idx += 1
+        blocks = real_user_blocks(item)
+        if not blocks:
             continue
-        seen.add(mid)
-        content = m.get("content")
-        if isinstance(content, str):
-            texts = [content]
-            blocks = [{"type": "text", "text": content}]
-        elif isinstance(content, list):
-            texts, blocks = [], []
-            for b in content:
-                if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str):
-                    texts.append(b["text"])
-                if isinstance(b, dict):
-                    blocks.append(b)
-        else:
-            texts, blocks = [], []
-        text_joined = "\n".join(texts)
-        # 跳过纯 tool_result 块 (没有文本 user)
-        if not text_joined and not any(
-            isinstance(b, dict) and b.get("type") != "tool_result" for b in blocks
-        ):
-            continue
+        real_ordinal += 1
+        text_joined = "\n".join(blocks)
+        # mid 跨轮稳定: 每轮请求都重放全部历史 user 消息, mid 含 turn 号
+        # 时同一条消息每轮换新 mid 重复入账 (sid 74736c29「你能做什么?」
+        # 记了 3 次)。去掉 turn 号, 用 user 消息下标 + 内容哈希双键:
+        # 下标定位, 哈希防同下标不同内容 (罕见的前插场景)。
+        raw_mid = item.get("id")
+        if not isinstance(raw_mid, str) or not raw_mid:
+            h = hashlib.sha1(
+                text_joined.encode("utf-8")).hexdigest()[:8]
+            raw_mid = f"{sid}:user:{user_idx}:{h}"
         out.append(envelope(
             agent_id=agent_id,
             session_id=sid,
             type_="message.upserted",
             payload={
-                "message_id": mid,
+                "message_id": raw_mid,
                 "role": "user",
                 "text": text_joined[:200],
                 "status": "completed",
@@ -249,50 +284,49 @@ def _translate(rec, state):
                 "thinking": None,
                 "model": None,
             },
-            turn=turn,
+            turn=real_ordinal,
             ts=ts,
-            eid=f"{sid}:msg:{mid}",
+            eid=f"{sid}:msg:{raw_mid}",
         ))
 
     # assistant message from response (only if response_id present)
     resp_id = resp.get("response_id")
     if isinstance(resp_id, str) and resp_id:
-        if resp_id not in seen:
-            seen.add(resp_id)
-            blocks = resp.get("response_blocks") or []
-            texts, thinking_parts = [], []
-            for b in blocks:
-                if isinstance(b, dict):
-                    btype = b.get("type")
-                    if btype == "text" and isinstance(b.get("text"), str):
-                        texts.append(b["text"])
-                    elif btype == "thinking" and isinstance(b.get("thinking"), str):
-                        thinking_parts.append(b["thinking"])
-            text_joined = "\n".join(texts)
-            thinking_joined = "\n".join(thinking_parts) or None
-            out.append(envelope(
-                agent_id=agent_id,
-                session_id=sid,
-                type_="message.upserted",
-                payload={
-                    "message_id": resp_id,
-                    "role": "assistant",
-                    "text": text_joined[:200],
-                    "status": "completed",
-                    "request_no": turn,
-                    "usage": usage_from_counts(
-                        inp, outp, cr, cw,
-                        total_tokens=inp + outp + cr + cw) if (inp or outp or cr or cw) else None,
-                    "started_at": started,
-                    "duration_ms": duration,
-                    "output_text": text_joined or None,
-                    "thinking": thinking_joined,
-                    "model": req.get("model"),
-                },
-                turn=turn,
-                ts=ts,
-                eid=f"{sid}:msg:{resp_id}",
-            ))
+        # dedupe_key 走 Ledger 层兜底, 翻译层不再用 seen 内存 set
+        blocks = resp.get("response_blocks") or []
+        texts, thinking_parts = [], []
+        for b in blocks:
+            if isinstance(b, dict):
+                btype = b.get("type")
+                if btype == "text" and isinstance(b.get("text"), str):
+                    texts.append(b["text"])
+                elif btype == "thinking" and isinstance(b.get("thinking"), str):
+                    thinking_parts.append(b["thinking"])
+        text_joined = "\n".join(texts)
+        thinking_joined = "\n".join(thinking_parts) or None
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=sid,
+            type_="message.upserted",
+            payload={
+                "message_id": resp_id,
+                "role": "assistant",
+                "text": text_joined[:200],
+                "status": "completed",
+                "request_no": turn,
+                "usage": usage_from_counts(
+                    inp, outp, cr, cw,
+                    total_tokens=inp + outp + cr + cw) if (inp or outp or cr or cw) else None,
+                "started_at": started,
+                "duration_ms": duration,
+                "output_text": text_joined or None,
+                "thinking": thinking_joined,
+                "model": req.get("model"),
+            },
+            turn=turn,
+            ts=ts,
+            eid=f"{sid}:msg:{resp_id}",
+        ))
 
     if inp or outp or cr or cw:
         if turn >= 1:
@@ -378,6 +412,31 @@ def _translate(rec, state):
     return out
 
 
+def _append_with_dedupe(ledger, events):
+    """逐条 append; 命中 events.dedupe_key UNIQUE 索引时静默跳过。
+    跨进程 seen 持久化兜底; 不再在内存维护 seen set。
+
+    整批先尝试 append_many (单事务快, e2e 跟得上 ingest 节奏);
+    失败时 (某条 UNIQUE 冲突) 回退到单条, 让 IntegrityError 走吞掉。
+    """
+    import sqlite3
+    if not events:
+        return 0
+    try:
+        ledger.append_many(events)
+        return len(events)
+    except sqlite3.IntegrityError:
+        pass
+    written = 0
+    for ev in events:
+        try:
+            ledger.append(ev)
+            written += 1
+        except sqlite3.IntegrityError:
+            continue
+    return written
+
+
 def ingest_capture(ledger, rec):
     """解析 → 校验 → 入账本。返回写入数；校验失败抛 ValidationError。
 
@@ -394,5 +453,5 @@ def ingest_capture(ledger, rec):
     state["session_id"] = sid
     events = [parse_event(ev) for ev in translate_capture(rec, state)]
     if events:
-        ledger.append_many(events)
-    return len(events)
+        return _append_with_dedupe(ledger, events)
+    return 0

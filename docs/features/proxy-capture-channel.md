@@ -87,6 +87,9 @@ flowchart LR
 | dev 脚本 | `./scripts/serve-dev.sh`，设 `ATA_PROXY_PORT=8319` 即开代理通道 |
 | 代理未拿到 SYSTEM | 检查请求头是否带宿主 `x-claude-code-session-id`（或对应宿主头）；缺则被丢弃 |
 | sessions 列表没新行 | 预期空窗；等 transcript tail 扫到宿主文件 |
+| 账本里 user 消息只剩 1 条且是 `<system-reminder>` | `fix(capture): emit user 消息时过滤 CONTEXT 注入` (adbbc31) + `fix(capture): user mid 派生走 message_items index` (b2f79cd) | 旧 sid 不修,新事件按新逻辑 |
+| 首条 user 提问 (如「你是谁」) 没入账, 后续轮的重复历史反而入账 | v2.2: block 级过滤 (注入块与真实提问同消息只杀注入块) + mid 去 turn 号跨轮稳定, 见 ADR 0001「v2.2 解除」节 | 旧 sid 不修,新事件按新逻辑 |
+| 纯文本注入 (recap 指令等) 被记成真人发言 | v2.2: `common._PLAIN_INJECTION_PREFIXES` 已知前缀表; 新形态优先观察是否带 wire id 走 id 守门 | 表保持最小集, 误杀风险随表长增大 |
 
 ## 引用边界
 
