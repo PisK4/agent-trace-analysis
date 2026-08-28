@@ -1,4 +1,4 @@
-import type { AnnotationsPage, EvaluationDetail, EvaluationsPage, RunInfo, SessionMeta, SessionResponse, TimingSummary, UsageSummary } from './types'
+import type { EvaluationDetail, EvaluationsPage, RunInfo, SessionMeta, SessionResponse, TimingSummary, UsageSummary } from './types'
 
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(path)
@@ -46,7 +46,6 @@ export const api = {
   renameSession: (id: string, title: string) =>
     postJSON<{ ok: true; title: string }>(`/api/sessions/${encodeURIComponent(id)}/title`, { title }),
 
-  annotations: () => getJSON<AnnotationsPage>('/api/annotations'),
   // Evaluation 路由由后端事实服务提供；客户端不重算 latest-wins 折叠。
   evaluations: () => getJSON<EvaluationsPage>('/api/evaluations'),
   evaluation: (id: string) => getJSON<EvaluationDetail>(`/api/evaluations/${encodeURIComponent(id)}`),
@@ -57,16 +56,16 @@ export const api = {
     postJSON<{ ok: true }>(`/api/evaluations/${encodeURIComponent(id)}/sessions`, { session_id: sessionId, task_label: taskLabel }),
   removeEvaluationSession: (id: string, sessionId: string) =>
     requestJSON<{ ok: true }>(`/api/evaluations/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}`, 'DELETE'),
-  runs: () => getJSON<RunInfo[]>('/api/runs'),
+  runs: (sessionId: string) => getJSON<{ ok: true; runs: RunInfo[] }>(`/api/sessions/${encodeURIComponent(sessionId)}/runs`),
+  turns: (sessionId: string, runId?: number) => {
+    const suffix = runId == null ? '' : `?run_id=${runId}`
+    return getJSON<{ ok: true; turns: unknown[] }>(`/api/sessions/${encodeURIComponent(sessionId)}/turns${suffix}`)
+  },
   appendEvent: (event: Record<string, unknown>) =>
     postJSON<{ ok: true; seq: number }>('/api/events', event),
 
-  // 标注/归组写入口（TopBar 与标注板共用）：agent 解析在 seam 内
+  // 标注写入口：agent 解析在 seam 内
   appendForSession,
-  createRun: (description: string) =>
-    postJSON<{ ok: true; run_id: string }>('/api/runs', { description }),
-  renameRun: (runId: string, name: string) =>
-    postJSON<{ ok: true; name: string }>(`/api/runs/${encodeURIComponent(runId)}/name`, { name }),
 }
 
 // v1 事件信封：前端写入的统一组装（与 schema.parse_event 对齐）。
@@ -80,12 +79,14 @@ export function eventEnvelope(agentId: string, sessionId: string, type: string, 
     session_id: sessionId,
     ts: Date.now(),
     type,
-    turn: null,
+    run_id: null,
+    turn_number: null,
+    observed_turn_ordinal: null,
     payload,
   }
 }
 
-// 标注/归组写路径的唯一 seam（架构评审二轮候选 1）：agent_id 解析收在此处，
+// 标注写路径的唯一 seam：agent_id 解析收在此处，
 // 调用方只说「给会话 s 打 good」，不需要知道 agent。会话详情投影页带 agent
 // 字段；写操作是用户点击级低频，多一次 GET 换掉两套各写各的反查逻辑。
 async function appendForSession(sessionId: string, type: string, payload: Record<string, unknown>) {

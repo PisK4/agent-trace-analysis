@@ -8,7 +8,7 @@ import { turnIdentityLabel, turnIdentityKey } from '../../lib/turnIdentity'
 
 interface Props {
   sessionId: string
-  onJumpTurn: (turn: number) => void
+  onJumpTurn: (turn: number, identity?: { run_id?: number | null; turn_number?: number | null; observed_turn_ordinal?: number | null }) => void
 }
 
 export function TimeBadge({ sessionId, onJumpTurn }: Props) {
@@ -59,7 +59,7 @@ export function TimeBadge({ sessionId, onJumpTurn }: Props) {
                   key={turnIdentityKey(t) ?? `turn:${t.turn}`}
                   type="button"
                   className="crow"
-                  onClick={() => { onJumpTurn(t.turn); setOpen(false) }}
+                  onClick={() => { onJumpTurn(t.turn, t); setOpen(false) }}
                 >
                   <span className="ct">{turnIdentityLabel(t) ?? `Observed ${t.turn}`}</span>
                   <span className="cd">{fmtDurQ(t.llm_ms, data.llm_quality)}</span>

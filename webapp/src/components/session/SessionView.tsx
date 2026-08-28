@@ -13,6 +13,7 @@ import { TopBar } from './TopBar'
 import { Inspector } from './Inspector'
 import { TimeBadge } from './TimeBadge'
 import { ConversationView } from './ConversationView'
+import { sameTurnIdentity } from '../../lib/turnIdentity'
 
 interface Props {
   sessionId: string
@@ -75,7 +76,8 @@ export function SessionView({ sessionId }: Props) {
 
   // 时间拆解弹层点某轮 → 跳到该轮起始行（user 行 start=true）
   const jumpToTurn = useCallback(
-    (turn: number) => jumpToRow((r) => r.start === true && (r.turn_number ?? r.turn) === turn),
+    (turn: number, identity?: { run_id?: number | null; turn_number?: number | null; observed_turn_ordinal?: number | null }) =>
+      jumpToRow((r) => r.start === true && (identity ? sameTurnIdentity(r, identity) : r.turn === turn)),
     [jumpToRow],
   )
 

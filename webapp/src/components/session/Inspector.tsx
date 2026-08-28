@@ -18,6 +18,7 @@ import {
 import { fmtCost, fmtNum } from '../../lib/format'
 import { highlightIn, markdownHtml } from '../../lib/markdown'
 import type { SessionData } from '../../api/merge'
+import { turnIdentityLabel } from '../../lib/turnIdentity'
 import { Copyable } from './Copyable'
 import { JsonView } from './JsonView'
 
@@ -250,7 +251,7 @@ function ContextDrawer({ rows, sessionId }: CtxProps) {
                 {/* 版本栈：倒序排列，最新版默认展开；Diff 独立折叠块插在两版之间 */}
                 {[...systemRows].reverse().map((row, i) => {
                   const name = i === 0 ? 'System Prompt (latest)' : `System Prompt v${systemRows.length - i}`
-                  const loc = row.turn != null ? `Turn ${row.turn}` : Number.isFinite(row.startedAt) ? clock(row.startedAt) : 'Session start'
+                  const loc = turnIdentityLabel(row) ?? (Number.isFinite(row.startedAt) ? clock(row.startedAt) : 'Session start')
                   const size = `${(row.promptText || '').length.toLocaleString('en-US')} chars`
                   return (
                     <div key={row.id}>
@@ -382,7 +383,7 @@ export function Inspector({ rows, toolsIndex, sessionId, selectedId, onJump, wid
           <div className="d-h">
             <div className="d-title">
               <span className={`kind ${row.kind}`}>{row.tag}</span>
-              <span className="d-loc">{row.turn == null ? 'SYSTEM' : `Turn ${row.turn}${row.step != null ? ` · Step ${row.step}` : row.group ? ` · ${row.group}` : ''}`}</span>
+              <span className="d-loc">{turnIdentityLabel(row) ?? 'SYSTEM'}{turnIdentityLabel(row) && (row.step != null ? ` · Step ${row.step}` : row.group ? ` · ${row.group}` : '')}</span>
             </div>
           </div>
           <div className="tabs" role="tablist">

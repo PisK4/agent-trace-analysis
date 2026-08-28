@@ -152,9 +152,6 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
     def h_sessions(m, qs, body):
         return 200, ledger.sessions()
 
-    def h_annotations(m, qs, body):
-        return 200, {"ok": True, **ledger.annotations()}
-
     def h_session(m, qs, body):
         # 与旧版 rest.partition("/") 同语义：sub 只取第一段
         sid, _, sub = m["rest"].partition("/")
@@ -263,14 +260,15 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
                     sid,
                     external_lifecycle_id=lifecycle_id,
                     boundary_source="pi.agent_start",
+                    agent_id=body.get("agent_id") or "pi",
                     ts=event.get("timestamp"),
                     payload={key: value for key, value in {
                         "host": body.get("host"), "runtime": body.get("runtime"),
                         "channel": body.get("channel"), "title": body.get("title"),
                     }.items() if value is not None},
                 )
-                if result.get("status") == "created" and result.get("scope") is not None:
-                    if previous_run != result["scope"].run_id:
+                if result.get("status") in {"created", "duplicate"} and result.get("scope") is not None:
+                    if result.get("status") == "created" and previous_run != result["scope"].run_id:
                         for key in ("turn", "turn_started", "user_pending", "last_assistant_id",
                                     "request_no", "asst_no", "msg_start_ts", "msg_dur",
                                     "tool_args", "tool_start_ts"):
@@ -281,6 +279,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
                     sid,
                     external_lifecycle_id=lifecycle_id,
                     boundary_source="pi.agent_end",
+                    agent_id=body.get("agent_id") or "pi",
                     ts=event.get("timestamp"),
                     payload={key: value for key, value in {
                         "host": body.get("host"), "runtime": body.get("runtime"),
@@ -290,11 +289,10 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
                 if result.get("status") in {"matched", "duplicate"}:
                     bucket.pop("run_id", None)
             events = translate_hook(body["name"], event, ctx, bucket)
-            seqs = []
-            for ev in events:
-                parsed = parse_event(ev)
+            parsed_events = [parse_event(ev) for ev in events]
+            for parsed in parsed_events:
                 print("append %s %s %s" % (parsed["type"], parsed["id"], parsed["session_id"]))
-                seqs.append(ledger.append(parsed))
+            seqs = ledger.append_many(parsed_events)
         except (ValidationError, TypeError, ValueError) as exc:
             return 400, {"ok": False, "error": str(exc)}
         return 200, {"ok": True, "count": len(seqs), "seq": seqs[-1] if seqs else None}
@@ -320,11 +318,11 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         items = body.get("events") if isinstance(body, dict) and "events" in body else [body]
         seqs = []
         try:
-            for item in items:
-                ev = parse_event(item)
+            events = [parse_event(item) for item in items]
+            for ev in events:
                 print("append %s %s %s" % (ev["type"], ev["id"], ev["session_id"]))
-                seqs.append(ledger.append(ev))
-        except (ValidationError, TypeError, ValueError) as exc:
+            seqs = ledger.append_many(events)
+        except (ValidationError, TypeError, ValueError, KeyError) as exc:
             return 400, {"ok": False, "error": str(exc)}
         return 200, {"ok": True, "seq": seqs[-1] if seqs else 0, "seqs": seqs}
 
@@ -383,7 +381,6 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         ("POST", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)/sessions$"), h_add_evaluation_session),
         ("DELETE", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)/sessions/(?P<sid>[^/]+)$"), h_remove_evaluation_session),
         ("GET", re.compile(r"^/api/sessions$"), h_sessions),
-        ("GET", re.compile(r"^/api/annotations$"), h_annotations),
         ("GET", re.compile(r"^/api/sessions/(?P<rest>.+)$"), h_session),
         ("POST", re.compile(r"^/api/captures$"), h_capture),
         ("POST", re.compile(r"^/api/pi-hooks$"), h_pi_hooks),

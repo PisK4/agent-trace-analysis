@@ -178,7 +178,7 @@ class Ledger:
         if found:
             return int(found["seq"])
         row = self._conn.execute(
-            "SELECT last_seq, title, turns, last_ts, first_ts, parent_session_id "
+            "SELECT agent_id, last_seq, title, turns, last_ts, first_ts, parent_session_id "
             "FROM sessions WHERE session_id=?", (sid,)
         ).fetchone()
         seq = (int(row["last_seq"]) if row else 0) + 1
@@ -193,7 +193,7 @@ class Ledger:
             self._conn.execute(
                 "UPDATE sessions SET agent_id=?, title=?, turns=?, last_seq=?, "
                 "last_ts=?, first_ts=?, parent_session_id=? WHERE session_id=?",
-                (event["agent_id"], folded["title"], folded.get("turns", 0), seq,
+                (row["agent_id"], folded["title"], folded.get("turns", 0), seq,
                  folded["last_ts"], folded["first_ts"], folded.get("parent_session_id"), sid),
             )
         else:
@@ -223,27 +223,48 @@ class Ledger:
                 "INSERT INTO events(session_id,event_id,seq,ts,type,run_id,turn_number,"
                 "observed_turn_ordinal,event_json,dedupe_key) VALUES (?,?,?,?,?,?,?,?,?,?)", values
             )
+        self._refresh_turn_count_locked(sid)
         self._project_run_locked(sid, event.get("run_id"))
         return seq
 
+    def _refresh_turn_count_locked(self, session_id: str):
+        """刷新兼容的 Session turns 聚合，不把它当作 Turn identity。"""
+        rows = self._conn.execute(
+            "SELECT run_id,turn_number,observed_turn_ordinal FROM events "
+            "WHERE session_id=? AND (turn_number IS NOT NULL OR observed_turn_ordinal IS NOT NULL)",
+            (session_id,),
+        ).fetchall()
+        identities = {
+            (r["run_id"], r["turn_number"])
+            for r in rows if r["run_id"] is not None and r["turn_number"] is not None
+        }
+        identities.update(
+            (None, r["observed_turn_ordinal"])
+            for r in rows if r["run_id"] is None and r["observed_turn_ordinal"] is not None
+        )
+        self._conn.execute(
+            "UPDATE sessions SET turns=? WHERE session_id=?",
+            (len(identities), session_id),
+        )
+
     def _project_run_locked(self, session_id: str, run_id: int | None):
         """从事实重建 Run projection，避免乱序事件污染增量索引。"""
-        if run_id is None:
-            return
         run_ids = [r[0] for r in self._conn.execute(
             "SELECT DISTINCT run_id FROM events WHERE session_id=? AND run_id IS NOT NULL",
             (session_id,),
         )]
+        if not run_ids:
+            return
         later_started = {rid: any(
             r["type"] == "run.started" and int(r["run_id"]) > rid
             for r in self._conn.execute(
                 "SELECT type,run_id FROM events WHERE session_id=? AND run_id IS NOT NULL",
                 (session_id,),
             )) for rid in run_ids}
-        conflicts = self._conn.execute(
-            "SELECT COUNT(*) FROM events WHERE session_id=? AND type='run.lifecycle.conflict'",
+        conflict_rows = self._conn.execute(
+            "SELECT event_json FROM events WHERE session_id=? AND type='run.lifecycle.conflict'",
             (session_id,),
-        ).fetchone()[0]
+        ).fetchall()
         for current_id in run_ids:
             rows = self._conn.execute(
                 "SELECT seq,ts,type,event_json,turn_number FROM events "
@@ -257,6 +278,11 @@ class Ledger:
             external = (json.loads(start["event_json"]).get("payload") or {}).get("external_lifecycle_id")
             max_turn = max((int(r["turn_number"]) for r in rows if r["turn_number"] is not None), default=0)
             status = "ended" if end else ("incomplete" if later_started[current_id] else "open")
+            conflict_count = sum(
+                1 for r in conflict_rows
+                if external is not None
+                and (json.loads(r["event_json"]).get("payload") or {}).get("external_lifecycle_id") == external
+            )
             self._conn.execute(
                 "INSERT INTO run_index(session_id,run_id,external_lifecycle_id,status,started_seq,ended_seq,"
                 "started_ts,ended_ts,max_turn_number,conflict_count) VALUES(?,?,?,?,?,?,?,?,?,?) "
@@ -266,14 +292,18 @@ class Ledger:
                 "conflict_count=excluded.conflict_count",
                 (session_id, int(current_id), external, status, int(start["seq"]),
                  int(end["seq"]) if end else None, int(start["ts"]), int(end["ts"]) if end else None,
-                 max_turn, int(conflicts)),
+                 max_turn, conflict_count),
             )
 
-    def append_many(self, events: list[dict]) -> None:
+    def append_many(self, events: list[dict]) -> list[int]:
         with self._lock:
-            for event in events:
-                self._append_locked(parse_event(event))
-            self._conn.commit()
+            try:
+                seqs = [self._append_locked(parse_event(event)) for event in events]
+                self._conn.commit()
+                return seqs
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def read(self, session_id: str) -> list[dict]:
         with self._lock:
@@ -352,11 +382,56 @@ class Ledger:
     def open_runs(self, session_id: str) -> list[dict]:
         return [r for r in self.runs(session_id) if r["status"] == "open"]
 
-    def annotations(self) -> dict:
-        # 旧评分读取保留；run-aware schema 不再把 assignment 当作 Session event。
-        return {"scores": [], "assignments": []}
+    def _score_rows(self) -> list[dict]:
+        """折叠 Session score facts，并附带只读会话统计。"""
+        with self._lock:
+            metas = self._conn.execute(
+                "SELECT s.session_id,s.agent_id,s.title,COALESCE(c.event_count,0) event_count,"
+                "COALESCE(c.error_count,0) error_count FROM sessions s LEFT JOIN ("
+                "SELECT session_id,COUNT(*) event_count,SUM(CASE WHEN type='tool.upserted' "
+                "AND json_extract(event_json,'$.payload.status')='failed' THEN 1 ELSE 0 END) error_count "
+                "FROM events GROUP BY session_id) c ON c.session_id=s.session_id"
+            ).fetchall()
+            events = self._conn.execute(
+                "SELECT session_id,seq,ts,type,event_json FROM events "
+                "WHERE type IN ('session.scored','session.score.cleared') ORDER BY seq"
+            ).fetchall()
+        by_session = {}
+        for row in metas:
+            by_session[row["session_id"]] = {
+                "session_id": row["session_id"], "agent": row["agent_id"],
+                "title": row["title"], "event_count": int(row["event_count"]),
+                "error_count": int(row["error_count"] or 0), "score": None,
+            }
+        for row in events:
+            item = by_session.get(row["session_id"])
+            if item is None:
+                continue
+            if row["type"] == "session.score.cleared":
+                item["score"] = None
+            else:
+                payload = json.loads(row["event_json"]).get("payload") or {}
+                item["score"] = {
+                    "value": payload.get("value"), "note": payload.get("note"),
+                    "ts": int(row["ts"]), "seq": int(row["seq"]),
+                }
+        result = []
+        for item in by_session.values():
+            score = item.pop("score")
+            if score is not None:
+                result.append({**item, **score})
+        return sorted(result, key=lambda item: item["ts"], reverse=True)
+
+    def scores(self) -> list[dict]:
+        """返回每个 Session 的最新 score；score 是 Session-level fact。"""
+        return self._score_rows()
+
+    def score_events(self) -> list[dict]:
+        """返回 score facts 的最新 Session-level 视图。"""
+        return self._score_rows()
 
     def assign_events(self) -> list[dict]:
+        """历史内部调用的空结果；assignment 已不属于公开 Runtime API。"""
         return []
 
     def _append_evaluation_locked(self, fact: dict) -> int:

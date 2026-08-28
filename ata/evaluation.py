@@ -147,13 +147,17 @@ class EvaluationStore:
 
     list = evaluations
 
-    def score_annotations(self) -> dict:
-        """新接口：只暴露 Session score，不混入旧归组 assignment。"""
-        return {"scores": self.ledger.scores()}
-
     def create(self, title: str, *, evaluation_id: str | None = None, ts=None) -> str:
+        _require_text(title, "title")
         eid = evaluation_id or f"e-{uuid.uuid4().hex}"
-        self.append(evaluation_envelope(eid, "evaluation.created", {"title": title}, ts=ts))
+        with self.ledger._lock:
+            if self.ledger._fold_evaluation_locked(eid) is not None:
+                raise EvaluationValidationError("evaluation already exists")
+            fact = validate_fact(evaluation_envelope(
+                eid, "evaluation.created", {"title": title}, ts=ts,
+            ))
+            self.ledger._append_evaluation_locked(fact)
+            self.ledger._conn.commit()
         return eid
 
     def rename(self, evaluation_id: str, title: str, *, ts=None) -> int:
