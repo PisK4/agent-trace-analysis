@@ -1,4 +1,4 @@
-import type { AnnotationsPage, RunInfo, SessionMeta, SessionResponse, TimingSummary, UsageSummary } from './types'
+import type { AnnotationsPage, EvaluationDetail, EvaluationsPage, RunInfo, SessionMeta, SessionResponse, TimingSummary, UsageSummary } from './types'
 
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(path)
@@ -7,10 +7,14 @@ async function getJSON<T>(path: string): Promise<T> {
 }
 
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
+  return requestJSON<T>(path, 'POST', body)
+}
+
+async function requestJSON<T>(path: string, method: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
-    method: 'POST',
+    method,
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ error: res.status }))
@@ -43,6 +47,16 @@ export const api = {
     postJSON<{ ok: true; title: string }>(`/api/sessions/${encodeURIComponent(id)}/title`, { title }),
 
   annotations: () => getJSON<AnnotationsPage>('/api/annotations'),
+  // Evaluation 路由由后端事实服务提供；客户端不重算 latest-wins 折叠。
+  evaluations: () => getJSON<EvaluationsPage>('/api/evaluations'),
+  evaluation: (id: string) => getJSON<EvaluationDetail>(`/api/evaluations/${encodeURIComponent(id)}`),
+  createEvaluation: (title: string) => postJSON<{ ok: true; evaluation_id: string }>('/api/evaluations', { title }),
+  renameEvaluation: (id: string, title: string) => postJSON<{ ok: true; title: string }>(`/api/evaluations/${encodeURIComponent(id)}/title`, { title }),
+  deleteEvaluation: (id: string) => requestJSON<{ ok: true }>(`/api/evaluations/${encodeURIComponent(id)}`, 'DELETE'),
+  addEvaluationSession: (id: string, sessionId: string, taskLabel: string) =>
+    postJSON<{ ok: true }>(`/api/evaluations/${encodeURIComponent(id)}/sessions`, { session_id: sessionId, task_label: taskLabel }),
+  removeEvaluationSession: (id: string, sessionId: string) =>
+    requestJSON<{ ok: true }>(`/api/evaluations/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}`, 'DELETE'),
   runs: () => getJSON<RunInfo[]>('/api/runs'),
   appendEvent: (event: Record<string, unknown>) =>
     postJSON<{ ok: true; seq: number }>('/api/events', event),

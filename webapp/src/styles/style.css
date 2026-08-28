@@ -1191,6 +1191,34 @@ select.board-input { height: auto; padding: 6px 8px; }
 }
 .board-empty { padding: 24px 0; text-align: center; color: var(--ink-3); font-size: 12px; }
 
+/* Evaluation：集合是观察边界，成员仍链接回原 Session 评分与轨迹。 */
+.evaluation-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.evaluation-toolbar { margin: 8px 12px 0; }
+.evaluation-create { padding: 10px 12px 0; }
+.evaluation-form { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--inset); }
+.evaluation-form .board-input { flex: 1 1 220px; min-width: 180px; }
+.evaluation-layout { display: grid; grid-template-columns: minmax(170px, 240px) minmax(0, 1fr); flex: 1; min-height: 0; margin: 12px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.evaluation-list { min-height: 0; overflow: auto; padding: 8px; background: var(--inset); border-right: 1px solid var(--line); }
+.evaluation-list-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 9px 10px; border-radius: 7px; text-align: left; }
+.evaluation-list-item:hover { background: var(--hover); }
+.evaluation-list-item[aria-current="true"] { background: var(--accent-tint); color: var(--accent-ink); }
+.evaluation-list-item small, .evaluation-id { color: var(--ink-3); font: 10px/14px "JetBrains Mono", ui-monospace, monospace; }
+.evaluation-detail { min-width: 0; min-height: 0; overflow: auto; padding: 16px; }
+.evaluation-heading, .evaluation-members-head { display: flex; align-items: center; gap: 10px; }
+.evaluation-heading { justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.evaluation-heading h1 { margin: 3px 0 2px; font-size: 19px; font-weight: 600; }
+.evaluation-members-head { margin: 14px 0 8px; color: var(--ink-2); font-size: 12px; }
+.evaluation-members-head span:nth-child(2) { color: var(--ink-3); font: 10px/14px "JetBrains Mono", ui-monospace, monospace; }
+.evaluation-members-head .ghost { margin-left: auto; }
+.evaluation-sessions { display: flex; flex-direction: column; gap: 6px; }
+.evaluation-session { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; background: var(--hover); box-shadow: inset 0 0 0 1px var(--line); }
+.evaluation-session-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.evaluation-session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-weight: 500; }
+.evaluation-session-title:hover { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; }
+.evaluation-session-meta, .evaluation-task { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font: 10px/14px "JetBrains Mono", ui-monospace, monospace; }
+.evaluation-task { color: var(--accent-ink); }
+.evaluation-empty { padding: 24px 10px; color: var(--ink-3); font-size: 12px; text-align: center; }
+
 /* 归组区：run 卡片 → task → 会话 */
 .run {
   border-radius: 10px; background: var(--inset);

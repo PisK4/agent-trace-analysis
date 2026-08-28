@@ -5,11 +5,11 @@ import { api } from '../api/client'
 import type { SessionMeta } from '../api/types'
 import { shortTime } from '../lib/format'
 import { AGENT_CLASS, AGENT_LABELS } from '../lib/agents'
-import { BoardView } from './board/BoardView'
+import { EvaluationView } from './evaluation/EvaluationView'
 import { SessionView } from './session/SessionView'
 import { ToastProvider } from './ToastProvider'
 
-type View = 'sessions' | 'board'
+type View = 'sessions' | 'evaluations'
 
 // 侧栏轮询的变更门控：last_seq 随每次 append 单调递增，覆盖新事件/改名/标注
 function sameList(a: SessionMeta[], b: SessionMeta[]): boolean {
@@ -55,13 +55,6 @@ export function App() {
     [sessions, agentFilter],
   )
 
-  const sessionOptions = useMemo(() => sessions.map((s) => ({
-    id: s.id,
-    title: s.title,
-    agent: AGENT_LABELS[s.agent] ?? s.agent,
-    eventCount: s.event_count,
-  })), [sessions])
-
   return (
     <ToastProvider>
       <div className="shell" data-view={view} data-inspect="open">
@@ -71,7 +64,7 @@ export function App() {
           </button>
           <div className="view-switch" role="group" aria-label="切换视图">
             <button type="button" aria-pressed={view === 'sessions'} onClick={() => setView('sessions')}>会话</button>
-            <button type="button" aria-pressed={view === 'board'} onClick={() => setView('board')}>标注板</button>
+            <button type="button" aria-pressed={view === 'evaluations'} onClick={() => setView('evaluations')}>Evaluations</button>
           </div>
           <div className="nav-label">Sessions</div>
           <div className="sess-tabs" role="group" aria-label="Filter by agent">
@@ -113,8 +106,8 @@ export function App() {
           </div>
         </aside>
         <main className="stage">
-          {view === 'board' ? (
-            <BoardView sessions={sessionOptions} onOpenSession={(sid) => { setCurrentId(sid); setView('sessions') }} />
+          {view === 'evaluations' ? (
+            <EvaluationView sessions={sessions} onOpenSession={(sid) => { setCurrentId(sid); setView('sessions') }} />
           ) : currentId ? (
             <SessionView sessionId={currentId} />
           ) : (

@@ -131,6 +131,38 @@ export interface AnnotationsPage {
   assignments: AssignmentEntry[]
 }
 
+// Evaluation HTTP contract：独立事实集合只引用现有 Session，不复制评分事实。
+export interface EvaluationMember {
+  session_id: string
+  task_label: string
+  ts?: number
+  seq?: number
+  title?: string | null
+  agent?: string | null
+  event_count?: number
+  error_count?: number
+  score?: { value: string; note: string | null; ts: number } | null
+  session?: SessionMeta | null
+}
+
+export interface EvaluationSummary {
+  evaluation_id: string
+  title: string
+  deleted: boolean
+  member_count?: number
+  created_ts?: number
+  members?: EvaluationMember[]
+}
+
+export interface EvaluationDetail extends EvaluationSummary {
+  members: EvaluationMember[]
+}
+
+export interface EvaluationsPage {
+  ok?: true
+  evaluations: EvaluationSummary[]
+}
+
 export interface RunInfo {
   run_id: string
   description: string
