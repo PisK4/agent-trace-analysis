@@ -197,6 +197,9 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
                   key={r.id}
                   row={r}
                   rows={data.rows}
+                  /** 裁窗后首行的原始 _seq。无 older 时 server 给 cursor=0，0+row.index+1 == 1-based 局部序号；
+                      有 older 时 cursor>0，idx 跳到真实绝对序号，避免视觉上 "01" 误读成 older 行的序号。 */
+                  cursor={data.cursor}
                   selected={selectedId === r.id}
                   dimmed={focusIds != null && !focusIds.has(r.id)}
                   onSelect={onSelect}
@@ -215,9 +218,12 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
   )
 }
 
-function TableRow({ row, rows, selected, dimmed, onSelect, onDblClick }: {
+function TableRow({ row, rows, cursor, selected, dimmed, onSelect, onDblClick }: {
   row: ProjectedRow
   rows: ProjectedRow[]
+  /** 裁窗后首行的原始 _seq（无 older 时 = 0）。用 cursor+row.index+1 拿到
+      跨窗口稳定的绝对序号。 */
+  cursor: number
   selected: boolean
   dimmed: boolean
   onSelect: (id: string) => void
@@ -237,7 +243,9 @@ function TableRow({ row, rows, selected, dimmed, onSelect, onDblClick }: {
       onDoubleClick={onDblClick}
     >
       <td className="idx">
-        {String(row.index + 1).padStart(2, '0')}
+        {/* 绝对序号：cursor 是裁窗后首行的 _seq；无 older 时 cursor=0，
+            0+row.index+1 == 1-based 局部序号，等价旧行为。 */}
+        {String(cursor + row.index + 1).padStart(2, '0')}
         {row.start && row.turn && row.kind !== 'context' ? (
           <span className="turn-chip">{row.turn < 0 ? 'T…' : `T${row.turn}`}</span>
         ) : null}
