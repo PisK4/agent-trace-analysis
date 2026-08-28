@@ -11,7 +11,7 @@ import re
 from ata.ingest import PiHookStates
 from ata.plugins.pi import translate_hook
 from ata.projection_cache import ProjectionCache
-from ata.project import audit_usage, list_compactions, list_tools, project_session, summarize_timing, summarize_tools, summarize_usage, tail_preview
+from ata.queries import audit_usage, list_compactions, list_tools, project_session, summarize_timing, summarize_tools, summarize_usage, tail_preview
 from ata.schema import ValidationError, envelope, parse_event
 
 

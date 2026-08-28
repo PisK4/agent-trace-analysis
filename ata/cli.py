@@ -45,7 +45,7 @@ def build_parser():
 
 def _local(ledger_path, args):
     from ata.ledger import Ledger
-    from ata.project import list_compactions, list_tools, summarize_usage
+    from ata.queries import list_compactions, list_tools, summarize_usage
     led = Ledger(ledger_path)
     if args.what == "sessions":
         rows = led.sessions()
