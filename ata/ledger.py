@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ata.fold import REAL_TS_FLOOR, fold_session_meta
 from ata.schema import parse_event
+from ata.evaluation import fold_evaluation_events
 
 _REAL_TS_FLOOR = REAL_TS_FLOOR
 
@@ -141,6 +142,18 @@ class Ledger:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_run_external
                 ON run_index(session_id, external_lifecycle_id)
                 WHERE external_lifecycle_id IS NOT NULL;
+            CREATE TABLE IF NOT EXISTS evaluation_events (
+                evaluation_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                ts INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                event_json TEXT NOT NULL,
+                PRIMARY KEY (evaluation_id, event_id),
+                UNIQUE (evaluation_id, seq)
+            );
+            CREATE INDEX IF NOT EXISTS idx_evaluation_events_id_seq
+                ON evaluation_events(evaluation_id, seq);
             """
         )
         self._conn.commit()
@@ -346,9 +359,82 @@ class Ledger:
     def assign_events(self) -> list[dict]:
         return []
 
+    def _append_evaluation_locked(self, fact: dict) -> int:
+        """调用方必须持有 _lock；Evaluation seq 独立于 Session seq。"""
+        eid = fact["evaluation_id"]
+        found = self._conn.execute(
+            "SELECT seq FROM evaluation_events WHERE evaluation_id=? AND event_id=?",
+            (eid, fact["id"]),
+        ).fetchone()
+        if found:
+            return int(found["seq"])
+        row = self._conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) AS seq FROM evaluation_events WHERE evaluation_id=?",
+            (eid,),
+        ).fetchone()
+        seq = int(row["seq"]) + 1
+        self._conn.execute(
+            "INSERT INTO evaluation_events(evaluation_id, event_id, seq, ts, type, event_json)"
+            " VALUES (?,?,?,?,?,?)",
+            (eid, fact["id"], seq, fact["ts"], fact["type"],
+             json.dumps(fact, ensure_ascii=False)),
+        )
+        return seq
+
+    def append_evaluation(self, fact: dict) -> int:
+        """追加已校验的 Evaluation fact；外部优先使用 EvaluationStore。"""
+        from ata.evaluation import validate_fact
+
+        fact = validate_fact(fact)
+        with self._lock:
+            seq = self._append_evaluation_locked(fact)
+            self._conn.commit()
+            return seq
+
+    def append_evaluation_event(self, fact: dict) -> int:
+        """Evaluation fact 追加的显式名称。"""
+        return self.append_evaluation(fact)
+
+    def read_evaluation_events(self, evaluation_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT seq, event_json FROM evaluation_events"
+                " WHERE evaluation_id=? ORDER BY seq", (evaluation_id,)
+            ).fetchall()
+        return [{"seq": int(row["seq"]), "event": json.loads(row["event_json"])} for row in rows]
+
+    # 兼容较短的领域名；facts 仍以带 seq 的记录返回，便于审计与折叠。
+    def evaluation_events(self, evaluation_id: str) -> list[dict]:
+        return self.read_evaluation_events(evaluation_id)
+
+    def read_evaluation(self, evaluation_id: str) -> list[dict]:
+        """Evaluation facts 的公开短名。"""
+        return self.read_evaluation_events(evaluation_id)
+
+    def _all_evaluation_records_locked(self):
+        rows = self._conn.execute(
+            "SELECT evaluation_id, seq, event_json FROM evaluation_events ORDER BY evaluation_id, seq"
+        ).fetchall()
+        records = {}
+        for row in rows:
+            records.setdefault(row["evaluation_id"], []).append({
+                "seq": int(row["seq"]), "event": json.loads(row["event_json"])
+            })
+        return records.items()
+
+    def _fold_evaluation_locked(self, evaluation_id: str):
+        records = [records for eid, records in self._all_evaluation_records_locked()
+                    if eid == evaluation_id]
+        return fold_evaluation_events(evaluation_id, records[0] if records else [])
+
+    def fold_evaluation(self, evaluation_id: str) -> dict | None:
+        with self._lock:
+            return self._fold_evaluation_locked(evaluation_id)
+
     def close(self):
         self._conn.close()
 
 
 # 兼容旧调用方的名称；自然键实现仍只有上面的一个入口。
 __all__ = ["Ledger", "ResetRequiredError", "_dedupe_key"]
+
