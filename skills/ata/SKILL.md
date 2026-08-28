@@ -66,22 +66,20 @@ python3 -m ata read sessions [--agent cue] [--limit N]
 | droid | 恒 missing | 无 |
 | claude | reported | 无 |
 
-## 6. 写入：标注与归组
+## 6. 写入：标注
 
-- 打分：`python3 -m ata rate SID --value good|bad|partial [--note "..."]`
-- 归组（把会话挂到某个实验轮次的某个任务）：Web UI 会话页「归组」控件选 run 填任务 id；脚本化则 POST `/api/events` 一条 `session.assigned` 事件（payload 必填 `run_id` + `task_id`）
-- 两类信号分开存：human 标注是主观真值锚，machine 过程信号只是线索，统计时不混算
+- 标注：`python3 -m ata rate SID --value good|bad|partial [--note "..."]`
+- 标注写入 `session.scored`，仍经过唯一的 `POST /api/events` 追加门。
+- 人类标注是主观真值锚，机器过程信号只是线索，统计时不混算。
+- 旧的 `tasks`、`run`、`compare` CLI 与全局 `/api/runs` 接口已移除；不要把历史 regression 命令当作当前入口。
 
-## 7. 回归飞轮
+## 7. Runtime 与 Evaluation
 
-任务集与实验产物在 `~/.ata/regression/`（本地 git 管版本，**不入任何远端仓库**）：
+当前产品边界由 Runtime Run/Turn 与 Evaluation facts 定义：
 
-```
-echo "<首条用户消息原文>" | python3 -m ata tasks add --channel cue   # 出题，题面从此冻结
-python3 -m ata tasks list                                            # 查任务 id
-python3 -m ata run new --desc "这轮改了什么"                          # 干预后建轮次，自动记任务集指纹
-python3 -m ata run list                                              # 列出现有轮次（含归组计数）
-python3 -m ata compare RUN_A RUN_B                                   # 新旧差异表 + 双侧分数快照落盘
-```
+- Runtime Run 只由可确认的运行时生命周期事实建立；Run 内的 Turn 使用 Run-local identity。没有生命周期证据的事件保持未归属，不回填旧的全局 turn。
+- Evaluation 是独立的 Session 观察集合；它不启动、拥有或修改 Runtime Run，也不复制 Session 标注。
+- 读取 Session 时保留完整 Runtime identity；缺失的 Run/Turn 不是错误，不得猜测补齐。
+- 旧 assignment 写路径（`session.assigned` / `session.unassigned`）已关闭；归组和旧实验比较不属于当前 Runtime/Evaluation 接口。
 
-纪律：改题面 = 新版任务集（git 记录）；对比只在同版任务集的 run 之间成立；缺失值显示 miss、差值 n/a，永不当作 0。
+需要实验回归能力时，先为 Runtime/Evaluation 契约另立设计，不恢复已删除的全局 run dispatch。

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import time
-import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -34,24 +33,6 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
 
     def h_health(m, qs, body):
         return 200, {"ok": True}
-
-    def h_runs(m, qs, body):
-        assigns = ledger.assign_events()
-        out = []
-        for r in ledger.runs():
-            r["assignment_count"] = sum(
-                1 for a in assigns if a.get("run_id") == r["run_id"])
-            out.append(r)
-        return 200, out
-
-    def h_run_detail(m, qs, body):
-        rid = m["rid"]
-        run = ledger.run(rid)
-        if run is None:
-            return 404, {"ok": False, "error": "unknown run"}
-        run["assignments"] = [
-            a for a in ledger.assign_events() if a.get("run_id") == rid]
-        return 200, {"ok": True, **run}
 
     def h_sessions(m, qs, body):
         return 200, ledger.sessions()
@@ -160,17 +141,6 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
             return 400, {"ok": False, "error": str(exc)}
         return 200, {"ok": True, "count": len(seqs), "seq": seqs[-1] if seqs else None}
 
-    def h_create_run(m, qs, body):
-        if not isinstance(body, dict) or not (body.get("description") or "").strip():
-            return 400, {"ok": False, "error": "description required"}
-        rid = "r-" + uuid.uuid4().hex[:8]
-        try:
-            ledger.create_run(rid, body["description"].strip(),
-                              body.get("taskset_fingerprint"))
-        except ValueError as exc:
-            return 400, {"ok": False, "error": str(exc)}
-        return 200, {"ok": True, "run_id": rid}
-
     def h_rename_session(m, qs, body):
         # 会话改名：服务端组一个 session.renamed 事件入账本，前端不必自己造 id/ts。
         sid = m["sid"]
@@ -184,13 +154,6 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
             meta["agent"], sid, "session.renamed", {"title": title}))
         ledger.append(ev)
         return 200, {"ok": True, "title": title}
-
-    def h_rename_run(m, qs, body):
-        name = (body.get("name") or "").strip() if isinstance(body, dict) else ""
-        # 允许清空：空组名回退显示 run_id
-        if not ledger.rename_run(m["rid"], name):
-            return 404, {"ok": False, "error": "unknown run"}
-        return 200, {"ok": True, "name": name}
 
     def h_append_events(m, qs, body):
         items = body.get("events") if isinstance(body, dict) and "events" in body else [body]
@@ -245,16 +208,12 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
 
     ROUTES = [
         ("GET", re.compile(r"^/api/health$"), h_health),
-        ("GET", re.compile(r"^/api/runs$"), h_runs),
-        ("GET", re.compile(r"^/api/runs/(?P<rid>.+)$"), h_run_detail),
         ("GET", re.compile(r"^/api/sessions$"), h_sessions),
         ("GET", re.compile(r"^/api/annotations$"), h_annotations),
         ("GET", re.compile(r"^/api/sessions/(?P<rest>.+)$"), h_session),
         ("POST", re.compile(r"^/api/captures$"), h_capture),
         ("POST", re.compile(r"^/api/pi-hooks$"), h_pi_hooks),
         ("POST", re.compile(r"^/api/hooks/droid$"), h_droid_hooks),
-        ("POST", re.compile(r"^/api/runs$"), h_create_run),
-        ("POST", re.compile(r"^/api/runs/(?P<rid>[^/]+)/name$"), h_rename_run),
         ("POST", re.compile(r"^/api/sessions/(?P<sid>[^/]+)/title$"), h_rename_session),
         ("POST", re.compile(r"^/api/events$"), h_append_events),
     ]

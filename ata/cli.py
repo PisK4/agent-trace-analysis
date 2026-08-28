@@ -1,29 +1,18 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
-import time
 import urllib.error
 import urllib.request
-import uuid
-from pathlib import Path
 
 from ata.schema import envelope
 
 DEFAULT_URL = "http://127.0.0.1:17877"
-REGRESSION_DIR = Path.home() / ".ata" / "regression"
-TASKS_FILE = REGRESSION_DIR / "tasks.jsonl"
-RUNS_DIR = REGRESSION_DIR / "runs"
-# 指标词表：客观过程信号 + 主观标注。最终清单由「指标清单定稿」票裁决后在此增删。
-METRICS = ["human_score", "turns", "tool_fail_rate",
-           "tokens_reported", "usage_missing_turns", "duration_s"]
-
 # CLI 子命令集合的唯一归属地：__main__ 据此把机器读路径分发进本模块，
 # 两处各写一遍会漂移（架构评审二轮候选 7）。
-CLI_SUBCOMMANDS = {"read", "rate", "tasks", "run", "compare"}
+CLI_SUBCOMMANDS = {"read", "rate"}
 
 
 def build_parser():
@@ -126,12 +115,6 @@ def apply_client_filters(data, args):
 def main(argv):
     if argv and argv[0] == "rate":
         return _rate_main(argv)
-    if argv and argv[0] == "tasks":
-        return _tasks_main(argv)
-    if argv and argv[0] == "run":
-        return _run_main(argv)
-    if argv and argv[0] == "compare":
-        return _compare_main(argv)
     args = build_parser().parse_args(argv[1:] if argv and argv[0] == "read" else argv)
     if args.ledger:
         data = _local(args.ledger, args)
@@ -177,168 +160,3 @@ def post_json(base, path, body):
 
 def get_json(base, path):
     return _request(base, path)
-
-
-# ---- 回归任务集与实验轮次（T5 决议：文件放 ~/.ata/regression/，本地 git 管版本）----
-
-def _tasks_main(argv):
-    p = argparse.ArgumentParser(prog="ata tasks")
-    sub = p.add_subparsers(dest="cmd", required=True)
-    add = sub.add_parser("add", help="追加一道题（题面从 stdin 贴入）")
-    add.add_argument("--channel", required=True,
-                     help="重跑时用哪个宿主（cue/pi/droid/claude/codex）")
-    add.add_argument("--model")
-    add.add_argument("--thinking-level")
-    add.add_argument("--k", type=int, default=1,
-                     help="独立重跑次数，pass^k 用；默认 1")
-    add.add_argument("--taskset", type=Path, default=TASKS_FILE)
-    lst = sub.add_parser("list", help="列出全部题目")
-    lst.add_argument("--taskset", type=Path, default=TASKS_FILE)
-    a = p.parse_args(argv[1:])
-    if a.cmd == "add":
-        text = sys.stdin.read().strip()
-        if not text:
-            sys.exit("error: 题面为空；把首条用户消息原文从 stdin 贴入")
-        task = {"task_id": "t-" + uuid.uuid4().hex[:8], "input": text,
-                "channel": a.channel, "model": a.model,
-                "thinking_level": a.thinking_level, "k": a.k}
-        a.taskset.parent.mkdir(parents=True, exist_ok=True)
-        with a.taskset.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(task, ensure_ascii=False) + "\n")
-        print(json.dumps({"ok": True, "task_id": task["task_id"],
-                          "taskset": str(a.taskset)}, ensure_ascii=False))
-    else:
-        rows = []
-        if a.taskset.exists():
-            for line in a.taskset.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    rows.append(json.loads(line))
-        print(json.dumps({"ok": True, "tasks": rows}, ensure_ascii=False))
-
-
-def _run_main(argv):
-    p = argparse.ArgumentParser(prog="ata run")
-    sub = p.add_subparsers(dest="cmd", required=True)
-    new = sub.add_parser("new", help="创建一轮实验（干预后先建 run 再重跑）")
-    new.add_argument("--desc", required=True, help="这轮改了什么，一句话")
-    new.add_argument("--taskset", type=Path, default=TASKS_FILE)
-    new.add_argument("--url", default=os.environ.get("ATA_URL") or DEFAULT_URL)
-    lst = sub.add_parser("list", help="列出现有轮次")
-    lst.add_argument("--url", default=os.environ.get("ATA_URL") or DEFAULT_URL)
-    a = p.parse_args(argv[1:])
-    if a.cmd == "new":
-        fp = (hashlib.sha256(a.taskset.read_bytes()).hexdigest()[:16]
-              if a.taskset.exists() else None)
-        result = post_json(a.url, "/api/runs",
-                           {"description": a.desc, "taskset_fingerprint": fp})
-    else:
-        result = get_json(a.url, "/api/runs")
-    print(json.dumps(result, ensure_ascii=False))
-
-
-def collect_task_score(usage_resp, tools_resp, timing_resp, human_score, turns):
-    """便捷层响应 → 单会话 score 记录。缺数据记 None（missing），永不当作 0。
-
-    口径全部来自便捷层（spec 定稿端点）：fail_rate 出 /tools，tokens 出
-    /usage 逐轮 reported 合计，duration 出 /timing 的 span_ms（占位排除
-    已在其内部完成）。compare 不再自己重推一遍平行口径。
-    """
-    tools = tools_resp.get("tools") or []
-    fails = sum(1 for t in tools if t.get("status") == "failed")
-    turn_rows = usage_resp.get("turns") or []
-    reported = [r.get("total_tokens") for r in turn_rows
-                if r.get("status") == "reported" and r.get("total_tokens") is not None]
-    span_ms = timing_resp.get("span_ms")
-    return [
-        {"name": "human_score", "value": human_score,
-         "type": "categorical", "source": "human"},
-        {"name": "turns", "value": turns, "type": "number", "source": "machine"},
-        {"name": "tool_fail_rate",
-         "value": round(fails / len(tools), 4) if tools else None,
-         "type": "number", "source": "machine"},
-        {"name": "tokens_reported", "value": sum(reported) if reported else None,
-         "type": "number", "source": "machine"},
-        {"name": "usage_missing_turns",
-         "value": usage_resp.get("missing_turns") if turn_rows else None,
-         "type": "number", "source": "machine"},
-        {"name": "duration_s",
-         "value": round(span_ms / 1000, 1) if isinstance(span_ms, (int, float)) and span_ms > 0 else None,
-         "type": "number", "source": "machine"},
-    ]
-
-
-def _latest_by_task(assignments):
-    # 同一任务重跑归组多次时取最新一条
-    m = {}
-    for a in assignments:
-        m[a["task_id"]] = a["session_id"]
-    return m
-
-
-def _write_snapshot(run_id, per_task):
-    d = RUNS_DIR / run_id
-    d.mkdir(parents=True, exist_ok=True)
-    with (d / "scores.jsonl").open("w", encoding="utf-8") as f:
-        for task_id, (sid, recs) in sorted(per_task.items()):
-            for rec in recs:
-                f.write(json.dumps({"task_id": task_id, "session_id": sid, **rec},
-                                   ensure_ascii=False) + "\n")
-
-
-def _cell(per_task, task_id, name):
-    for rec in per_task.get(task_id, ([], []))[1]:
-        if rec["name"] == name:
-            return rec["value"]
-    return None
-
-
-def _delta(x, y):
-    if isinstance(x, (int, float)) and isinstance(y, (int, float)):
-        return f"{y - x:+g}"
-    return "n/a"  # 任一侧 missing 不算差值
-
-
-def _compare_main(argv):
-    p = argparse.ArgumentParser(prog="ata compare")
-    p.add_argument("run_a")
-    p.add_argument("run_b")
-    p.add_argument("--url", default=os.environ.get("ATA_URL") or DEFAULT_URL)
-    a = p.parse_args(argv[1:])
-    base = a.url.rstrip("/")
-    ra = get_json(base, f"/api/runs/{a.run_a}")
-    rb = get_json(base, f"/api/runs/{a.run_b}")
-
-    def fetch_scores(run):
-        base_path = "/api/sessions"
-        out = {}
-        for task_id, sid in _latest_by_task(run["assignments"]).items():
-            usage = get_json(base, f"{base_path}/{sid}/usage")
-            tools = get_json(base, f"{base_path}/{sid}/tools")
-            timing = get_json(base, f"{base_path}/{sid}/timing")
-            proj = get_json(base, f"{base_path}/{sid}")
-            score_events = proj.get("scores") or []
-            human = score_events[-1]["value"] if score_events else None
-            out[task_id] = (sid, collect_task_score(
-                usage, tools, timing, human, proj.get("turns")))
-        return out
-
-    sa, sb = fetch_scores(ra), fetch_scores(rb)
-    _write_snapshot(a.run_a, sa)
-    _write_snapshot(a.run_b, sb)
-
-    lines = [
-        f"# compare {a.run_a} vs {a.run_b}",
-        f"- A: {ra['description']}（任务集 {ra.get('taskset_fingerprint')}）",
-        f"- B: {rb['description']}（任务集 {rb.get('taskset_fingerprint')}）",
-        "- 同版任务集才可比；miss 表示数据缺失，n/a 表示差值不可算。",
-        "",
-    ]
-    header = "| task | " + " | ".join(f"{m} A | {m} B | Δ{m}" for m in METRICS) + " |"
-    lines += [header, "|" + "---|" * (len(METRICS) * 3 + 1)]
-    for t in sorted(set(sa) | set(sb)):
-        cells = []
-        for m in METRICS:
-            x, y = _cell(sa, t, m), _cell(sb, t, m)
-            cells += ["miss" if v is None else str(v) for v in (x, y)] + [_delta(x, y)]
-        lines.append(f"| {t} | " + " | ".join(cells) + " |")
-    print("\n".join(lines))

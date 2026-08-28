@@ -1,5 +1,7 @@
 # 飞轮与回归 / Regression and Rating
 
+> 历史文档：旧 regression CLI、全局 `/api/runs` handlers 与 assignment 写路径已移除。当前产品契约见 [`runtime-runs-and-evaluations.md`](runtime-runs-and-evaluations.md)，本页仅保留历史决策上下文，不描述可用入口。
+
 把「轨迹里发现一个失败 → 存进任务集 → 改完 agent 之后重跑同任务集 → 对比指标」做成四件套。
 
 | 词 | 定义 |
