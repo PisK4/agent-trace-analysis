@@ -16,11 +16,11 @@ class HttpTest(unittest.TestCase):
         led = Ledger(root)
         led.append({
             "v":1,"id":"o","agent_id":"droid","session_id":"droid-missing","ts":1,
-            "type":"session.opened","turn":None,"payload":{"title":"missing"},
+            "type":"session.opened","observed_turn_ordinal":None,"payload":{"title":"missing"},
         })
         led.append({
             "v":1,"id":"a","agent_id":"droid","session_id":"droid-missing","ts":2,
-            "type":"message.upserted","turn":1,"payload":{
+            "type":"message.upserted","observed_turn_ordinal":1,"payload":{
                 "message_id":"a1","role":"assistant","text":"x","status":"completed",
                 "request_no":1,"usage":None,"started_at":2,"duration_ms":1,"output_text":"x"},
         })

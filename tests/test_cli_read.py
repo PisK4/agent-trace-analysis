@@ -9,14 +9,14 @@ class TestCliRead(unittest.TestCase):
         self.led_dir = Path(tempfile.mkdtemp())
         led = Ledger(self.led_dir / "t.sqlite")
         led.append({"v": 1, "id": "o1", "agent_id": "pi", "session_id": "s1",
-                    "ts": 1000, "type": "session.opened", "turn": None,
+                    "ts": 1000, "type": "session.opened", "observed_turn_ordinal": None,
                     "payload": {"title": "demo"}})
         led.append({"v": 1, "id": "rs1", "agent_id": "pi", "session_id": "s1",
                     "ts": 1001, "type": "run.started", "run_id": 1,
                     "payload": {"external_lifecycle_id": "x", "boundary_source": "test"}})
         led.append({"v": 1, "id": "ts1", "agent_id": "pi", "session_id": "s1",
                     "ts": 1002, "type": "turn.started", "run_id": 1,
-                    "turn_number": 1, "turn": None, "payload": {}})
+                    "turn_number": 1, "observed_turn_ordinal": None, "payload": {}})
 
     def run_cli(self, *argv):
         buf = io.StringIO()

@@ -10,7 +10,7 @@ def hook(name, event, state, **ctx):
 
 class TestDuration(unittest.TestCase):
     def test_tool_duration_from_ts_diff(self):
-        st = {"opened": True, "turn": 1}
+        st = {"opened": True, "observed_turn_ordinal": 1}
         hook("tool_execution_start",
              {"timestamp": 1000, "toolCallId": "c1", "toolName": "read", "args": {}}, st)
         evs = hook("tool_execution_end",
@@ -22,7 +22,7 @@ class TestDuration(unittest.TestCase):
     def test_replay_without_start_writes_none_not_zero(self):
         # 会话重放只有 end 类事件、没有 start：耗时不可得应写 None（未测量），
         # 不能写 0（会被 timing 汇总当成实测零毫秒）
-        st = {"opened": True, "turn": 1}
+        st = {"opened": True, "observed_turn_ordinal": 1}
         evs = hook("message_end",
                    {"timestamp": 5000,
                     "message": {"role": "assistant",

@@ -10,16 +10,16 @@ def rec(seq, ev):
 class ProjectTest(unittest.TestCase):
     def test_usage_and_order(self):
         recs = [
-            rec(1, {"v":1,"id":"o","agent_id":"pi","session_id":"s","ts":1,"type":"session.opened","turn":None,"payload":{"title":"t"}}),
-            rec(2, {"v":1,"id":"ts","agent_id":"pi","session_id":"s","ts":2,"type":"turn.started","turn":1,"payload":{}}),
-            rec(3, {"v":1,"id":"u","agent_id":"pi","session_id":"s","ts":3,"type":"message.upserted","turn":1,"payload":{
+            rec(1, {"v":1,"id":"o","agent_id":"pi","session_id":"s","ts":1,"type":"session.opened","observed_turn_ordinal":None,"payload":{"title":"t"}}),
+            rec(2, {"v":1,"id":"ts","agent_id":"pi","session_id":"s","ts":2,"type":"turn.started","observed_turn_ordinal":1,"payload":{}}),
+            rec(3, {"v":1,"id":"u","agent_id":"pi","session_id":"s","ts":3,"type":"message.upserted","observed_turn_ordinal":1,"payload":{
                 "message_id":"u1","role":"user","text":"hello","status":"completed","request_no":None,
                 "usage":None,"started_at":3,"duration_ms":10,"output_text":None}}),
-            rec(4, {"v":1,"id":"a","agent_id":"pi","session_id":"s","ts":4,"type":"message.upserted","turn":1,"payload":{
+            rec(4, {"v":1,"id":"a","agent_id":"pi","session_id":"s","ts":4,"type":"message.upserted","observed_turn_ordinal":1,"payload":{
                 "message_id":"a1","role":"assistant","text":"ok","status":"completed","request_no":1,
                 "usage":{"status":"reported","input":10,"output":2,"cache_read":1,"cache_write":0,"total_tokens":13,"cost":None},
                 "started_at":4,"duration_ms":20,"output_text":"ok"}}),
-            rec(5, {"v":1,"id":"t","agent_id":"pi","session_id":"s","ts":5,"type":"tool.upserted","turn":1,"payload":{
+            rec(5, {"v":1,"id":"t","agent_id":"pi","session_id":"s","ts":5,"type":"tool.upserted","observed_turn_ordinal":1,"payload":{
                 "tool_call_id":"c1","parent_message_id":"a1","name":"Read","text":"f","status":"completed",
                 "payload":{"path":"f"},"result":"ok","started_at":5,"duration_ms":5}}),
         ]
@@ -37,8 +37,8 @@ class ProjectTest(unittest.TestCase):
 
     def test_system_reminder_is_context(self):
         recs = [
-            rec(1, {"v":1,"id":"o","agent_id":"droid","session_id":"d","ts":1,"type":"session.opened","turn":None,"payload":{"title":"d"}}),
-            rec(2, {"v":1,"id":"u","agent_id":"droid","session_id":"d","ts":2,"type":"message.upserted","turn":1,"payload":{
+            rec(1, {"v":1,"id":"o","agent_id":"droid","session_id":"d","ts":1,"type":"session.opened","observed_turn_ordinal":None,"payload":{"title":"d"}}),
+            rec(2, {"v":1,"id":"u","agent_id":"droid","session_id":"d","ts":2,"type":"message.upserted","observed_turn_ordinal":1,"payload":{
                 "message_id":"u1","role":"user","text":"<system-reminder>The tools listed below are available",
                 "status":"completed","request_no":None,"usage":None,"started_at":2,"duration_ms":1,"output_text":None}}),
         ]
@@ -56,14 +56,14 @@ class ProjectTest(unittest.TestCase):
         干预 — 所以本测试 context 的 turn 保留原值 2 (老测试期望被改回 1)。
         """
         recs = [
-            rec(1, {"v":1,"id":"o","agent_id":"droid","session_id":"d","ts":1,"type":"session.opened","turn":None,"payload":{"title":"d"}}),
-            rec(2, {"v":1,"id":"u","agent_id":"droid","session_id":"d","ts":2,"type":"message.upserted","turn":1,"payload":{
+            rec(1, {"v":1,"id":"o","agent_id":"droid","session_id":"d","ts":1,"type":"session.opened","observed_turn_ordinal":None,"payload":{"title":"d"}}),
+            rec(2, {"v":1,"id":"u","agent_id":"droid","session_id":"d","ts":2,"type":"message.upserted","observed_turn_ordinal":1,"payload":{
                 "message_id":"u1","role":"user","text":"hello","status":"completed","request_no":None,
                 "usage":None,"started_at":2,"duration_ms":1,"output_text":None}}),
-            rec(3, {"v":1,"id":"c","agent_id":"droid","session_id":"d","ts":3,"type":"message.upserted","turn":2,"payload":{
+            rec(3, {"v":1,"id":"c","agent_id":"droid","session_id":"d","ts":3,"type":"message.upserted","observed_turn_ordinal":2,"payload":{
                 "message_id":"c1","role":"user","text":"<system-reminder>The tools listed below are available",
                 "status":"completed","request_no":None,"usage":None,"started_at":3,"duration_ms":1,"output_text":None}}),
-            rec(4, {"v":1,"id":"a","agent_id":"droid","session_id":"d","ts":4,"type":"message.upserted","turn":2,"payload":{
+            rec(4, {"v":1,"id":"a","agent_id":"droid","session_id":"d","ts":4,"type":"message.upserted","observed_turn_ordinal":2,"payload":{
                 "message_id":"a1","role":"assistant","text":"ok","status":"completed","request_no":1,
                 "usage":None,"started_at":4,"duration_ms":1,"output_text":"ok"}}),
         ]
@@ -83,14 +83,14 @@ class ProjectTest(unittest.TestCase):
         """Round 2: 代理主发 turn, 投影不再把"无前导 user 的 assistant 行"
         remap 回 turn=1 (老 last_user_turn remap 的副作用)。"""
         recs = [
-            rec(1, {"v":1,"id":"o","agent_id":"pi","session_id":"s","ts":1,"type":"session.opened","turn":None,"payload":{"title":"s"}}),
-            rec(2, {"v":1,"id":"u","agent_id":"pi","session_id":"s","ts":2,"type":"message.upserted","turn":1,"payload":{
+            rec(1, {"v":1,"id":"o","agent_id":"pi","session_id":"s","ts":1,"type":"session.opened","observed_turn_ordinal":None,"payload":{"title":"s"}}),
+            rec(2, {"v":1,"id":"u","agent_id":"pi","session_id":"s","ts":2,"type":"message.upserted","observed_turn_ordinal":1,"payload":{
                 "message_id":"u1","role":"user","text":"hi","status":"completed","request_no":None,
                 "usage":None,"started_at":2,"duration_ms":1,"output_text":None}}),
-            rec(3, {"v":1,"id":"a1","agent_id":"pi","session_id":"s","ts":3,"type":"message.upserted","turn":1,"payload":{
+            rec(3, {"v":1,"id":"a1","agent_id":"pi","session_id":"s","ts":3,"type":"message.upserted","observed_turn_ordinal":1,"payload":{
                 "message_id":"a1","role":"assistant","text":"a1","status":"completed","request_no":1,
                 "usage":None,"started_at":3,"duration_ms":1,"output_text":"a1"}}),
-            rec(4, {"v":1,"id":"a2","agent_id":"pi","session_id":"s","ts":4,"type":"message.upserted","turn":2,"payload":{
+            rec(4, {"v":1,"id":"a2","agent_id":"pi","session_id":"s","ts":4,"type":"message.upserted","observed_turn_ordinal":2,"payload":{
                 "message_id":"a2","role":"assistant","text":"a2","status":"completed","request_no":2,
                 "usage":None,"started_at":4,"duration_ms":1,"output_text":"a2"}}),
         ]
@@ -103,11 +103,11 @@ class ProjectTest(unittest.TestCase):
         # system.upserted 的 tools_catalog 按名字合并成 toolsIndex，后写覆盖前写，
         # 前端按工具名查 Schema（dsh 的 Schema 页签同款取数）。
         recs = [
-            rec(1, {"v":1,"id":"o","agent_id":"pi","session_id":"s","ts":1,"type":"session.opened","turn":None,"payload":{"title":"t"}}),
-            rec(2, {"v":1,"id":"sys1","agent_id":"pi","session_id":"s","ts":2,"type":"system.upserted","turn":None,"payload":{
+            rec(1, {"v":1,"id":"o","agent_id":"pi","session_id":"s","ts":1,"type":"session.opened","observed_turn_ordinal":None,"payload":{"title":"t"}}),
+            rec(2, {"v":1,"id":"sys1","agent_id":"pi","session_id":"s","ts":2,"type":"system.upserted","observed_turn_ordinal":None,"payload":{
                 "prompt_text":"p1","previous_prompt":None,
                 "tools_catalog":[{"name":"Read","description":"read files","parameters":{}}]}}),
-            rec(3, {"v":1,"id":"sys2","agent_id":"pi","session_id":"s","ts":3,"type":"system.upserted","turn":None,"payload":{
+            rec(3, {"v":1,"id":"sys2","agent_id":"pi","session_id":"s","ts":3,"type":"system.upserted","observed_turn_ordinal":None,"payload":{
                 "prompt_text":"p2","previous_prompt":"p1",
                 "tools_catalog":[
                     {"name":"Write","description":"write files","parameters":{}},
@@ -121,12 +121,12 @@ class ProjectTest(unittest.TestCase):
     def test_system_catalog_forward_fill(self):
         # 目录去重落库后，缺省轮次沿用最近一份目录（前向填充）。
         recs = [
-            rec(1, {"v":1,"id":"o","agent_id":"pi","session_id":"s","ts":1,"type":"session.opened","turn":None,"payload":{"title":"t"}}),
-            rec(2, {"v":1,"id":"sys1","agent_id":"pi","session_id":"s","ts":2,"type":"system.upserted","turn":None,"payload":{
+            rec(1, {"v":1,"id":"o","agent_id":"pi","session_id":"s","ts":1,"type":"session.opened","observed_turn_ordinal":None,"payload":{"title":"t"}}),
+            rec(2, {"v":1,"id":"sys1","agent_id":"pi","session_id":"s","ts":2,"type":"system.upserted","observed_turn_ordinal":None,"payload":{
                 "prompt_text":"p1","previous_prompt":None,
                 "tools_catalog":[{"name":"Read","description":"read files","parameters":{}}],
                 "skills_catalog":[{"name":"s1","description":"d"}]}}),
-            rec(3, {"v":1,"id":"sys2","agent_id":"pi","session_id":"s","ts":3,"type":"system.upserted","turn":None,"payload":{
+            rec(3, {"v":1,"id":"sys2","agent_id":"pi","session_id":"s","ts":3,"type":"system.upserted","observed_turn_ordinal":None,"payload":{
                 "prompt_text":"p2","previous_prompt":"p1"}}),
         ]
         page = project_session("s", "pi", recs)
@@ -137,8 +137,8 @@ class ProjectTest(unittest.TestCase):
 
     def test_droid_missing(self):
         recs = [
-            rec(1, {"v":1,"id":"o","agent_id":"droid","session_id":"d","ts":1,"type":"session.opened","turn":None,"payload":{"title":"d"}}),
-            rec(2, {"v":1,"id":"a","agent_id":"droid","session_id":"d","ts":2,"type":"message.upserted","turn":1,"payload":{
+            rec(1, {"v":1,"id":"o","agent_id":"droid","session_id":"d","ts":1,"type":"session.opened","observed_turn_ordinal":None,"payload":{"title":"d"}}),
+            rec(2, {"v":1,"id":"a","agent_id":"droid","session_id":"d","ts":2,"type":"message.upserted","observed_turn_ordinal":1,"payload":{
                 "message_id":"a1","role":"assistant","text":"x","status":"completed","request_no":1,
                 "usage":None,"started_at":2,"duration_ms":1,"output_text":"x"}}),
         ]
@@ -148,16 +148,16 @@ class ProjectTest(unittest.TestCase):
 
     def test_compaction_and_failed_status(self):
         recs = [
-            rec(1, {"v":1,"id":"o","agent_id":"claude","session_id":"s","ts":1,"type":"session.opened","turn":None,"payload":{"title":"t"}}),
-            rec(2, {"v":1,"id":"u","agent_id":"claude","session_id":"s","ts":2,"type":"message.upserted","turn":1,"payload":{
+            rec(1, {"v":1,"id":"o","agent_id":"claude","session_id":"s","ts":1,"type":"session.opened","observed_turn_ordinal":None,"payload":{"title":"t"}}),
+            rec(2, {"v":1,"id":"u","agent_id":"claude","session_id":"s","ts":2,"type":"message.upserted","observed_turn_ordinal":1,"payload":{
                 "message_id":"u1","role":"user","text":"hi","status":"completed","request_no":None,
                 "usage":None,"started_at":2,"duration_ms":1,"output_text":None}}),
-            rec(3, {"v":1,"id":"a","agent_id":"claude","session_id":"s","ts":3,"type":"message.upserted","turn":1,"payload":{
+            rec(3, {"v":1,"id":"a","agent_id":"claude","session_id":"s","ts":3,"type":"message.upserted","observed_turn_ordinal":1,"payload":{
                 "message_id":"a1","role":"assistant","text":"ok","status":"completed","request_no":1,
                 "usage":None,"started_at":3,"duration_ms":1,"output_text":"ok","model":"claude-opus-4"}}),
-            rec(4, {"v":1,"id":"c","agent_id":"claude","session_id":"s","ts":4,"type":"compaction.boundary","turn":1,"payload":{
+            rec(4, {"v":1,"id":"c","agent_id":"claude","session_id":"s","ts":4,"type":"compaction.boundary","observed_turn_ordinal":None,"payload":{
                 "summary":"Context compacted","trigger":"auto","pre_tokens":8000,"post_tokens":1200}}),
-            rec(5, {"v":1,"id":"te","agent_id":"claude","session_id":"s","ts":5,"type":"turn.ended","turn":1,"payload":{
+            rec(5, {"v":1,"id":"te","agent_id":"claude","session_id":"s","ts":5,"type":"turn.ended","observed_turn_ordinal":1,"payload":{
                 "usage":None,"status":"cancelled"}}),
         ]
         sess = project_session("s", "claude", recs)
@@ -173,7 +173,7 @@ class ProjectTest(unittest.TestCase):
         recs = [
             rec(i, {
                 "v": 1, "id": f"m{i}", "agent_id": "pi", "session_id": "s",
-                "ts": i, "type": "message.upserted", "turn": 1,
+                "ts": i, "type": "message.upserted", "observed_turn_ordinal": 1,
                 "payload": {
                     "message_id": f"m{i}", "role": "user" if i % 2 else "assistant",
                     "text": f"row {i}", "status": "completed",
@@ -198,13 +198,13 @@ class TitleAuthorityParityTest(unittest.TestCase):
     def _events(self):
         return [
             {"seq": 1, "event": {"v": 1, "id": "o", "agent_id": "pi", "session_id": "s",
-                                 "ts": 1000, "type": "session.opened", "turn": None,
+                                 "ts": 1000, "type": "session.opened", "observed_turn_ordinal": None,
                                  "payload": {"title": "auto-title"}}},
             {"seq": 2, "event": {"v": 1, "id": "r", "agent_id": "pi", "session_id": "s",
-                                 "ts": 2000, "type": "session.renamed", "turn": None,
+                                 "ts": 2000, "type": "session.renamed", "observed_turn_ordinal": None,
                                  "payload": {"title": "user-name"}}},
             {"seq": 3, "event": {"v": 1, "id": "o2", "agent_id": "pi", "session_id": "s",
-                                 "ts": 3000, "type": "session.opened", "turn": None,
+                                 "ts": 3000, "type": "session.opened", "observed_turn_ordinal": None,
                                  "payload": {"title": "late-opened"}}},
         ]
 

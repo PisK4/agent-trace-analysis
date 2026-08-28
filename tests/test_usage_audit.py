@@ -10,12 +10,12 @@ def rec(seq, ev):
 
 def opened(seq, ts=1):
     return rec(seq, {"v": 1, "id": "o", "agent_id": "claude", "session_id": "s", "ts": ts,
-                     "type": "session.opened", "turn": None, "payload": {"title": "t"}})
+                     "type": "session.opened", "observed_turn_ordinal": None, "payload": {"title": "t"}})
 
 
 def assistant(seq, turn, usage, ts=None):
     return rec(seq, {"v": 1, "id": f"a{turn}", "agent_id": "claude", "session_id": "s",
-                     "ts": ts or turn, "type": "message.upserted", "turn": turn, "payload": {
+                     "ts": ts or turn, "type": "message.upserted", "observed_turn_ordinal": turn, "payload": {
                          "message_id": f"m{turn}", "role": "assistant", "text": "ok",
                          "status": "completed", "request_no": turn, "usage": usage,
                          "started_at": turn, "duration_ms": 10, "output_text": "ok"}})
@@ -41,7 +41,7 @@ class UsageAuditTest(unittest.TestCase):
                 assistant(2, 1, reported(1000, 10)),
                 # 第 2 轮 usage 全 None：assistant 消息在但无计量
                 rec(3, {"v": 1, "id": "a2", "agent_id": "claude", "session_id": "s", "ts": 3,
-                        "type": "message.upserted", "turn": 2, "payload": {
+                        "type": "message.upserted", "observed_turn_ordinal": 2, "payload": {
                             "message_id": "m2", "role": "assistant", "text": "x",
                             "status": "completed", "request_no": 2, "usage": None,
                             "started_at": 3, "duration_ms": 1, "output_text": "x"}}),
@@ -73,9 +73,12 @@ class UsageAuditTest(unittest.TestCase):
         recs = [opened(1),
                 assistant(2, 1, reported(50000, 100)),
                 rec(3, {"v": 1, "id": "c", "agent_id": "claude", "session_id": "s", "ts": 3,
-                        "type": "compaction.boundary", "turn": 2, "payload": {"summary": "s"}}),
+                        "type": "compaction.boundary", "observed_turn_ordinal": None, "payload": {"summary": "s"}}),
                 assistant(4, 2, reported(20000, 100), ts=4)]
-        self.assertEqual(audit_usage(recs)["findings"], [])
+        # compaction.boundary 不再携带旧顶层 turn；无法把边界归因到某个
+        # observed ordinal，审计应诚实保留 cliff，而不是猜测归属。
+        rules = [f["rule"] for f in audit_usage(recs)["findings"]]
+        self.assertEqual(rules, ["cliff"])
 
     def test_cliff_uses_context_for_claude(self):
         # Anthropic 系 input 不含缓存：input 骤降但 cache_read 等量上升，
@@ -83,7 +86,7 @@ class UsageAuditTest(unittest.TestCase):
         recs = [opened(1),
                 assistant(2, 1, reported(23259, 236, cache_read=0)),
                 rec(3, {"v": 1, "id": "a2", "agent_id": "claude", "session_id": "s", "ts": 3,
-                        "type": "message.upserted", "turn": 2, "payload": {
+                        "type": "message.upserted", "observed_turn_ordinal": 2, "payload": {
                             "message_id": "m2", "role": "assistant", "text": "x",
                             "status": "completed", "request_no": 2,
                             "usage": {"status": "reported", "input": 1278, "output": 84,
@@ -98,7 +101,7 @@ class UsageAuditTest(unittest.TestCase):
         # claude 行 total_tokens=None：不报占位；显式 0 才报。
         recs = [opened(1),
                 rec(2, {"v": 1, "id": "a1", "agent_id": "claude", "session_id": "s", "ts": 2,
-                        "type": "message.upserted", "turn": 1, "payload": {
+                        "type": "message.upserted", "observed_turn_ordinal": 1, "payload": {
                             "message_id": "m1", "role": "assistant", "text": "x",
                             "status": "completed", "request_no": 1,
                             "usage": {"status": "reported", "input": 500, "output": 10,

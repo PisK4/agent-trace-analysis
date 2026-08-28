@@ -4,7 +4,7 @@ from ata.project import summarize_usage, summarize_tools, list_tools, list_compa
 
 def ev(seq, typ, turn, payload):
     return {"seq": seq, "event": {"v": 1, "id": f"e{seq}", "agent_id": "pi",
-            "session_id": "s", "ts": seq, "type": typ, "turn": turn, "payload": payload}}
+            "session_id": "s", "ts": seq, "type": typ, "observed_turn_ordinal": turn, "payload": payload}}
 
 
 USAGE_OK = {"status": "reported", "input": 100, "output": 20, "cache_read": 5,

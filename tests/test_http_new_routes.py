@@ -10,7 +10,7 @@ def opened(sid, parent=None):
     if parent:
         payload["parent_session"] = parent
     return {"v": 1, "id": f"{sid}:o", "agent_id": "pi", "session_id": sid,
-            "ts": 1000, "type": "session.opened", "turn": None, "payload": payload}
+            "ts": 1000, "type": "session.opened", "observed_turn_ordinal": None, "payload": payload}
 
 
 class TestRoutes(unittest.TestCase):
@@ -21,7 +21,7 @@ class TestRoutes(unittest.TestCase):
         cls.led.append(opened("root"))
         cls.led.append(opened("kid", parent="root"))
         cls.led.append({"v": 1, "id": "m1", "agent_id": "pi", "session_id": "root",
-                        "ts": 1001, "type": "message.upserted", "turn": 1,
+                        "ts": 1001, "type": "message.upserted", "observed_turn_ordinal": 1,
                         "payload": {"message_id": "m1", "role": "user", "text": "hi",
                                     "status": "completed"}})
         cls.httpd = make_server(cls.led, cls.tmp, "127.0.0.1", 0)
@@ -49,7 +49,7 @@ class TestRoutes(unittest.TestCase):
                          "run_id": 1, "payload": {"external_lifecycle_id": "x",
                                                     "boundary_source": "test"}})
         self.led.append({"v": 1, "id": "ts1", "agent_id": "pi", "session_id": "root",
-                         "ts": 1003, "type": "turn.started", "turn": None,
+                         "ts": 1003, "type": "turn.started", "observed_turn_ordinal": None,
                          "run_id": 1, "turn_number": 1,
                          "payload": {}})
         code, out = self.get("/api/sessions/root/runs")
@@ -78,7 +78,6 @@ class TestRoutes(unittest.TestCase):
         code, out = self.get("/api/sessions/root/lineage")
         self.assertEqual(code, 200)
         self.assertEqual(out["ancestors"], [])
-        # kid 在 fixture 里以 root 为父，root 的 children 必含 kid
         self.assertEqual([c["id"] for c in out["children"]], ["kid"])
         code, out = self.get("/api/sessions/kid/lineage")
         self.assertEqual([a["id"] for a in out["ancestors"]], ["root"])
@@ -86,14 +85,14 @@ class TestRoutes(unittest.TestCase):
     def test_convenience_endpoints(self):
         led_events = [
             {"v": 1, "id": "u1", "agent_id": "pi", "session_id": "conv",
-             "ts": 10, "type": "message.upserted", "turn": 1,
+             "ts": 10, "type": "message.upserted", "observed_turn_ordinal": 1,
              "payload": {"message_id": "a1", "role": "assistant", "text": "done",
                          "status": "completed", "model": "m",
                          "usage": {"status": "reported", "input": 10, "output": 2,
                                    "cache_read": 0, "cache_write": 0,
                                    "total_tokens": 12, "cost": None}}},
             {"v": 1, "id": "t1", "agent_id": "pi", "session_id": "conv",
-             "ts": 11, "type": "tool.upserted", "turn": 1,
+             "ts": 11, "type": "tool.upserted", "observed_turn_ordinal": 1,
              "payload": {"tool_call_id": "c1", "name": "read", "status": "failed",
                          "result": "EACCES", "duration_ms": 5}},
         ]
@@ -110,7 +109,7 @@ class TestRoutes(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(out["summary"]["calls"], 1)
         self.assertEqual(out["summary"]["failed"], 1)
-        self.assertEqual(out["summary"]["mounted"], None)  # 会话无目录，使用率 n/a
+        self.assertEqual(out["summary"]["mounted"], None)
         self.assertEqual(out["tools"][0]["name"], "read")
         self.assertEqual(out["tools"][0]["calls"][0]["status"], "failed")
         code, out = self.get("/api/sessions/nope/tool-stats")
@@ -119,7 +118,6 @@ class TestRoutes(unittest.TestCase):
         self.assertEqual(out["compactions"], [])
 
     def test_usage_endpoint_twice_same_body(self):
-        """rev 未变时二次请求应命中缓存且响应体一致（外部形状冻结的回归锚）。"""
         first = self.get("/api/sessions/conv/usage")
         second = self.get("/api/sessions/conv/usage")
         self.assertEqual(first, second)
@@ -131,7 +129,6 @@ class TestRoutes(unittest.TestCase):
         self.assertEqual(out["calls"], 1)
         self.assertEqual(out["tool_ms"], 5)
         self.assertEqual(out["tool_quality"], "measured")
-        # assistant 行没带 duration_ms：不算实测，诚实降级
         self.assertEqual(out["llm_quality"], "placeholder")
         code, out = self.get("/api/sessions/nope/timing")
         self.assertEqual(code, 404)

@@ -4,7 +4,7 @@ from ata.plugins.pi import translate_hook
 
 
 def hook(name, event, st=None):
-    st = st if st is not None else {"opened": True, "turn": 1}
+    st = st if st is not None else {"opened": True, "observed_turn_ordinal": 1}
     return translate_hook(name, event, {"session_id": "s1"}, st)
 
 
@@ -32,7 +32,7 @@ class AssistantModelTests(unittest.TestCase):
         self.assertIsNone(up["payload"]["provider"])
 
     def test_turn_end_reupsert_carries_model_and_provider(self):
-        st = {"opened": True, "turn": 1, "last_assistant_id": "a1", "request_no": 1}
+        st = {"opened": True, "observed_turn_ordinal": 1, "last_assistant_id": "a1", "request_no": 1}
         evs = hook("turn_end", {
             "timestamp": 11,
             "message": {
@@ -47,7 +47,7 @@ class AssistantModelTests(unittest.TestCase):
         self.assertEqual(re_up[0]["payload"]["provider"], "moonshot")
 
     def test_turn_ended_payload_carries_model_and_provider(self):
-        st = {"opened": True, "turn": 1}
+        st = {"opened": True, "observed_turn_ordinal": 1}
         evs = hook("turn_end", {
             "timestamp": 11,
             "message": {"role": "assistant", "responseId": "a1",

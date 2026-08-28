@@ -11,7 +11,7 @@ def hook(name, event, state, **ctx):
 class TestFullText(unittest.TestCase):
     def test_user_text_not_truncated(self):
         long = "字" * 500
-        st = {"opened": True, "turn": 0}
+        st = {"opened": True, "observed_turn_ordinal": 0}
         hook("agent_start", {"timestamp": 1}, st)
         evs = hook("message_start", {"timestamp": 2,
                    "message": {"role": "user", "content": long}}, st)

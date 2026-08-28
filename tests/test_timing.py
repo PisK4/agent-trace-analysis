@@ -4,7 +4,7 @@ from ata.project import summarize_timing
 
 def rec(seq, typ, ts, payload, turn=1):
     return {"seq": seq, "event": {"v": 1, "id": f"e{seq}", "agent_id": "pi",
-            "session_id": "s", "ts": TS0 + ts, "type": typ, "turn": turn,
+            "session_id": "s", "ts": TS0 + ts, "type": typ, "observed_turn_ordinal": turn,
             "payload": payload}}
 
 

@@ -4,7 +4,7 @@ from ata.project import project_session
 
 def rec(seq, typ, payload, turn=None):
     return {"seq": seq, "event": {"v": 1, "id": f"e{seq}", "agent_id": "cue",
-            "session_id": "s", "ts": seq * 1000, "type": typ, "turn": turn,
+            "session_id": "s", "ts": seq * 1000, "type": typ, "observed_turn_ordinal": turn,
             "payload": payload}}
 
 

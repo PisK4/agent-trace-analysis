@@ -96,13 +96,13 @@ class DroidTest(unittest.TestCase):
         def row(eid, text, seq):
             return {"seq": seq, "event": {
                 "v": 1, "id": eid, "agent_id": "droid", "session_id": "s",
-                "ts": seq, "type": "message.upserted", "turn": 1,
+                "ts": seq, "type": "message.upserted", "observed_turn_ordinal": 1,
                 "payload": {"message_id": eid, "role": "user", "text": text,
                             "status": "completed", "started_at": seq,
                             "duration_ms": 0}}}
         recs = [{"seq": 1, "event": {
             "v": 1, "id": "o", "agent_id": "droid", "session_id": "s",
-            "ts": 1, "type": "session.opened", "turn": None,
+            "ts": 1, "type": "session.opened", "observed_turn_ordinal": None,
             "payload": {"title": "t"}}},
             row("junk", "", 2),
             row("real", "real question", 3)]
@@ -139,7 +139,7 @@ class DroidTest(unittest.TestCase):
             led = Ledger(root / "ledger.sqlite")
             for sid in ("sid-1", "sid-2"):
                 led.append({"v": 1, "id": "o", "agent_id": "droid", "session_id": sid,
-                            "ts": 1, "type": "session.opened", "turn": None,
+                            "ts": 1, "type": "session.opened", "observed_turn_ordinal": None,
                             "payload": {"title": "New Session"}})
             refresh_titles(root, led)
             self.assertEqual(led.session("sid-1")["title"], "真实标题")
@@ -166,7 +166,7 @@ class DroidTest(unittest.TestCase):
                 {"type": "session_start", "id": "sid-9", "title": "新标题"}) + "\n")
             led = Ledger(root / "ledger.sqlite")
             led.append({"v": 1, "id": "o", "agent_id": "droid", "session_id": "sid-9",
-                        "ts": 1, "type": "session.opened", "turn": None,
+                        "ts": 1, "type": "session.opened", "observed_turn_ordinal": None,
                         "payload": {"title": "New Session"}})
             led._lock.acquire()
             led._conn.execute("UPDATE sessions SET title='手工修正过' WHERE session_id='sid-9'")

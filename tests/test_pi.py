@@ -41,7 +41,7 @@ class PiTest(unittest.TestCase):
         self.assertIn("session.opened", types)
         self.assertNotIn("session.closed", types)
         sys_ev = next(e for e in evs if e["type"] == "system.upserted")
-        self.assertIsNone(sys_ev["turn"])
+        self.assertIsNone(sys_ev["observed_turn_ordinal"])
         self.assertIn("prompt_text", sys_ev["payload"])
         self.assertEqual([t["name"] for t in sys_ev["payload"]["tools_catalog"]], ["read", "bash"])
         self.assertEqual(sys_ev["payload"]["skills_catalog"][0]["name"], "ata-ops")
@@ -52,11 +52,11 @@ class PiTest(unittest.TestCase):
         sys2 = [e for e in evs if e["type"] == "system.upserted"][1]
         self.assertIsNotNone(sys2["payload"]["previous_prompt"])
         self.assertEqual(
-            [e["turn"] for e in evs if e["type"] == "turn.started"],
+            [e["observed_turn_ordinal"] for e in evs if e["type"] == "turn.started"],
             [1, 2],
         )
         self.assertEqual(
-            [e["turn"] for e in evs if e["type"] == "turn.ended"],
+            [e["observed_turn_ordinal"] for e in evs if e["type"] == "turn.ended"],
             [1, 2],
         )
         last_end = [e for e in evs if e["type"] == "turn.ended"][-1]
@@ -145,7 +145,7 @@ class PiTest(unittest.TestCase):
                 self.assertIn("tool", kinds)
                 self.assertIn("system", kinds)
                 sys_row = next(row for row in page["rows"] if row["kind"] == "system")
-                self.assertIsNone(sys_row["turn"])
+                self.assertIsNone(sys_row["observed_turn_ordinal"])
                 self.assertIn("You are Pi", sys_row["promptText"])
                 self.assertEqual([t["name"] for t in sys_row["toolsCatalog"]], ["read", "bash"])
                 users = [row for row in page["rows"] if row["kind"] == "user"]
@@ -164,7 +164,7 @@ class PiTest(unittest.TestCase):
                     listing = json.loads(r.read().decode())
                 listed = next(x for x in listing if x["id"] == "pi-compact")
                 self.assertEqual(listed["title"], "ask about usage")
-                self.assertEqual(listed["turns"], 2)
+                self.assertEqual(listed["turns"], 0)
             finally:
                 httpd.shutdown()
 

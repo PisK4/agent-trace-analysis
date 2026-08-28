@@ -7,12 +7,12 @@ from ata.ledger import Ledger
 
 def opened(sid):
     return {"v": 1, "id": f"{sid}:o", "agent_id": "pi", "session_id": sid,
-            "ts": 1000, "type": "session.opened", "turn": None, "payload": {"title": sid}}
+            "ts": 1000, "type": "session.opened", "observed_turn_ordinal": None, "payload": {"title": sid}}
 
 
 def message(sid, mid, turn=1):
     return {"v": 1, "id": mid, "agent_id": "pi", "session_id": sid,
-            "ts": 1001 + turn, "type": "message.upserted", "turn": turn,
+            "ts": 1001 + turn, "type": "message.upserted", "observed_turn_ordinal": turn,
             "payload": {"message_id": mid, "role": "user", "text": "hi",
                         "started_at": 1000 + turn, "status": "completed"}}
 
