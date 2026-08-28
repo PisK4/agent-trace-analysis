@@ -8,15 +8,15 @@ session.opened (ai-title) / compaction.boundary / system.api_error 等
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
-
 from ata.plugins.jsonl import translate_file as _jfile
 from ata.schema import envelope
 
 
 def translate_line(raw: dict, state: dict) -> list[dict]:
     typ = raw.get("type")
-    session_id = raw.get("sessionId") or state.get("session_id") or "claude-session"
+    session_id = raw.get("sessionId") or state.get("session_id")
+    if not session_id:
+        return []
     state["session_id"] = session_id
     agent_id = "claude"
     ts = _ts(raw, state)
@@ -29,7 +29,6 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
             session_id=session_id,
             type_="session.opened",
             payload={"title": session_id},
-            turn=None,
             ts=ts,
             eid=f"{session_id}:opened",
         ))
@@ -41,7 +40,6 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 session_id=session_id,
                 type_="session.opened",
                 payload={"title": title[:80]},
-                turn=None,
                 ts=ts,
                 eid=f"{session_id}:opened:title",
             ))
@@ -55,9 +53,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
 
 
 def translate_file(path, offset: int = 0, state: dict | None = None):
-    if state is None:
-        # 测试专用老路径: 每次调用都重建 state 桶, 无跨 step 持久。
-        state = {"session_id": Path(path).stem}
+    # 无 state 不再用文件名猜 session；JSONL 首条必须携带 sessionId。
     return _jfile(path, translate_line, offset, state)
 
 
@@ -80,7 +76,6 @@ def _system_line(raw, state, ts, out):
                 "post_tokens": meta.get("postTokens"),
                 "duration_ms": meta.get("durationMs"),
             },
-            turn=turn,
             ts=ts,
             eid=f"{session_id}:compact:{cid}",
         ))
@@ -115,7 +110,7 @@ def _system_line(raw, state, ts, out):
                 "thinking": None,
                 "model": None,
             },
-            turn=turn,
+            observed_turn_ordinal=turn,
             ts=ts,
             eid=f"{session_id}:msg:{mid}",
         ))

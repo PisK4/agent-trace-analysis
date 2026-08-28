@@ -165,10 +165,10 @@ class TranslateCaptureTest(unittest.TestCase):
         sys_ev, end_ev = evs[0], evs[-1]
         sys_ev = self.parse_event(sys_ev)
         end_ev = self.parse_event(end_ev)
-        self.assertIsNone(sys_ev["turn"])
+        self.assertIsNone(sys_ev["observed_turn_ordinal"])
         self.assertEqual(sys_ev["payload"]["prompt_text"], "You are ATA.")
         self.assertEqual(sys_ev["payload"]["tools_catalog"][0]["name"], "Read")
-        self.assertEqual(end_ev["turn"], 1)
+        self.assertEqual(end_ev["observed_turn_ordinal"], 1)
         u = end_ev["payload"]["usage"]
         self.assertEqual(u["status"], "reported")
         self.assertEqual((u["input"], u["output"], u["cache_read"],
@@ -211,7 +211,7 @@ class TranslateCaptureTest(unittest.TestCase):
             self.state)
         end = self.parse_event(evs[-1])
         self.assertEqual(end["type"], "turn.ended")
-        self.assertEqual(end["turn"], 2)
+        self.assertEqual(end["observed_turn_ordinal"], 2)
 
     def test_missing_usage_emits_nothing(self):
         resp = dict(RESP1, usage={})
@@ -317,7 +317,7 @@ class CaptureMessageEmitTest(unittest.TestCase):
         user_ev = next(e for e in upserts if e["payload"]["role"] == "user")
         self.assertEqual(user_ev["payload"]["message_id"], "user-msg-1")
         self.assertEqual(user_ev["payload"]["text"], "hello")
-        self.assertEqual(user_ev["turn"], 1)
+        self.assertEqual(user_ev["observed_turn_ordinal"], 1)
 
     def test_assistant_message_uses_response_id(self):
         from ata.plugins.capture import translate_capture
@@ -826,7 +826,7 @@ class BlockLevelContextFilterTest(unittest.TestCase):
                     and e["payload"].get("role") == "user"]
         # 两条真实 user 消息都 emit, 且 turn 号分别是 1 / 2
         self.assertEqual(len(user_evs), 2)
-        self.assertEqual(sorted(e["turn"] for e in user_evs), [1, 2])
+        self.assertEqual(sorted(e["observed_turn_ordinal"] for e in user_evs), [1, 2])
 
 
 class StableUserMidTest(unittest.TestCase):

@@ -43,11 +43,9 @@ def translate_file(path: Path, translate_line, offset: int = 0, state: dict | No
         rest = text
         new_offset = offset + len(chunk)
     if state is None:
-        # 回退路径：保留老行为，新代码不应走到这里。
-        state = {"session_id": Path(path).stem}
-    else:
-        # 调用方注入的 state 必须带 session_id；缺则补一次。
-        state.setdefault("session_id", Path(path).stem)
+        # 生产 tail 必须传入持久 state；无 state 时不猜 session_id。
+        # 直接插件测试由各自 wrapper 提供 stem 兼容桶。
+        state = {}
     events = []
     for line in rest.splitlines():
         if not line.strip():

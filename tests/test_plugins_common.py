@@ -15,11 +15,12 @@ class EnvelopeTest(unittest.TestCase):
     def test_seven_keys(self):
         ev = envelope(
             agent_id="claude", session_id="s1", type_="turn.started",
-            payload={}, turn=1, ts=1000, eid="s:t1:start")
+            payload={}, observed_turn_ordinal=1, ts=1000, eid="s:t1:start")
         self.assertEqual(ev, {
             "v": 1, "id": "s:t1:start", "agent_id": "claude",
             "session_id": "s1", "ts": 1000, "type": "turn.started",
-            "turn": 1, "payload": {}})
+            "run_id": None, "turn_number": None,
+            "observed_turn_ordinal": 1, "payload": {}})
 
 
 class UsageTest(unittest.TestCase):
@@ -92,7 +93,7 @@ class BumpTurnTest(unittest.TestCase):
         t1 = bump_turn_if_real_user(state, "a", "c", "s", 1, lambda e: events.append(e))
         t2 = bump_turn_if_real_user(state, "b", "c", "s", 2, lambda e: events.append(e))
         self.assertEqual((t1, t2), (1, 2))
-        self.assertEqual([e["turn"] for e in events], [1, 2])
+        self.assertEqual([e["observed_turn_ordinal"] for e in events], [1, 2])
         state["started_turns"].add(2)
         t3 = bump_turn_if_real_user(state, "b", "c", "s", 3, lambda e: events.append(e))
         self.assertEqual(t3, 3)

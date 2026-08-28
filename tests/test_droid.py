@@ -64,12 +64,12 @@ class DroidTest(unittest.TestCase):
         # 更早的 marketplace 样本把 role/content 放顶层。两层都要翻译。
         raw = {"type": "message", "id": "x1", "role": "user",
                "content": [{"type": "text", "text": "hi"}]}
-        evs = translate_line(raw, {})
+        evs = translate_line(raw, {"session_id": "droid-session"})
         hit = [e for e in evs if e["type"] == "message.upserted" and e["payload"]["text"] == "hi"]
         self.assertTrue(hit)
 
     def test_context_does_not_start_turn(self):
-        state = {}
+        state = {"session_id": "droid-session"}
         evs = []
         evs += translate_line({"type": "message", "id": "u1", "role": "user",
                                "content": [{"type": "text", "text": "hello"}]}, state)
@@ -78,7 +78,7 @@ class DroidTest(unittest.TestCase):
         turns = [e for e in evs if e["type"] == "turn.started"]
         self.assertEqual(len(turns), 1)
         ctx = [e for e in evs if e["type"] == "message.upserted" and e["payload"]["message_id"] == "c1"][0]
-        self.assertEqual(ctx["turn"], 1)
+        self.assertEqual(ctx["observed_turn_ordinal"], 1)
 
     def test_hook_event_lines_are_skipped(self):
         # Droid 把 hook 执行记录写成 role=user 的 message 行（content 空、带
@@ -119,7 +119,7 @@ class DroidTest(unittest.TestCase):
                    {"type": "thinking", "thinking": "planning..."},
                    {"type": "text", "text": "answer"},
                ]}}
-        evs = translate_line(raw, {})
+        evs = translate_line(raw, {"session_id": "droid-session"})
         msg = [e for e in evs if e["type"] == "message.upserted"][-1]
         self.assertEqual(msg["payload"]["text"], "answer")
         self.assertEqual(msg["payload"]["thinking"], "planning...")
@@ -190,6 +190,7 @@ class DroidTest(unittest.TestCase):
     def test_cancelled_outcome_marks_assistant(self):
         state = {}
         evs = []
+        state = {"session_id": "droid-session"}
         evs += translate_line({"type": "message", "id": "u1", "role": "user",
                                "content": [{"type": "text", "text": "hello"}]}, state)
         evs += translate_line({"type": "message", "id": "a1",
