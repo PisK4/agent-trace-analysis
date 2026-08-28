@@ -98,7 +98,7 @@ export function isUnchanged(res: SessionResponse): res is Unchanged {
   return 'unchanged' in res && res.unchanged === true
 }
 
-// ── 标注板（board）──
+// ── Session score 只读视图（旧 annotations 响应保留类型兼容）──
 
 export interface ScoreEntry {
   session_id: string
@@ -110,25 +110,6 @@ export interface ScoreEntry {
   title: string | null
   event_count: number
   error_count: number
-}
-
-export interface AssignmentEntry {
-  session_id: string
-  run_id: string | null
-  task_id: string | null
-  ts: number
-  seq: number
-  agent: string | null
-  title: string | null
-  event_count: number
-  error_count: number
-}
-
-// GET /api/annotations（ledger.annotations：latest-wins 折叠墓碑后）
-export interface AnnotationsPage {
-  ok: true
-  scores: ScoreEntry[]
-  assignments: AssignmentEntry[]
 }
 
 // Evaluation HTTP contract：独立事实集合只引用现有 Session，不复制评分事实。
@@ -164,11 +145,15 @@ export interface EvaluationsPage {
 }
 
 export interface RunInfo {
-  run_id: string
-  description: string
-  taskset_fingerprint: string | null
-  created_ts: number
-  assignment_count?: number
+  run_id: number
+  external_lifecycle_id: string | null
+  status: 'open' | 'ended' | 'incomplete'
+  started_seq: number | null
+  ended_seq: number | null
+  started_ts: number | null
+  ended_ts: number | null
+  max_turn_number: number
+  conflict_count: number
 }
 
 // ── Usage 全周期（GET /api/sessions/{id}/usage，project.py summarize_usage/audit_usage）──
@@ -197,6 +182,9 @@ export interface UsageTurn {
 export interface UsageAuditFinding {
   rule: 'missing' | 'placeholder' | 'duplicate' | 'cliff'
   turn: number
+  run_id?: number | null
+  turn_number?: number | null
+  observed_turn_ordinal?: number | null
   detail: string
 }
 
@@ -206,7 +194,7 @@ export interface UsageSummary {
   total: { input: number; output: number; cache_read: number; cache_write: number; total_tokens: number }
   missing_turns: number
   audit: { findings: UsageAuditFinding[]; reported_turns: number; expected_turns: number }
-  compactions: Array<{ turn: number | null; seq: number }>
+  compactions: Array<{ turn?: number | null; run_id?: number | null; turn_number?: number | null; observed_turn_ordinal?: number | null; seq: number }>
 }
 
 // ── 会话时间拆解（GET /api/sessions/{id}/timing，project.py summarize_timing）──

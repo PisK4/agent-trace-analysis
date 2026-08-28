@@ -6,6 +6,8 @@ import os
 import sys
 import urllib.error
 import urllib.request
+import time
+from urllib.parse import urlencode
 
 from ata.schema import envelope
 
@@ -40,6 +42,11 @@ def _local(ledger_path, args):
         rows = led.sessions()
         if args.agent:
             rows = [r for r in rows if r["agent"] == args.agent]
+        if args.since_days is not None:
+            cutoff = int(time.time() * 1000) - args.since_days * 86400000
+            rows = [r for r in rows if r.get("last_ts", 0) >= cutoff]
+        if args.limit:
+            rows = rows[:args.limit]
         return {"ok": True, "sessions": rows}
     if not args.sid:
         sys.exit("error: sid required")
@@ -89,17 +96,17 @@ def _remote(base, what, sid, filters):
     本函数不再依赖 argparse.Namespace 的形状（假 Namespace 七个 None 的骗局已拆）。"""
     q = []
     if filters.get("after_seq") is not None:
-        q.append(f"after_seq={filters['after_seq']}")
+        q.append(("after_seq", filters["after_seq"]))
     if filters.get("limit"):
-        q.append(f"limit={filters['limit']}")
+        q.append(("limit", filters["limit"]))
     if filters.get("status"):
-        q.append(f"status={filters['status']}")
+        q.append(("status", filters["status"]))
     if filters.get("name"):
-        q.append(f"name={filters['name']}")
+        q.append(("name", filters["name"]))
     if filters.get("full"):
-        q.append("full=true")
+        q.append(("full", "true"))
     path = "/api/sessions" if what == "sessions" else f"/api/sessions/{sid}/{what}"
-    return _request(base, path + ("?" + "&".join(q) if q else ""))
+    return _request(base, path + ("?" + urlencode(q) if q else ""))
 
 
 def apply_client_filters(data, args):
@@ -107,9 +114,12 @@ def apply_client_filters(data, args):
     if args.what == "sessions" and isinstance(data, list):
         data = {"ok": True, "sessions": data}
     if args.what == "sessions" and "sessions" in data:
-        # /api/sessions 服务端不支持过滤参数，limit/agent 由客户端裁剪
+        # /api/sessions 服务端不支持过滤参数，limit/agent/time 由客户端裁剪
         if args.agent:
             data["sessions"] = [r for r in data["sessions"] if r["agent"] == args.agent]
+        if args.since_days is not None:
+            cutoff = int(time.time() * 1000) - args.since_days * 86400000
+            data["sessions"] = [r for r in data["sessions"] if r.get("last_ts", 0) >= cutoff]
         if args.limit:
             data["sessions"] = data["sessions"][: args.limit]
     return data

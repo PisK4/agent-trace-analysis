@@ -45,6 +45,7 @@ class RuntimeCoordinatorTest(unittest.TestCase):
         self.assertEqual(self.runtime.scope_for_event("s1"), RuntimeScope(run_id=2))
         result = self.runtime.end("s1", boundary_source="hook", ts=30)
         self.assertEqual(result["status"], "conflict")
+        self.assertEqual(len(self.ledger.read("s1")), 3)
 
 
 if __name__ == "__main__":

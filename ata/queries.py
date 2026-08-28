@@ -56,7 +56,7 @@ def list_turns(store, session_id, run_id=None):
         row["last_seq"] = record["seq"]
         if event["type"] == "turn.ended":
             row["status"] = (event.get("payload") or {}).get("status", "ended")
-    return [turns[key] for key in sorted(turns)]
+    return [turns[key] for key in sorted(turns, key=lambda key: (key[0], key[1:]))]
 
 
 class ReadFacade:

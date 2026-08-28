@@ -10,61 +10,12 @@ import re
 from ata.ingest import PiHookStates
 from ata.plugins.pi import translate_hook
 from ata.projection_cache import ProjectionCache
-from ata.queries import audit_usage, list_compactions, list_tools, project_session, summarize_timing, summarize_tools, summarize_usage, tail_preview
+from ata.queries import (audit_usage, list_compactions, list_tools, list_runs, list_turns,
+                        project_session, run_detail, summarize_timing, summarize_tools,
+                        summarize_usage, tail_preview)
 from ata.schema import ValidationError, envelope, parse_event
 from ata.evaluation import EvaluationStore, EvaluationValidationError
 from ata.runtime import RuntimeCoordinator
-
-
-def _fallback_runs(ledger, sid):
-    rows = {}
-    for rec in ledger.read(sid):
-        event = rec["event"]
-        run_id = event.get("run_id")
-        if event["type"] == "run.started" and type(run_id) is int and run_id > 0:
-            rows.setdefault(run_id, {"run_id": run_id, "status": "open",
-                                     "started_seq": rec["seq"], "ended_seq": None})
-        elif event["type"] == "run.ended" and run_id in rows:
-            rows[run_id]["status"] = "ended"
-            rows[run_id]["ended_seq"] = rec["seq"]
-    return [rows[run_id] for run_id in sorted(rows)]
-
-
-def _fallback_turns(ledger, sid):
-    rows = {}
-    for rec in ledger.read(sid):
-        event = rec["event"]
-        run_id, turn_number = event.get("run_id"), event.get("turn_number")
-        if type(run_id) is not int or run_id < 1 or type(turn_number) is not int or turn_number < 1:
-            continue
-        key = (run_id, turn_number)
-        row = rows.setdefault(key, {"run_id": run_id, "turn_number": turn_number,
-                                    "status": "open", "first_seq": rec["seq"],
-                                    "last_seq": rec["seq"]})
-        row["last_seq"] = rec["seq"]
-        if event["type"] == "turn.ended":
-            row["status"] = event["payload"].get("status", "ended")
-    return [rows[key] for key in sorted(rows)]
-
-
-def _fallback_run_detail(ledger, sid, run_id):
-    try:
-        run_id = int(run_id)
-    except (TypeError, ValueError):
-        return None
-    run = next((row for row in _fallback_runs(ledger, sid) if row["run_id"] == run_id), None)
-    if run is not None:
-        run["turns"] = [row for row in _fallback_turns(ledger, sid) if row["run_id"] == run_id]
-    return run
-
-
-def _runtime_query(name, ledger, sid, fallback, *extra):
-    try:
-        from ata import queries
-        fn = getattr(queries, name)
-    except (ImportError, AttributeError):
-        return fallback(ledger, sid, *extra)
-    return fn(ledger, sid, *extra)
 
 
 def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
@@ -93,24 +44,26 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         sid = m["sid"]
         if ledger.session(sid) is None:
             return 404, {"ok": False, "error": "unknown session"}
-        result = _runtime_query("list_runs", ledger, sid, _fallback_runs)
-        return 200, {"ok": True, "runs": result if isinstance(result, list) else result.get("runs", [])}
+        return 200, {"ok": True, "runs": list_runs(ledger, sid)}
 
     def h_session_run_detail(m, qs, body):
         sid, rid = m["sid"], m["rid"]
         if ledger.session(sid) is None:
             return 404, {"ok": False, "error": "unknown session"}
-        result = _runtime_query("run_detail", ledger, sid, _fallback_run_detail, rid)
+        result = run_detail(ledger, sid, rid)
         if result is None:
             return 404, {"ok": False, "error": "unknown run"}
-        return 200, {"ok": True, **(result.get("detail", result) if isinstance(result, dict) else {})}
+        return 200, {"ok": True, **result}
 
     def h_session_turns(m, qs, body):
         sid = m["sid"]
         if ledger.session(sid) is None:
             return 404, {"ok": False, "error": "unknown session"}
-        result = _runtime_query("list_turns", ledger, sid, _fallback_turns)
-        return 200, {"ok": True, "turns": result if isinstance(result, list) else result.get("turns", [])}
+        try:
+            run_id = int(qs["run_id"][0]) if qs.get("run_id") else None
+        except (TypeError, ValueError):
+            return 400, {"ok": False, "error": "invalid run_id"}
+        return 200, {"ok": True, "turns": list_turns(ledger, sid, run_id=run_id)}
 
     def _evaluation_detail(evaluation_id):
         state = evaluations.fold(evaluation_id)
@@ -209,9 +162,12 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         if meta is None:
             return 404, {"ok": False, "error": "unknown session"}
         if sub == "":
-            limit = int(qs.get("limit", ["80"])[0])
-            before = qs.get("before", [None])[0]
-            before = int(before) if before not in (None, "") else None
+            try:
+                limit = int(qs.get("limit", ["80"])[0])
+                before = qs.get("before", [None])[0]
+                before = int(before) if before not in (None, "") else None
+            except (TypeError, ValueError):
+                return 400, {"ok": False, "error": "invalid pagination"}
             # rev 门控：last_seq 未变（无任何事件追加/幂等折叠/改名/标注）时
             # 跳过全量投影，返回几十字节的 unchanged；前端据此零重绘。
             # last_seq 随每次 append 单调递增，天然是会话级版本号。
@@ -228,8 +184,11 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
             page["rev"] = int(meta["last_seq"])
             return 200, page
         if sub == "events":
-            after = int(qs.get("after_seq", ["0"])[0])
-            limit = min(int(qs.get("limit", ["100"])[0]), 500)
+            try:
+                after = int(qs.get("after_seq", ["0"])[0])
+                limit = min(int(qs.get("limit", ["100"])[0]), 500)
+            except (TypeError, ValueError):
+                return 400, {"ok": False, "error": "invalid event cursor"}
             picked = [r for r in ledger.read(sid) if r["seq"] > after][:limit]
             nxt = picked[-1]["seq"] if picked else after
             return 200, {"ok": True, "events": picked, "next_after_seq": nxt}
@@ -299,6 +258,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         try:
             lifecycle_id = body.get("external_lifecycle_id")
             if body["name"] == "agent_start":
+                previous_run = bucket.get("run_id")
                 result = runtime.start(
                     sid,
                     external_lifecycle_id=lifecycle_id,
@@ -309,7 +269,12 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
                         "channel": body.get("channel"), "title": body.get("title"),
                     }.items() if value is not None},
                 )
-                if result.get("scope") is not None:
+                if result.get("status") == "created" and result.get("scope") is not None:
+                    if previous_run != result["scope"].run_id:
+                        for key in ("turn", "turn_started", "user_pending", "last_assistant_id",
+                                    "request_no", "asst_no", "msg_start_ts", "msg_dur",
+                                    "tool_args", "tool_start_ts"):
+                            bucket.pop(key, None)
                     bucket["run_id"] = result["scope"].run_id
             elif body["name"] == "agent_end":
                 result = runtime.end(
