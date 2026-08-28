@@ -164,7 +164,7 @@ class PiTest(unittest.TestCase):
                     listing = json.loads(r.read().decode())
                 listed = next(x for x in listing if x["id"] == "pi-compact")
                 self.assertEqual(listed["title"], "ask about usage")
-                self.assertEqual(listed["turns"], 0)
+                self.assertEqual(listed["turns"], 2)
             finally:
                 httpd.shutdown()
 

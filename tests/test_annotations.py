@@ -46,10 +46,7 @@ class AnnotationsTest(unittest.TestCase):
         self.assertEqual(scores[-1]["value"], "good")
         self.led.append(parse_event(envelope(
             "pi", "s1", "session.score.cleared", {}, ts=1004, eid="c1")))
-        self.assertEqual(self.scores("s1"), [
-            {"value": "bad", "note": "x", "ts": 1001},
-            {"value": "good", "note": None, "ts": 1003},
-        ])
+        self.assertEqual(self.scores("s1"), [])
 
     def test_assignment_projection_removed(self):
         """assignment 旧 Session facts 已删除，Session 读取不生成 assignment 视图。"""

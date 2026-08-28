@@ -44,7 +44,7 @@ class RuntimeCoordinatorTest(unittest.TestCase):
         # 后续 Run 建立后，前一个未结束 Run 为 incomplete；唯一 open Run 可被继承。
         self.assertEqual(self.runtime.scope_for_event("s1"), RuntimeScope(run_id=2))
         result = self.runtime.end("s1", boundary_source="hook", ts=30)
-        self.assertEqual(result["status"], "matched")
+        self.assertEqual(result["status"], "conflict")
 
 
 if __name__ == "__main__":

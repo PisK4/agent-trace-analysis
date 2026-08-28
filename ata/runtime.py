@@ -74,6 +74,12 @@ class RuntimeCoordinator:
 
     def _start_locked(self, sid: str, external: str | None, source: str,
                       ts: int | None, payload: dict[str, Any] | None) -> dict[str, Any]:
+        if external is None:
+            reason = "lifecycle id required"
+            return self._conflict(
+                sid, external, source, reason,
+                self._fingerprint("start", sid, external, payload), ts,
+            )
         rows = self.ledger.runs(sid)
         if external is not None:
             same = [r for r in rows if r["external_lifecycle_id"] == external]
@@ -87,17 +93,21 @@ class RuntimeCoordinator:
         run_id = max((int(r["run_id"]) for r in rows), default=0) + 1
         event = self._boundary_event(sid, "run.started", run_id, external, source, ts, payload)
         self.ledger._append_locked(event)
+        self.ledger._conn.commit()
         return {"status": "created", "scope": RuntimeScope(run_id=run_id)}
 
     def _end_locked(self, sid: str, external: str | None, source: str,
                     ts: int | None, payload: dict[str, Any] | None) -> dict[str, Any]:
+        if external is None:
+            reason = "lifecycle id required"
+            return self._conflict(
+                sid, external, source, reason,
+                self._fingerprint("end", sid, external, payload), ts,
+            )
         rows = self.ledger.runs(sid)
-        if external is not None:
-            matches = [r for r in rows if r["external_lifecycle_id"] == external]
-        else:
-            matches = [r for r in rows if r["status"] == "open"]
+        matches = [r for r in rows if r["external_lifecycle_id"] == external]
         if len(matches) != 1:
-            reason = "end has no matching start" if not matches else "end has ambiguous open starts"
+            reason = "end has no matching start" if not matches else "end has ambiguous lifecycle id"
             fp = self._fingerprint("end", sid, external, payload)
             return self._conflict(sid, external, source, reason, fp, ts)
         run = matches[0]
@@ -105,6 +115,7 @@ class RuntimeCoordinator:
             return {"status": "duplicate", "scope": RuntimeScope(run["run_id"])}
         event = self._boundary_event(sid, "run.ended", int(run["run_id"]), external, source, ts, payload)
         self.ledger._append_locked(event)
+        self.ledger._conn.commit()
         return {"status": "matched", "scope": RuntimeScope(run_id=int(run["run_id"]))}
 
     def _conflict(self, sid: str, external: str | None, source: str,
@@ -113,8 +124,9 @@ class RuntimeCoordinator:
             "external_lifecycle_id": external, "hook_name": source,
             "reason": reason, "semantic_fingerprint": fingerprint,
             "boundary_source": source,
-        }, ts=ts)
+        }, ts=ts, eid=f"{sid}:lifecycle-conflict:{fingerprint}")
         self.ledger._append_locked(parse_event(event))
+        self.ledger._conn.commit()
         return {"status": "conflict", "scope": None, "reason": reason}
 
     def _start_fingerprint(self, sid: str, run_id: int) -> str | None:

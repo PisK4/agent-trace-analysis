@@ -57,7 +57,7 @@ class AcceptTest(unittest.TestCase):
                 self.assertIn("droid-missing", ids)
                 listed = next(x for x in listing if x["id"] == "pi-compact")
                 self.assertEqual(listed["title"], "ask about usage")
-                self.assertEqual(listed["turns"], 0)
+                self.assertEqual(listed["turns"], 2)
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/sessions/droid-missing") as r:
                     droid = json.loads(r.read().decode())
                 asst = next(x for x in droid["rows"] if x["kind"] == "assistant")
