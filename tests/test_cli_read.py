@@ -11,6 +11,12 @@ class TestCliRead(unittest.TestCase):
         led.append({"v": 1, "id": "o1", "agent_id": "pi", "session_id": "s1",
                     "ts": 1000, "type": "session.opened", "turn": None,
                     "payload": {"title": "demo"}})
+        led.append({"v": 1, "id": "rs1", "agent_id": "pi", "session_id": "s1",
+                    "ts": 1001, "type": "run.started", "run_id": 1,
+                    "payload": {"external_lifecycle_id": "x", "boundary_source": "test"}})
+        led.append({"v": 1, "id": "ts1", "agent_id": "pi", "session_id": "s1",
+                    "ts": 1002, "type": "turn.started", "run_id": 1,
+                    "turn_number": 1, "turn": None, "payload": {}})
 
     def run_cli(self, *argv):
         buf = io.StringIO()
@@ -25,6 +31,10 @@ class TestCliRead(unittest.TestCase):
     def test_usage_local_mode_shape(self):
         out = self.run_cli("usage", "s1")
         self.assertEqual(out["total"], {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total_tokens": 0})
+
+    def test_runtime_reads_local_mode(self):
+        self.assertEqual(self.run_cli("runs", "s1")["runs"][0]["run_id"], 1)
+        self.assertEqual(self.run_cli("turns", "s1")["turns"][0]["turn_number"], 1)
 
 
 if __name__ == "__main__":

@@ -39,6 +39,29 @@ class TestRoutes(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, json.load(e)
 
+    def test_legacy_global_runs_route_is_gone(self):
+        code, out = self.get("/api/runs")
+        self.assertEqual(code, 404)
+
+    def test_runtime_run_and_turn_routes_are_session_scoped(self):
+        self.led.append({"v": 1, "id": "rs1", "agent_id": "pi", "session_id": "root",
+                         "ts": 1002, "type": "run.started",
+                         "run_id": 1, "payload": {"external_lifecycle_id": "x",
+                                                    "boundary_source": "test"}})
+        self.led.append({"v": 1, "id": "ts1", "agent_id": "pi", "session_id": "root",
+                         "ts": 1003, "type": "turn.started", "turn": None,
+                         "run_id": 1, "turn_number": 1,
+                         "payload": {}})
+        code, out = self.get("/api/sessions/root/runs")
+        self.assertEqual(code, 200)
+        self.assertEqual(out["runs"][0]["run_id"], 1)
+        code, out = self.get("/api/sessions/root/runs/1")
+        self.assertEqual(code, 200)
+        self.assertEqual(out["run_id"], 1)
+        code, out = self.get("/api/sessions/root/turns")
+        self.assertEqual(code, 200)
+        self.assertEqual(out["turns"][0]["turn_number"], 1)
+
     def test_events_cursor(self):
         code, out = self.get("/api/sessions/root/events?after_seq=1&limit=10")
         self.assertEqual(code, 200)
