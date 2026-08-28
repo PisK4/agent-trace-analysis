@@ -15,6 +15,57 @@ from ata.schema import ValidationError, envelope, parse_event
 from ata.evaluation import EvaluationStore, EvaluationValidationError
 
 
+def _fallback_runs(ledger, sid):
+    rows = {}
+    for rec in ledger.read(sid):
+        event = rec["event"]
+        run_id = event.get("run_id")
+        if event["type"] == "run.started" and type(run_id) is int and run_id > 0:
+            rows.setdefault(run_id, {"run_id": run_id, "status": "open",
+                                     "started_seq": rec["seq"], "ended_seq": None})
+        elif event["type"] == "run.ended" and run_id in rows:
+            rows[run_id]["status"] = "ended"
+            rows[run_id]["ended_seq"] = rec["seq"]
+    return [rows[run_id] for run_id in sorted(rows)]
+
+
+def _fallback_turns(ledger, sid):
+    rows = {}
+    for rec in ledger.read(sid):
+        event = rec["event"]
+        run_id, turn_number = event.get("run_id"), event.get("turn_number")
+        if type(run_id) is not int or run_id < 1 or type(turn_number) is not int or turn_number < 1:
+            continue
+        key = (run_id, turn_number)
+        row = rows.setdefault(key, {"run_id": run_id, "turn_number": turn_number,
+                                    "status": "open", "first_seq": rec["seq"],
+                                    "last_seq": rec["seq"]})
+        row["last_seq"] = rec["seq"]
+        if event["type"] == "turn.ended":
+            row["status"] = event["payload"].get("status", "ended")
+    return [rows[key] for key in sorted(rows)]
+
+
+def _fallback_run_detail(ledger, sid, run_id):
+    try:
+        run_id = int(run_id)
+    except (TypeError, ValueError):
+        return None
+    run = next((row for row in _fallback_runs(ledger, sid) if row["run_id"] == run_id), None)
+    if run is not None:
+        run["turns"] = [row for row in _fallback_turns(ledger, sid) if row["run_id"] == run_id]
+    return run
+
+
+def _runtime_query(name, ledger, sid, fallback, *extra):
+    try:
+        from ata import queries
+        fn = getattr(queries, name)
+    except (ImportError, AttributeError):
+        return fallback(ledger, sid, *extra)
+    return fn(ledger, sid, *extra)
+
+
 def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
     webroot = Path(webroot)
     cache = ProjectionCache()
@@ -35,6 +86,29 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
 
     def h_health(m, qs, body):
         return 200, {"ok": True}
+
+    def h_session_runs(m, qs, body):
+        sid = m["sid"]
+        if ledger.session(sid) is None:
+            return 404, {"ok": False, "error": "unknown session"}
+        result = _runtime_query("list_runs", ledger, sid, _fallback_runs)
+        return 200, {"ok": True, "runs": result if isinstance(result, list) else result.get("runs", [])}
+
+    def h_session_run_detail(m, qs, body):
+        sid, rid = m["sid"], m["rid"]
+        if ledger.session(sid) is None:
+            return 404, {"ok": False, "error": "unknown session"}
+        result = _runtime_query("run_detail", ledger, sid, _fallback_run_detail, rid)
+        if result is None:
+            return 404, {"ok": False, "error": "unknown run"}
+        return 200, {"ok": True, **(result.get("detail", result) if isinstance(result, dict) else {})}
+
+    def h_session_turns(m, qs, body):
+        sid = m["sid"]
+        if ledger.session(sid) is None:
+            return 404, {"ok": False, "error": "unknown session"}
+        result = _runtime_query("list_turns", ledger, sid, _fallback_turns)
+        return 200, {"ok": True, "turns": result if isinstance(result, list) else result.get("turns", [])}
 
     def _evaluation_detail(evaluation_id):
         state = evaluations.fold(evaluation_id)
@@ -227,6 +301,9 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
             return 400, {"ok": False, "error": str(exc)}
         return 200, {"ok": True, "count": len(seqs), "seq": seqs[-1] if seqs else None}
 
+    def h_legacy_runs(m, qs, body):
+        return 404, {"ok": False, "error": "not found"}
+
     def h_rename_session(m, qs, body):
         # 会话改名：服务端组一个 session.renamed 事件入账本，前端不必自己造 id/ts。
         sid = m["sid"]
@@ -294,6 +371,10 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
 
     ROUTES = [
         ("GET", re.compile(r"^/api/health$"), h_health),
+        ("GET", re.compile(r"^/api/runs$"), h_legacy_runs),
+        ("GET", re.compile(r"^/api/sessions/(?P<sid>[^/]+)/runs$"), h_session_runs),
+        ("GET", re.compile(r"^/api/sessions/(?P<sid>[^/]+)/runs/(?P<rid>[^/]+)$"), h_session_run_detail),
+        ("GET", re.compile(r"^/api/sessions/(?P<sid>[^/]+)/turns$"), h_session_turns),
         ("GET", re.compile(r"^/api/evaluations$"), h_evaluations),
         ("POST", re.compile(r"^/api/evaluations$"), h_create_evaluation),
         ("GET", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)/(?P<sub>history)$"), h_evaluation),

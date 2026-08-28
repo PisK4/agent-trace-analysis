@@ -18,7 +18,7 @@ CLI_SUBCOMMANDS = {"read", "rate", "evaluation", "evaluations", "eval"}
 def build_parser():
     p = argparse.ArgumentParser(prog="ata read")
     p.add_argument("what", choices=[
-        "sessions", "events", "lineage", "usage", "tools", "compactions"])
+        "sessions", "runs", "turns", "events", "lineage", "usage", "tools", "compactions"])
     p.add_argument("sid", nargs="?", help="session id（sessions 子命令不需要）")
     p.add_argument("--agent")
     p.add_argument("--since-days", type=int)
@@ -34,7 +34,7 @@ def build_parser():
 
 def _local(ledger_path, args):
     from ata.ledger import Ledger
-    from ata.queries import list_compactions, list_tools, summarize_usage
+    from ata.queries import list_compactions, list_tools, summarize_usage, list_runs, list_turns
     led = Ledger(ledger_path)
     if args.what == "sessions":
         rows = led.sessions()
@@ -52,6 +52,10 @@ def _local(ledger_path, args):
             recs = recs[: args.limit]
         return {"ok": True, "events": recs,
                 "next_after_seq": recs[-1]["seq"] if recs else (args.after_seq or 0)}
+    if args.what == "runs":
+        return {"ok": True, "runs": list_runs(led, args.sid)}
+    if args.what == "turns":
+        return {"ok": True, "turns": list_turns(led, args.sid)}
     if args.what == "lineage":
         return {"ok": True, "ancestors": led.ancestry(args.sid),
                 "children": led.children(args.sid)}
