@@ -50,8 +50,8 @@ describe('buildTimeline', () => {
     expect(m.spans[0]).toMatchObject({ start: 0, end: 1, lane: 0 })
     expect(m.spans[2]).toMatchObject({ start: 2, end: 3, lane: 2 })
     expect(m.bounds).toEqual([
-      { turn: 1, time: 0 },
-      { turn: 2, time: 3 },
+      { turn: 1, key: 1, label: 'Observed 1', time: 0 },
+      { turn: 2, key: 2, label: 'Observed 2', time: 3 },
     ])
     expect(m.start).toBe(0)
     expect(m.end).toBe(4)

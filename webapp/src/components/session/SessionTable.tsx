@@ -12,6 +12,7 @@ import {
   type TableFilter,
 } from '../../lib/tableModel'
 import { usageStripInline } from './usage'
+import { rowTurnKey, rowTurnLabel } from '../../lib/turnIdentity'
 
 interface Props {
   data: SessionData
@@ -32,7 +33,7 @@ interface Props {
 
 export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingOlder, focusRange, follow = true, onFollowChange, search = '', scrollerRef: outerRef }: Props) {
   const [filter, setFilter] = useState<TableFilter>('')
-  const [collapsedTurns, setCollapsedTurns] = useState<Set<number>>(new Set())
+  const [collapsedTurns, setCollapsedTurns] = useState<Set<string | number>>(new Set())
   const [collapsedAssistants, setCollapsedAssistants] = useState<Set<string>>(new Set())
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportHeight, setViewportHeight] = useState(600)
@@ -93,7 +94,7 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
     if (atBottom !== follow) (onFollowChange ?? (() => {}))(atBottom)
   }
 
-  const toggleTurn = (turn: number) =>
+  const toggleTurn = (turn: string | number) =>
     setCollapsedTurns((prev) => {
       const next = new Set(prev)
       if (next.has(turn)) next.delete(turn)
@@ -112,7 +113,7 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
   const allCallsFolded = assistants.length > 0 && assistants.every((id) => collapsedAssistants.has(id))
 
   const toggleAllTurns = () =>
-    setCollapsedTurns(allTurnsFolded ? new Set() : new Set(turns))
+    setCollapsedTurns(allTurnsFolded ? new Set<string | number>() : new Set(turns))
   const toggleAllCalls = () =>
     setCollapsedAssistants(allCallsFolded ? new Set() : new Set(assistants))
 
@@ -190,7 +191,7 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
                 >
                   <td className="idx" />
                   <td className="evt" />
-                  <td>{r.text}</td>
+                  <td>{r.turnLabel ? `${r.turnLabel} · ` : ''}{r.text}</td>
                 </tr>
               ) : (
                 <TableRow
@@ -205,7 +206,10 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
                   onSelect={onSelect}
                   onDblClick={() => {
                     if (r.kind === 'assistant' && assistants.includes(r.id)) toggleAssistant(r.id)
-                    else if (r.start && turns.includes(r.turn ?? NaN)) toggleTurn(r.turn!)
+                    else if (r.start) {
+                      const key = rowTurnKey(r)
+                      if (key != null && turns.includes(key)) toggleTurn(key)
+                    }
                   }}
                 />
               ),
@@ -246,8 +250,8 @@ function TableRow({ row, rows, cursor, selected, dimmed, onSelect, onDblClick }:
         {/* 绝对序号：cursor 是裁窗后首行的 _seq；无 older 时 cursor=0，
             0+row.index+1 == 1-based 局部序号，等价旧行为。 */}
         {String(cursor + row.index + 1).padStart(2, '0')}
-        {row.start && row.turn && row.kind !== 'context' ? (
-          <span className="turn-chip">{row.turn < 0 ? 'T…' : `T${row.turn}`}</span>
+        {row.start && rowTurnLabel(row) && row.kind !== 'context' ? (
+          <span className="turn-chip">{rowTurnLabel(row)}</span>
         ) : null}
       </td>
       <td className="evt">

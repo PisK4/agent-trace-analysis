@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { TimingSummary } from '../../api/types'
 import { useSummary } from '../../api/useSummary'
 import { fmtDur, fmtDurQ, QUALITY_LABEL } from '../../lib/timing'
+import { turnIdentityLabel, turnIdentityKey } from '../../lib/turnIdentity'
 
 interface Props {
   sessionId: string
@@ -55,12 +56,12 @@ export function TimeBadge({ sessionId, onJumpTurn }: Props) {
               <div className="dhead"><span className="h-tool">Turn</span><span className="h-n">LLM</span><span className="h-n">Tools</span></div>
               {data.per_turn.map((t) => (
                 <button
-                  key={t.turn}
+                  key={turnIdentityKey(t) ?? `turn:${t.turn}`}
                   type="button"
                   className="crow"
                   onClick={() => { onJumpTurn(t.turn); setOpen(false) }}
                 >
-                  <span className="ct">T{t.turn}</span>
+                  <span className="ct">{turnIdentityLabel(t) ?? `Observed ${t.turn}`}</span>
                   <span className="cd">{fmtDurQ(t.llm_ms, data.llm_quality)}</span>
                   <span className="cd">{fmtDurQ(t.tool_ms, data.tool_quality)}</span>
                   <span className="cx">{t.steps} 步 · {t.calls} 次调用</span>

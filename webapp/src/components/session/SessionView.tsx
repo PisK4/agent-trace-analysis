@@ -75,7 +75,7 @@ export function SessionView({ sessionId }: Props) {
 
   // 时间拆解弹层点某轮 → 跳到该轮起始行（user 行 start=true）
   const jumpToTurn = useCallback(
-    (turn: number) => jumpToRow((r) => r.start === true && r.turn === turn),
+    (turn: number) => jumpToRow((r) => r.start === true && (r.turn_number ?? r.turn) === turn),
     [jumpToRow],
   )
 

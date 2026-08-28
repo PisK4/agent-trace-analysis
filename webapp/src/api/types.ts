@@ -30,7 +30,11 @@ export interface ProjectedRow {
   _seq: number
   _first?: number
   index: number
+  /** 旧投影的 Session-global turn；Runtime 投影优先使用下面三项 identity。 */
   turn: number | null
+  run_id?: number | null
+  turn_number?: number | null
+  observed_turn_ordinal?: number | null
   kind: 'user' | 'assistant' | 'context' | 'system' | 'tool' | 'subtool' | 'compacted'
   tag: string
   text: string
@@ -139,7 +143,11 @@ export interface RunInfo {
 
 // 逐轮 usage：context 是方言感知的上下文占用（后端算好）
 export interface UsageTurn {
+  /** Usage 的轮次也按 Runtime identity 分组；turn 仅为旧接口兼容。 */
   turn: number
+  run_id?: number | null
+  turn_number?: number | null
+  observed_turn_ordinal?: number | null
   seq: number
   agent: string
   model: string | null
@@ -172,7 +180,11 @@ export interface UsageSummary {
 // ── 会话时间拆解（GET /api/sessions/{id}/timing，project.py summarize_timing）──
 
 export interface TimingTurn {
+  /** Timing 的轮次也不以裸 turn number 作为 React key。 */
   turn: number
+  run_id?: number | null
+  turn_number?: number | null
+  observed_turn_ordinal?: number | null
   llm_ms: number
   tool_ms: number
   steps: number

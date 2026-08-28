@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react'
 import type { UsageSummary, UsageTurn } from '../../api/types'
 import { useSummary } from '../../api/useSummary'
 import { fmtNum } from '../../lib/format'
+import { turnIdentityKey, turnIdentityLabel } from '../../lib/turnIdentity'
 
 // 大数缩写（曲线轴帽）：12.3K / 123K，旧版 fmtK
 const fmtK = (v: number) => (v >= 10000 ? (v / 1000).toFixed(v >= 100000 ? 0 : 1) + 'K' : String(Math.round(v)))
@@ -78,18 +79,20 @@ export function UsagePanel({ sessionId, onJump, open, onClose }: {
 function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump: (seq: number) => void; onClose: () => void }) {
   const a = data.audit
   const turns = data.turns ?? []
-  const maxTurn = Math.max(a.expected_turns, 1)
+  const maxTurn = Math.max(turns.length, a.expected_turns, 1)
   const rep = turns.filter((t) => t.status === 'reported')
   const plotW = W - L - R
-  const x = (turn: number) => (maxTurn > 1 ? L + plotW * (turn - 1) / (maxTurn - 1) : L + plotW / 2)
+  const turnKey = (t: UsageTurn) => turnIdentityKey(t) ?? `turn:${t.turn}`
+  const position = (t: UsageTurn) => turns.findIndex((item) => turnKey(item) === turnKey(t))
+  const x = (t: UsageTurn) => (maxTurn > 1 ? L + plotW * position(t) / (maxTurn - 1) : L + plotW / 2)
   const maxIn = Math.max(1, ...rep.map((t) => t.context || t.input || 0))
   const yIn = (v: number) => OCC_BOT - (OCC_BOT - OCC_TOP) * Math.min(v, maxIn) / maxIn
   const yHit = (r: number) => HIT_BOT - (HIT_BOT - HIT_TOP) * Math.min(r, 100) / 100
 
   // data 整体 memo：usage 拉一次后引用稳定，按字段拆 memo 反而依赖抖动
   const { byTurn, susp } = useMemo(() => {
-    const byT = new Map<number, UsageTurn>()
-    for (const t of turns) byT.set(t.turn, t)
+    const byT = new Map<string | number, UsageTurn>()
+    for (const t of turns) byT.set(turnIdentityKey(t) ?? `turn:${t.turn}`, t)
     const sp = new Map<number, string>()
     for (const f of a.findings) if (f.rule !== 'missing') sp.set(f.turn, f.rule)
     return { byTurn: byT, susp: sp }
@@ -105,17 +108,17 @@ function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump:
       cur = []
       continue
     }
-    cur.push(`${x(t.turn).toFixed(1)},${yIn(t.context || t.input || 0).toFixed(1)}`)
+    cur.push(`${x(t).toFixed(1)},${yIn(t.context || t.input || 0).toFixed(1)}`)
   }
   if (cur.length > 1) segs.push(cur.join(' '))
   const occArea = rep.length > 1
-    ? <polygon points={`${L},${OCC_BOT} ${rep.map((t) => `${x(t.turn).toFixed(1)},${yIn(t.context || t.input || 0).toFixed(1)}`).join(' ')} ${L + plotW},${OCC_BOT}`} className="uc-area" />
+    ? <polygon points={`${L},${OCC_BOT} ${rep.map((t) => `${x(t).toFixed(1)},${yIn(t.context || t.input || 0).toFixed(1)}`).join(' ')} ${L + plotW},${OCC_BOT}`} className="uc-area" />
     : null
   const occLine = segs.map((s, i) => <polyline key={i} points={s} className="uc-line" />)
 
   const hitPts = rep.filter((t) => (t.context || 0) > 0 && t.cache_read != null)
   const hitLine = hitPts.length > 1
-    ? <polyline points={hitPts.map((t) => `${x(t.turn).toFixed(1)},${yHit((t.cache_read || 0) / (t.context || 1) * 100).toFixed(1)}`).join(' ')} className="uc-hit" />
+    ? <polyline points={hitPts.map((t) => `${x(t).toFixed(1)},${yHit((t.cache_read || 0) / (t.context || 1) * 100).toFixed(1)}`).join(' ')} className="uc-hit" />
     : null
 
   // 命中率最低的一轮，点名让人看见。
@@ -124,7 +127,7 @@ function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump:
     const minT = hitPts.reduce((p, c) =>
       ((p.cache_read || 0) / (p.context || 1)) <= ((c.cache_read || 0) / (c.context || 1)) ? p : c)
     const rate = (((minT.cache_read || 0) / (minT.context || 1)) * 100).toFixed(1)
-    const ax = x(minT.turn), ay = yHit(((minT.cache_read || 0) / (minT.context || 1)) * 100)
+    const ax = x(minT), ay = yHit(((minT.cache_read || 0) / (minT.context || 1)) * 100)
     const anchor = ax > W - 180 ? 'end' : ax < L + 120 ? 'start' : 'middle'
     const dx = anchor === 'end' ? -6 : anchor === 'start' ? 6 : 0
     minHitAnno = (
@@ -149,8 +152,8 @@ function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump:
   const compAnno = (data.compactions || []).flatMap((c, i) => {
     if (c.turn == null) return []
     const turnNo: number = c.turn
-    const cx = x(turnNo)
-    const curT = byTurn.get(turnNo)
+    const curT = turns.find((t) => t.turn === turnNo)
+    const cx = curT ? x(curT) : L
     const prev = [...rep].reverse().find((r) => r.turn < turnNo)
     if (!prev || !curT) return <line key={i} x1={cx} y1={OCC_TOP} x2={cx} y2={HIT_BOT} className="uc-comp" />
     const drop = (prev.context || 0) > (curT.context || 0)
@@ -167,15 +170,15 @@ function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump:
 
   const dots = rep.filter((t) => susp.has(t.turn)).map((t) => (
     <circle
-      key={t.turn}
-      cx={x(t.turn)} cy={yIn(t.context || t.input || 0)} r={4}
-      className="uc-dot bad" data-u={t.turn}
+      key={turnKey(t)}
+      cx={x(t)} cy={yIn(t.context || t.input || 0)} r={4}
+      className="uc-dot bad" data-u={turnKey(t)}
     />
   ))
 
   // 悬停明细：mousemove 按横轴就近取轮（旧版同款几何）
-  const [tip, setTip] = useState<{ turn: number; px: number } | null>(null)
-  const tipTurn = tip ? byTurn.get(tip.turn) : undefined
+  const [tip, setTip] = useState<{ key: string; px: number } | null>(null)
+  const tipTurn = tip ? byTurn.get(tip.key) : undefined
 
   return (
     <>
@@ -195,16 +198,17 @@ function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump:
           onMouseMove={(ev) => {
             const rect = ev.currentTarget.getBoundingClientRect()
             const mx = (ev.clientX - rect.left) / rect.width * W
-            const turn = Math.max(1, Math.min(maxTurn, Math.round(1 + (mx - L) / plotW * (maxTurn - 1))))
-            setTip(byTurn.has(turn)
-              ? { turn, px: Math.min(Math.max(x(turn) / W * rect.width, 70), rect.width - 70) }
+            const position = Math.max(0, Math.min(turns.length - 1, Math.round((mx - L) / plotW * (maxTurn - 1))))
+            const nearest = turns[position]
+            setTip(nearest
+              ? { key: turnKey(nearest), px: Math.min(Math.max(x(nearest) / W * rect.width, 70), rect.width - 70) }
               : null)
           }}
           onMouseLeave={() => setTip(null)}
           onClick={(ev) => {
             const dot = (ev.target as Element).closest('[data-u]')
             if (!dot) return
-            const row = byTurn.get(Number(dot.getAttribute('data-u')))
+            const row = byTurn.get(dot.getAttribute('data-u') ?? '')
             if (row?.seq) onJump(row.seq)
           }}
         >
@@ -222,14 +226,14 @@ function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump:
           <text x={L - 6} y={HIT_TOP + 3} textAnchor="end" className="uc-cap">100%</text>
           {maxTurn > 1 && (
             <>
-              <text x={L} y={H - 4} className="uc-cap">T1</text>
-              <text x={W - R} y={H - 4} textAnchor="end" className="uc-cap">T{maxTurn}</text>
+              <text x={L} y={H - 4} className="uc-cap">{turns[0] ? (turnIdentityLabel(turns[0]) ?? `Observed ${turns[0].turn}`) : ''}</text>
+              <text x={W - R} y={H - 4} textAnchor="end" className="uc-cap">{turns.at(-1) ? (turnIdentityLabel(turns.at(-1)) ?? `Observed ${turns.at(-1)!.turn}`) : ''}</text>
             </>
           )}
         </svg>
         {tip && tipTurn && (
           <div className="uc-tip" style={{ left: tip.px }}>
-            <b>第 {tipTurn.turn} 轮 · {tipTurn.status}</b>
+            <b>{turnIdentityLabel(tipTurn) ?? `Observed ${tipTurn.turn}`} · {tipTurn.status}</b>
             <div>context {fmtNum(tipTurn.context)} · 输入 {fmtNum(tipTurn.input)} · 输出 {fmtNum(tipTurn.output)}</div>
             <div>缓存读取 {fmtNum(tipTurn.cache_read)} · 命中 {
               (tipTurn.context || 0) > 0 && tipTurn.cache_read != null
