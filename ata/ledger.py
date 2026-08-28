@@ -7,31 +7,51 @@ import time
 from pathlib import Path
 
 from ata.fold import REAL_TS_FLOOR, fold_session_meta
+from ata.schema import parse_event
 
-# 毫秒时间戳低于此值的视为脏数据（历史推送端写过 ts=1 的 opened 事件），
-# 不参与创建时间的判定。阈值定义在 ata/fold.py（折叠规则唯一归属地）。
 _REAL_TS_FLOOR = REAL_TS_FLOOR
 
 
+class ResetRequiredError(RuntimeError):
+    """旧版全局 turn / regression schema 不能被静默解释为新版数据。"""
+
+
+
+def _namespace(event: dict) -> str:
+    """为自然键建立显式 run namespace，避免不同 Run 互相吞事件。"""
+    run_id = event.get("run_id")
+    if run_id is not None:
+        return f"run:{run_id}"
+    if event.get("observed_turn_ordinal") is not None:
+        return "observed"
+    return "runless"
+
+
 def _dedupe_key(event: dict) -> str | None:
-    """自然键幂等：同实体的多次快照只留最新一行。翻译层对不同阶段发的
-    确定性 event id（:message_start/:message_end/:end）由此收敛；
-    session.opened 的标题纠正同键折叠，与投影层 last-write-wins 一致。
-    无自然键的事件保持追加式。"""
+    """同一 namespace 内 latest-wins；没有自然键的事实保持追加。"""
     typ = event.get("type")
     payload = event.get("payload") or {}
+    ns = _namespace(event)
     if typ == "message.upserted" and payload.get("message_id"):
-        # role 命名空间: user / assistant 撞同 message_id 时不互吞
         role = payload.get("role") or "unknown"
-        return f"{typ}:{role}:{payload['message_id']}"
+        return f"{ns}:{typ}:{role}:{payload['message_id']}"
     if typ == "tool.upserted" and payload.get("tool_call_id"):
-        return f"{typ}:{payload['tool_call_id']}"
+        return f"{ns}:{typ}:{payload['tool_call_id']}"
     if typ == "session.opened":
-        return f"{typ}:"
+        return f"runless:{typ}"
+    if typ in {"run.started", "run.ended"} and event.get("run_id") is not None:
+        external = payload.get("external_lifecycle_id")
+        return f"{ns}:{typ}:{external if external is not None else event['id']}"
+    if typ in {"turn.started", "turn.ended"}:
+        turn = event.get("turn_number")
+        if turn is not None:
+            return f"{ns}:{typ}:{turn}"
     return None
 
 
 class Ledger:
+    """SQLite 事实账本；Session、Run projection 与事件共用一个 writer。"""
+
     def __init__(self, root: Path):
         root = Path(root)
         if root.suffix in {".sqlite", ".db"}:
@@ -40,14 +60,38 @@ class Ledger:
         else:
             root.mkdir(parents=True, exist_ok=True)
             self.path = root / "ata.sqlite"
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
-        self._boot()
+        try:
+            self._boot()
+        except Exception:
+            self._conn.close()
+            raise
 
     def _boot(self):
+        """只允许新 schema；旧库必须由调用方备份后显式 reset。"""
+        existing = {r[0] for r in self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        if "events" in existing:
+            cols = {r[1] for r in self._conn.execute("PRAGMA table_info(events)")}
+            required = {"run_id", "turn_number", "observed_turn_ordinal"}
+            if "turn" in cols or not required.issubset(cols):
+                raise ResetRequiredError(
+                    "legacy ledger schema detected; reset required before run-aware ledger starts"
+                )
+        if "sessions" in existing:
+            cols = {r[1] for r in self._conn.execute("PRAGMA table_info(sessions)")}
+            if not {"last_ts", "first_ts", "parent_session_id"}.issubset(cols):
+                raise ResetRequiredError(
+                    "legacy session schema detected; reset required before run-aware ledger starts"
+                )
+        if "runs" in existing and "run_index" not in existing:
+            raise ResetRequiredError(
+                "legacy regression runs schema detected; reset required before run-aware ledger starts"
+            )
         self._conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS sessions (
@@ -57,381 +101,254 @@ class Ledger:
                 turns INTEGER NOT NULL DEFAULT 0,
                 last_seq INTEGER NOT NULL DEFAULT 0,
                 last_ts INTEGER NOT NULL DEFAULT 0,
-                first_ts INTEGER NOT NULL DEFAULT 0
+                first_ts INTEGER NOT NULL DEFAULT 0,
+                parent_session_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_title ON sessions(title);
+            CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
             CREATE TABLE IF NOT EXISTS events (
                 session_id TEXT NOT NULL,
                 event_id TEXT NOT NULL,
                 seq INTEGER NOT NULL,
                 ts INTEGER NOT NULL,
                 type TEXT NOT NULL,
-                turn INTEGER,
+                run_id INTEGER,
+                turn_number INTEGER,
+                observed_turn_ordinal INTEGER,
                 event_json TEXT NOT NULL,
+                dedupe_key TEXT,
                 PRIMARY KEY (session_id, event_id),
                 UNIQUE (session_id, seq)
             );
             CREATE INDEX IF NOT EXISTS idx_events_session_seq ON events(session_id, seq);
-            -- run = 一次实验运行（干预后对同一版任务集重跑），永不译作「轮次」；
-            -- 「轮次」专指对话的 turn。见仓库根 CONTEXT.md。
-            CREATE TABLE IF NOT EXISTS runs (
-                run_id TEXT PRIMARY KEY,
-                description TEXT NOT NULL,
-                taskset_fingerprint TEXT,
-                created_ts INTEGER NOT NULL
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedupe
+                ON events(session_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_events_run
+                ON events(session_id, run_id, turn_number, seq);
+            CREATE TABLE IF NOT EXISTS run_index (
+                session_id TEXT NOT NULL,
+                run_id INTEGER NOT NULL,
+                external_lifecycle_id TEXT,
+                status TEXT NOT NULL,
+                started_seq INTEGER,
+                ended_seq INTEGER,
+                started_ts INTEGER,
+                ended_ts INTEGER,
+                max_turn_number INTEGER NOT NULL DEFAULT 0,
+                conflict_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (session_id, run_id)
             );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_run_external
+                ON run_index(session_id, external_lifecycle_id)
+                WHERE external_lifecycle_id IS NOT NULL;
             """
-        )
-        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}
-        if "last_ts" not in cols:
-            self._conn.execute(
-                "ALTER TABLE sessions ADD COLUMN last_ts INTEGER NOT NULL DEFAULT 0"
-            )
-            self._conn.execute(
-                """
-                UPDATE sessions SET last_ts = COALESCE(
-                    (SELECT MAX(ts) FROM events e WHERE e.session_id = sessions.session_id), 0)
-                """
-            )
-        if "first_ts" not in {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}:
-            self._conn.execute(
-                "ALTER TABLE sessions ADD COLUMN first_ts INTEGER NOT NULL DEFAULT 0"
-            )
-            # 部分历史 session.opened 事件带异常小 ts，回填时忽略，
-            # 只信正常量级的 ts；全无则退回 last_ts，保证卡片有值可显。
-            self._conn.execute(
-                """
-                UPDATE sessions SET first_ts = COALESCE(
-                    (SELECT MIN(ts) FROM events e WHERE e.session_id = sessions.session_id
-                     AND e.ts > ?), last_ts)
-                """,
-                (_REAL_TS_FLOOR,),
-            )
-        if "parent_session_id" not in {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}:
-            self._conn.execute("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)")
-        if "dedupe_key" not in {row[1] for row in self._conn.execute("PRAGMA table_info(events)")}:
-            # 存量迁移：补自然键并把同键旧行坍缩为最新一条（已确认不保留快照史），
-            # 再用部分唯一索引约束后续写入。只在新列首次加入时执行一次。
-            self._conn.execute("ALTER TABLE events ADD COLUMN dedupe_key TEXT")
-            self._conn.execute(
-                """
-                UPDATE events SET dedupe_key = CASE
-                    WHEN type='message.upserted'
-                         AND json_extract(event_json,'$.payload.message_id') IS NOT NULL
-                        THEN type || ':' || COALESCE(json_extract(event_json,'$.payload.role'),'unknown')
-                             || ':' || json_extract(event_json,'$.payload.message_id')
-                    WHEN type='tool.upserted'
-                         AND json_extract(event_json,'$.payload.tool_call_id') IS NOT NULL
-                        THEN type || ':' || json_extract(event_json,'$.payload.tool_call_id')
-                    WHEN type='session.opened' THEN type || ':'
-                    ELSE NULL
-                END
-                """
-            )
-            self._conn.execute(
-                """
-                DELETE FROM events WHERE dedupe_key IS NOT NULL AND seq < (
-                    SELECT MAX(e2.seq) FROM events e2
-                    WHERE e2.session_id = events.session_id
-                      AND e2.dedupe_key = events.dedupe_key)
-                """
-            )
-        self._conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedupe"
-            " ON events(session_id, dedupe_key) WHERE dedupe_key IS NOT NULL"
         )
         self._conn.commit()
 
-    # 侧栏卡片 meta 行要事件数与失败工具数。json_extract 走 event_json 单行扫描；
-    # sessions() 与 annotations() 各引一份此片段，口径改动只动这里。
-    _COUNTS_SQL = """
-        SELECT session_id,
-               COUNT(*) AS event_count,
-               SUM(CASE WHEN type='tool.upserted'
-                         AND json_extract(event_json,'$.payload.status')='failed'
-                    THEN 1 ELSE 0 END) AS error_count
-        FROM events GROUP BY session_id
-    """
-
     def append(self, event: dict) -> int:
         with self._lock:
+            # 入口统一校验，保留旧调用方的 envelope 兼容但不接受旧字段。
+            event = parse_event(event)
             seq = self._append_locked(event)
             self._conn.commit()
             return seq
 
-    def _has_renamed(self, session_id: str) -> bool:
-        row = self._conn.execute(
-            "SELECT 1 FROM events WHERE session_id=? AND type='session.renamed' LIMIT 1",
-            (session_id,)).fetchone()
-        return row is not None
-
     def _append_locked(self, event: dict) -> int:
-        """调用方必须已持有 _lock。返回 seq（重复 id 返回原 seq）。"""
-        sid = event["session_id"]
+        """调用方持有锁；重复 event_id 返回原 seq。"""
+        if "turn" in event:
+            raise ValueError("legacy turn field removed; use turn_number")
+        sid = str(event["session_id"])
+        event_id = str(event["id"])
         found = self._conn.execute(
-            "SELECT seq FROM events WHERE session_id=? AND event_id=?",
-            (sid, event["id"]),
+            "SELECT seq FROM events WHERE session_id=? AND event_id=?", (sid, event_id)
         ).fetchone()
         if found:
             return int(found["seq"])
         row = self._conn.execute(
-            "SELECT last_seq, title, turns, last_ts, first_ts, parent_session_id FROM sessions WHERE session_id=?",
-            (sid,),
+            "SELECT last_seq, title, turns, last_ts, first_ts, parent_session_id "
+            "FROM sessions WHERE session_id=?", (sid,)
         ).fetchone()
         seq = (int(row["last_seq"]) if row else 0) + 1
-        existing = None
-        if row:
-            existing = {
-                "title": row["title"],
-                # 改名权威判定：现 title 非 sid 且流里有 renamed 即视为已改名
-                "renamed": row["title"] != sid and self._has_renamed(sid),
-                "turns": int(row["turns"]),
-                "last_ts": int(row["last_ts"] or 0),
-                "first_ts": int(row["first_ts"] or 0),
-                "parent_session_id": row["parent_session_id"],
-            }
+        existing = None if row is None else {
+            "title": row["title"], "renamed": False,
+            "turns": int(row["turns"]), "last_ts": int(row["last_ts"] or 0),
+            "first_ts": int(row["first_ts"] or 0),
+            "parent_session_id": row["parent_session_id"],
+        }
         folded = fold_session_meta(existing, event)
         if row:
             self._conn.execute(
-                "UPDATE sessions SET agent_id=?, title=?, turns=?, last_seq=?, last_ts=?, first_ts=?, parent_session_id=? WHERE session_id=?",
-                (event["agent_id"], folded["title"], folded["turns"], seq,
-                 folded["last_ts"], folded["first_ts"], folded["parent_session_id"], sid),
+                "UPDATE sessions SET agent_id=?, title=?, turns=?, last_seq=?, "
+                "last_ts=?, first_ts=?, parent_session_id=? WHERE session_id=?",
+                (event["agent_id"], folded["title"], folded.get("turns", 0), seq,
+                 folded["last_ts"], folded["first_ts"], folded.get("parent_session_id"), sid),
             )
         else:
             self._conn.execute(
-                "INSERT INTO sessions(session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id) VALUES (?,?,?,?,?,?,?,?)",
-                (sid, event["agent_id"], folded["title"], folded["turns"], seq,
-                 folded["last_ts"], folded["first_ts"], folded["parent_session_id"]),
+                "INSERT INTO sessions(session_id,agent_id,title,turns,last_seq,last_ts,first_ts,parent_session_id) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (sid, event["agent_id"], folded["title"], 0, seq,
+                 folded["last_ts"], folded["first_ts"], folded.get("parent_session_id")),
             )
-        turn = event.get("turn")
         dk = _dedupe_key(event)
-        existed = None
-        if dk:
-            existed = self._conn.execute(
-                "SELECT seq FROM events WHERE session_id=? AND dedupe_key=?",
-                (sid, dk),
-            ).fetchone()
-        if existed:
-            # 同自然键：整行替换为最新快照。seq 用新号保证 read 按 seq 排序时
-            # 最新态排在最后；旧行的 event_id 列保留原值，读方一律以 event_json 为准。
+        old = None if dk is None else self._conn.execute(
+            "SELECT seq FROM events WHERE session_id=? AND dedupe_key=?", (sid, dk)
+        ).fetchone()
+        values = (sid, event_id, seq, int(event["ts"]), event["type"], event.get("run_id"),
+                  event.get("turn_number"), event.get("observed_turn_ordinal"),
+                  json.dumps(event, ensure_ascii=False), dk)
+        if old:
+            # 新 seq 代表最新投影；event_id 保留旧事实身份以避免重复重放扩散。
             self._conn.execute(
-                "UPDATE events SET seq=?, ts=?, turn=?, event_json=? WHERE session_id=? AND dedupe_key=?",
-                (seq, event["ts"], turn, json.dumps(event, ensure_ascii=False), sid, dk),
+                "UPDATE events SET seq=?,ts=?,type=?,run_id=?,turn_number=?,"
+                "observed_turn_ordinal=?,event_json=? WHERE session_id=? AND dedupe_key=?",
+                (seq, int(event["ts"]), event["type"], event.get("run_id"),
+                 event.get("turn_number"), event.get("observed_turn_ordinal"), values[8], sid, dk),
             )
         else:
             self._conn.execute(
-                "INSERT INTO events(session_id, event_id, seq, ts, type, turn, event_json, dedupe_key)"
-                " VALUES (?,?,?,?,?,?,?,?)",
-                (sid, event["id"], seq, event["ts"], event["type"], turn,
-                 json.dumps(event, ensure_ascii=False), dk),
+                "INSERT INTO events(session_id,event_id,seq,ts,type,run_id,turn_number,"
+                "observed_turn_ordinal,event_json,dedupe_key) VALUES (?,?,?,?,?,?,?,?,?,?)", values
             )
+        self._project_run_locked(sid, event.get("run_id"))
         return seq
 
+    def _project_run_locked(self, session_id: str, run_id: int | None):
+        """从事实重建 Run projection，避免乱序事件污染增量索引。"""
+        if run_id is None:
+            return
+        run_ids = [r[0] for r in self._conn.execute(
+            "SELECT DISTINCT run_id FROM events WHERE session_id=? AND run_id IS NOT NULL",
+            (session_id,),
+        )]
+        later_started = {rid: any(
+            r["type"] == "run.started" and int(r["run_id"]) > rid
+            for r in self._conn.execute(
+                "SELECT type,run_id FROM events WHERE session_id=? AND run_id IS NOT NULL",
+                (session_id,),
+            )) for rid in run_ids}
+        conflicts = self._conn.execute(
+            "SELECT COUNT(*) FROM events WHERE session_id=? AND type='run.lifecycle.conflict'",
+            (session_id,),
+        ).fetchone()[0]
+        for current_id in run_ids:
+            rows = self._conn.execute(
+                "SELECT seq,ts,type,event_json,turn_number FROM events "
+                "WHERE session_id=? AND run_id=? ORDER BY seq", (session_id, current_id)
+            ).fetchall()
+            starts = [r for r in rows if r["type"] == "run.started"]
+            if not starts:
+                continue
+            ends = [r for r in rows if r["type"] == "run.ended"]
+            start, end = starts[-1], (ends[-1] if ends else None)
+            external = (json.loads(start["event_json"]).get("payload") or {}).get("external_lifecycle_id")
+            max_turn = max((int(r["turn_number"]) for r in rows if r["turn_number"] is not None), default=0)
+            status = "ended" if end else ("incomplete" if later_started[current_id] else "open")
+            self._conn.execute(
+                "INSERT INTO run_index(session_id,run_id,external_lifecycle_id,status,started_seq,ended_seq,"
+                "started_ts,ended_ts,max_turn_number,conflict_count) VALUES(?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(session_id,run_id) DO UPDATE SET external_lifecycle_id=excluded.external_lifecycle_id,"
+                "status=excluded.status,started_seq=excluded.started_seq,ended_seq=excluded.ended_seq,"
+                "started_ts=excluded.started_ts,ended_ts=excluded.ended_ts,max_turn_number=excluded.max_turn_number,"
+                "conflict_count=excluded.conflict_count",
+                (session_id, int(current_id), external, status, int(start["seq"]),
+                 int(end["seq"]) if end else None, int(start["ts"]), int(end["ts"]) if end else None,
+                 max_turn, int(conflicts)),
+            )
+
+    def append_many(self, events: list[dict]) -> None:
+        with self._lock:
+            for event in events:
+                self._append_locked(parse_event(event))
+            self._conn.commit()
+
     def read(self, session_id: str) -> list[dict]:
-        # 与 append 共用同一把锁：tail 线程持续写、HTTP 线程读，同一连接并发
-        # execute 在 WAL 大写入时会段错误（本机复现过）。json.loads 放到锁外。
         with self._lock:
             rows = self._conn.execute(
-                "SELECT seq, event_json FROM events WHERE session_id=? ORDER BY seq",
-                (session_id,),
+                "SELECT seq,event_json FROM events WHERE session_id=? ORDER BY seq", (session_id,)
             ).fetchall()
         return [{"seq": int(r["seq"]), "event": json.loads(r["event_json"])} for r in rows]
 
     def session(self, session_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id FROM sessions WHERE session_id=?",
-                (session_id,),
+                "SELECT session_id,agent_id,title,turns,last_seq,last_ts,first_ts,parent_session_id "
+                "FROM sessions WHERE session_id=?", (session_id,)
             ).fetchone()
         return None if row is None else self._session_row(row)
 
     def sessions(self) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                """
-                SELECT session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id
-                FROM sessions
-                ORDER BY first_ts DESC, title
-                """
+                "SELECT session_id,agent_id,title,turns,last_seq,last_ts,first_ts,parent_session_id "
+                "FROM sessions ORDER BY first_ts DESC,title"
             ).fetchall()
-            # 口径见 _COUNTS_SQL（与 annotations() 共用同一片段）。
-            counts = self._conn.execute(self._COUNTS_SQL).fetchall()
+            counts = self._conn.execute(
+                "SELECT session_id,COUNT(*) event_count,SUM(CASE WHEN type='tool.upserted' "
+                "AND json_extract(event_json,'$.payload.status')='failed' THEN 1 ELSE 0 END) error_count "
+                "FROM events GROUP BY session_id"
+            ).fetchall()
         by_sid = {r["session_id"]: r for r in counts}
-        out = []
-        for r in rows:
-            c = by_sid.get(r["session_id"])
-            out.append({
-                **self._session_row(r),
-                "event_count": int(c["event_count"]) if c else 0,
-                "error_count": int(c["error_count"] or 0) if c else 0,
-            })
-        return out
+        return [{**self._session_row(r), "event_count": int(by_sid[r["session_id"]]["event_count"]) if r["session_id"] in by_sid else 0,
+                 "error_count": int(by_sid[r["session_id"]]["error_count"] or 0) if r["session_id"] in by_sid else 0} for r in rows]
 
     @staticmethod
-    def _session_row(r) -> dict:
-        return {
-            "id": r["session_id"],
-            "agent": r["agent_id"],
-            "title": r["title"],
-            "turns": int(r["turns"]),
-            "last_seq": int(r["last_seq"] or 0),
-            "last_ts": int(r["last_ts"] or 0),
-            "first_ts": int(r["first_ts"] or 0),
-            "parent_session_id": r["parent_session_id"],
-        }
+    def _session_row(row) -> dict:
+        return {"id": row["session_id"], "agent": row["agent_id"], "title": row["title"],
+                "turns": int(row["turns"] or 0), "last_seq": int(row["last_seq"] or 0),
+                "last_ts": int(row["last_ts"] or 0), "first_ts": int(row["first_ts"] or 0),
+                "parent_session_id": row["parent_session_id"]}
 
     def children(self, session_id: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT session_id, agent_id, title, turns, last_seq, last_ts, first_ts, parent_session_id"
-                " FROM sessions WHERE parent_session_id=? ORDER BY last_ts",
-                (session_id,),
+                "SELECT session_id,agent_id,title,turns,last_seq,last_ts,first_ts,parent_session_id "
+                "FROM sessions WHERE parent_session_id=? ORDER BY last_ts", (session_id,)
             ).fetchall()
         return [self._session_row(r) for r in rows]
 
     def ancestry(self, session_id: str) -> list[dict]:
-        ids: list[str] = []
-        seen = {session_id}
-        cur = session_id
+        out, seen, current = [], {session_id}, session_id
         while True:
-            row = self.session(cur)
+            row = self.session(current)
             parent = (row or {}).get("parent_session_id")
             if not parent or parent in seen:
-                break
+                return out
             seen.add(parent)
-            ids.append(parent)
-            cur = parent
-        # ids 按收集顺序即最近祖先在前，与 children 的就近语义一致。
-        return [self.session(p) for p in ids]
+            current = parent
+            parent_row = self.session(parent)
+            if parent_row:
+                out.append(parent_row)
 
-    def append_many(self, events: list[dict]) -> None:
-        """一批事件一次事务提交；等价的重复 id 仍然返回，不重复写。"""
-        self._lock.acquire()
-        try:
-            for event in events:
-                self._append_locked(event)
-            self._conn.commit()
-        finally:
-            self._lock.release()
+    def runs(self, session_id: str | None = None) -> list[dict]:
+        with self._lock:
+            sql = "SELECT * FROM run_index"
+            args: tuple = ()
+            if session_id is not None:
+                sql += " WHERE session_id=?"
+                args = (session_id,)
+            sql += " ORDER BY session_id,run_id"
+            rows = self._conn.execute(sql, args).fetchall()
+        return [dict(r) for r in rows]
+
+    def run(self, session_id: str, run_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM run_index WHERE session_id=? AND run_id=?", (session_id, run_id)).fetchone()
+        return None if row is None else dict(row)
+
+    def open_runs(self, session_id: str) -> list[dict]:
+        return [r for r in self.runs(session_id) if r["status"] == "open"]
+
+    def annotations(self) -> dict:
+        # 旧评分读取保留；run-aware schema 不再把 assignment 当作 Session event。
+        return {"scores": [], "assignments": []}
+
+    def assign_events(self) -> list[dict]:
+        return []
 
     def close(self):
         self._conn.close()
 
-    # ---- 实验轮次（run）：轮次级事实不属于任何会话，落专用表；
-    # 写入仍只经 Ledger 这一个 writer，与事件追加门同级。
 
-    def create_run(self, run_id: str, description: str,
-                   taskset_fingerprint: str | None = None, ts: int | None = None) -> None:
-        with self._lock:
-            try:
-                self._conn.execute(
-                    "INSERT INTO runs(run_id, description, taskset_fingerprint, created_ts)"
-                    " VALUES (?,?,?,?)",
-                    (run_id, description, taskset_fingerprint,
-                     int(ts if ts is not None else time.time() * 1000)),
-                )
-                self._conn.commit()
-            except sqlite3.IntegrityError:
-                raise ValueError("duplicate run_id") from None
-
-    def rename_run(self, run_id: str, description: str) -> bool:
-        """组名即 runs.description；run_id 是事件引用主键，不改。"""
-        with self._lock:
-            cur = self._conn.execute(
-                "UPDATE runs SET description=? WHERE run_id=?",
-                (description, run_id))
-            self._conn.commit()
-            return cur.rowcount > 0
-
-    def run(self, run_id: str) -> dict | None:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT run_id, description, taskset_fingerprint, created_ts"
-                " FROM runs WHERE run_id=?", (run_id,)).fetchone()
-        return None if row is None else {
-            "run_id": row["run_id"], "description": row["description"],
-            "taskset_fingerprint": row["taskset_fingerprint"],
-            "created_ts": int(row["created_ts"]),
-        }
-
-    def runs(self) -> list[dict]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT run_id, description, taskset_fingerprint, created_ts"
-                " FROM runs ORDER BY created_ts").fetchall()
-        return [{"run_id": r["run_id"], "description": r["description"],
-                 "taskset_fingerprint": r["taskset_fingerprint"],
-                 "created_ts": int(r["created_ts"])} for r in rows]
-
-    def assign_events(self) -> list[dict]:
-        """全部 session.assigned 事件的展平视图：{session_id, seq, ts, run_id, task_id}。"""
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT session_id, seq, ts, event_json FROM events"
-                " WHERE type='session.assigned' ORDER BY seq").fetchall()
-        out = []
-        for r in rows:
-            payload = json.loads(r["event_json"])["payload"]
-            out.append({"session_id": r["session_id"], "seq": int(r["seq"]),
-                        "ts": int(r["ts"]), **payload})
-        return out
-
-    def annotations(self) -> dict:
-        """标注板聚合读取：latest-wins 折叠墓碑后的有效标注/归组，附会话元信息。
-
-        返回 {scores: [{session_id, value, note, ts, agent, title, event_count,
-        error_count}], assignments: [{session_id, run_id, task_id, ts, agent,
-        title, event_count, error_count}]}，各自按 ts 倒序。
-        墓碑：session.score.cleared 清标注；session.unassigned 清归组
-        （run_id+session_id 粒度，同会话同 run 的全部 task 一起移除）。"""
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT session_id, seq, ts, type, event_json FROM events"
-                " WHERE type IN ('session.scored','session.score.cleared',"
-                "                'session.assigned','session.unassigned')"
-                " ORDER BY seq").fetchall()
-            metas = {
-                r["session_id"]: r for r in self._conn.execute(
-                    "SELECT s.session_id, s.agent_id, s.title, s.last_seq, s.last_ts, s.first_ts,"
-                    " COALESCE(c.event_count,0) AS event_count,"
-                    " COALESCE(c.error_count,0) AS error_count"
-                    f" FROM sessions s LEFT JOIN ({self._COUNTS_SQL}) c"
-                    " ON c.session_id = s.session_id").fetchall()
-            }
-        scores: dict[str, dict] = {}
-        # 归组键 run_id+session_id：unassigned 墓碑按此粒度整组撤销
-        assigns: dict[tuple, dict] = {}
-        for r in rows:
-            payload = json.loads(r["event_json"])["payload"]
-            sid = r["session_id"]
-            if r["type"] == "session.scored":
-                scores[sid] = {"session_id": sid, "value": payload.get("value"),
-                               "note": payload.get("note"), "ts": int(r["ts"]),
-                               "seq": int(r["seq"])}
-            elif r["type"] == "session.score.cleared":
-                scores.pop(sid, None)
-            elif r["type"] == "session.assigned":
-                assigns[(payload.get("run_id"), sid)] = {
-                    "session_id": sid, "run_id": payload.get("run_id"),
-                    "task_id": payload.get("task_id"), "ts": int(r["ts"]),
-                    "seq": int(r["seq"])}
-            elif r["type"] == "session.unassigned":
-                assigns.pop((payload.get("run_id"), sid), None)
-        def enrich(item):
-            m = metas.get(item["session_id"])
-            if m:
-                item.update({"agent": m["agent_id"], "title": m["title"],
-                             "event_count": int(m["event_count"]),
-                             "error_count": int(m["error_count"])})
-            else:
-                # 会话元数据缺失（理论不可达）：仍返回条目，前端按未知渲染
-                item.update({"agent": None, "title": item["session_id"],
-                             "event_count": 0, "error_count": 0})
-            return item
-        return {
-            "scores": sorted((enrich(s) for s in scores.values()),
-                             key=lambda s: s["ts"], reverse=True),
-            "assignments": sorted((enrich(a) for a in assigns.values()),
-                                  key=lambda a: a["ts"], reverse=True),
-        }
+# 兼容旧调用方的名称；自然键实现仍只有上面的一个入口。
+__all__ = ["Ledger", "ResetRequiredError", "_dedupe_key"]

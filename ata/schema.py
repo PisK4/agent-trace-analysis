@@ -165,6 +165,7 @@ def envelope(
     session_id,
     type_,
     payload,
+    turn=None,
     *,
     run_id=None,
     turn_number=None,
@@ -172,7 +173,15 @@ def envelope(
     ts=None,
     eid=None,
 ):
-    """构造保留完整 Runtime identity 的 v1 事件信封。"""
+    """构造保留完整 Runtime identity 的 v1 事件信封。
+
+    ``turn`` 仅为旧适配器的输入兼容别名，输出永远使用 observed ordinal；
+    新代码必须使用 run_id/turn_number 或 observed_turn_ordinal。
+    """
+    if turn is not None:
+        if turn_number is not None or observed_turn_ordinal is not None:
+            raise ValidationError("legacy turn conflicts with runtime identity")
+        observed_turn_ordinal = turn
     return {
         "v": 1,
         "id": eid if eid is not None else uuid.uuid4().hex,
