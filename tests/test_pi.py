@@ -4,6 +4,14 @@ from pathlib import Path
 from ata.plugins.pi import translate_hook, usage_from_assistant
 
 class PiTest(unittest.TestCase):
+    def test_extension_lifecycle_contract(self):
+        source = Path("extensions/pi-atatrace/index.ts").read_text()
+        self.assertIn("crypto.randomUUID()", source)
+        self.assertIn('name === "agent_start"', source)
+        self.assertIn('name !== "before_agent_start"', source)
+        self.assertIn("void postHook", source)
+        self.assertIn("lifecycleIds.delete(session_id)", source)
+
     def test_zero_error_is_missing(self):
         u = usage_from_assistant({
             "usage": {"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"total":0}},
@@ -14,6 +22,15 @@ class PiTest(unittest.TestCase):
 
     def test_hook_stream(self):
         hooks = json.loads(Path("testdata/vendor/pi-hooks.json").read_text())
+        lifecycle_ids = {
+            h["external_lifecycle_id"]
+            for h in hooks
+            if h.get("name") == "agent_start"
+        }
+        self.assertEqual(lifecycle_ids, {"pi-lifecycle-1", "pi-lifecycle-2"})
+        for h in hooks:
+            if h.get("name") not in {"before_agent_start", "agent_start"}:
+                self.assertIn(h.get("external_lifecycle_id"), lifecycle_ids)
         evs = []
         state = {}
         for h in hooks:
@@ -107,6 +124,7 @@ class PiTest(unittest.TestCase):
                         "name": h["name"],
                         "session_id": (h.get("ctx") or {}).get("session_id") or "pi-compact",
                         "title": (h.get("ctx") or {}).get("title") or "synthetic pi turn",
+                        "external_lifecycle_id": h.get("external_lifecycle_id"),
                         "event": h["event"],
                     }
                     req = urllib.request.Request(

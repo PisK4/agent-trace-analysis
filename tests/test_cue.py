@@ -24,6 +24,7 @@ class CueTest(unittest.TestCase):
                 "agent_id": "cue",
                 "host": "cue",
                 "runtime": "pi",
+                "external_lifecycle_id": "cue-lifecycle-1",
             },
             {},
         )
@@ -46,6 +47,7 @@ class CueTest(unittest.TestCase):
                     "agent_id": "cue",
                     "host": "cue",
                     "runtime": "pi",
+                    "external_lifecycle_id": "cue-lifecycle-1",
                     "event": {"timestamp": 1},
                 }
                 request = urllib.request.Request(
