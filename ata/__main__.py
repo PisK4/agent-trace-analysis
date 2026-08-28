@@ -54,7 +54,8 @@ def seed_demo(ledger: Ledger):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    # 机器读路径分发进 CLI 模块；集合唯一归属地在 ata.cli.CLI_SUBCOMMANDS
+    # 机器读路径与 Evaluation CRUD 都分发进 CLI 模块；集合唯一归属地在 ata.cli.CLI_SUBCOMMANDS。
+    # 这样 serve/seed 保留进程入口，evaluation 不在这里重复解析参数。
     if argv and argv[0] in CLI_SUBCOMMANDS:
         from ata.cli import main as cli_main
         return cli_main(argv)

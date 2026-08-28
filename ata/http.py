@@ -12,12 +12,14 @@ from ata.plugins.pi import translate_hook
 from ata.projection_cache import ProjectionCache
 from ata.queries import audit_usage, list_compactions, list_tools, project_session, summarize_timing, summarize_tools, summarize_usage, tail_preview
 from ata.schema import ValidationError, envelope, parse_event
+from ata.evaluation import EvaluationStore, EvaluationValidationError
 
 
 def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
     webroot = Path(webroot)
     cache = ProjectionCache()
     pi_states = PiHookStates() if pi_states is None else pi_states
+    evaluations = EvaluationStore(ledger)
 
     def cached_summary(sid):
         """便捷层统一入口：rev 门控 + read。rev 取自 session 行，调用前已确保
@@ -34,6 +36,109 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
     def h_health(m, qs, body):
         return 200, {"ok": True}
 
+    def _evaluation_detail(evaluation_id):
+        state = evaluations.fold(evaluation_id)
+        if state is None:
+            return None
+        members = []
+        for member in state["members"]:
+            sid = member["session_id"]
+            meta = ledger.session(sid)
+            row = dict(member)
+            if meta is not None:
+                row["session"] = meta
+                # 评分仍是 Session fact；Evaluation 只展示最新值，不复制事实。
+                projected = project_session(sid, meta["agent"], ledger.read(sid))
+                row["score"] = (projected.get("scores") or [None])[-1]
+            members.append(row)
+        return {**state, "members": members}
+
+    def h_evaluations(m, qs, body):
+        return 200, {"ok": True, "evaluations": evaluations.evaluations()}
+
+    def h_create_evaluation(m, qs, body):
+        title = (body.get("title") or "").strip() if isinstance(body, dict) else ""
+        if not title:
+            return 400, {"ok": False, "error": "title required"}
+        try:
+            eid = evaluations.create(title)
+        except (EvaluationValidationError, TypeError, ValueError) as exc:
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "evaluation_id": eid}
+
+    def h_rename_evaluation(m, qs, body):
+        title = (body.get("title") or "").strip() if isinstance(body, dict) else ""
+        if not title:
+            return 400, {"ok": False, "error": "title required"}
+        try:
+            evaluations.rename(m["eid"], title)
+        except EvaluationValidationError as exc:
+            if str(exc) == "evaluation not found":
+                return 404, {"ok": False, "error": "unknown evaluation"}
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "title": title}
+
+    def h_evaluation(m, qs, body):
+        eid = m["eid"]
+        state = _evaluation_detail(eid)
+        if state is None:
+            return 404, {"ok": False, "error": "unknown evaluation"}
+        sub = m.get("sub") or ""
+        if sub == "":
+            return 200, {"ok": True, **state}
+        if sub == "history":
+            return 200, {"ok": True, "evaluation_id": eid,
+                         "events": evaluations.read(eid)}
+        return 404, {"ok": False, "error": "not found"}
+
+    def h_delete_evaluation(m, qs, body):
+        try:
+            evaluations.delete(m["eid"])
+        except EvaluationValidationError as exc:
+            if str(exc) == "evaluation not found":
+                return 404, {"ok": False, "error": "unknown evaluation"}
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "evaluation_id": m["eid"]}
+
+    def h_add_evaluation_session(m, qs, body):
+        if not isinstance(body, dict) or not body.get("session_id"):
+            return 400, {"ok": False, "error": "session_id required"}
+        try:
+            evaluations.add_session(m["eid"], body["session_id"], body.get("task_label", ""))
+        except EvaluationValidationError as exc:
+            if str(exc) in {"evaluation not found", "session not found"}:
+                return 404, {"ok": False, "error": str(exc)}
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "evaluation_id": m["eid"], "session_id": body["session_id"]}
+
+    def h_remove_evaluation_session(m, qs, body):
+        try:
+            evaluations.remove_session(m["eid"], m["sid"])
+        except EvaluationValidationError as exc:
+            if str(exc) in {"evaluation not found", "session membership not found"}:
+                return 404, {"ok": False, "error": str(exc)}
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "evaluation_id": m["eid"], "session_id": m["sid"]}
+
+    def h_runs(m, qs, body):
+        assigns = ledger.assign_events()
+        out = []
+        for r in ledger.runs():
+            r["assignment_count"] = sum(
+                1 for a in assigns if a.get("run_id") == r["run_id"])
+            out.append(r)
+        return 200, out
+
+    def h_run_detail(m, qs, body):
+        rid = m["rid"]
+        run = ledger.run(rid)
+        if run is None:
+            return 404, {"ok": False, "error": "unknown run"}
+        run["assignments"] = [
+            a for a in ledger.assign_events() if a.get("run_id") == rid]
+        return 200, {"ok": True, **run}
+
+>>>>>>> 13f81aa (feat: expose evaluation HTTP and CLI)
     def h_sessions(m, qs, body):
         return 200, ledger.sessions()
 
@@ -208,6 +313,15 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
 
     ROUTES = [
         ("GET", re.compile(r"^/api/health$"), h_health),
+        ("GET", re.compile(r"^/api/evaluations$"), h_evaluations),
+        ("POST", re.compile(r"^/api/evaluations$"), h_create_evaluation),
+        ("GET", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)/(?P<sub>history)$"), h_evaluation),
+        ("GET", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)$"), h_evaluation),
+        ("PATCH", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)$"), h_rename_evaluation),
+        ("POST", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)/(?P<sub>title|rename)$"), h_rename_evaluation),
+        ("DELETE", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)$"), h_delete_evaluation),
+        ("POST", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)/sessions$"), h_add_evaluation_session),
+        ("DELETE", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)/sessions/(?P<sid>[^/]+)$"), h_remove_evaluation_session),
         ("GET", re.compile(r"^/api/sessions$"), h_sessions),
         ("GET", re.compile(r"^/api/annotations$"), h_annotations),
         ("GET", re.compile(r"^/api/sessions/(?P<rest>.+)$"), h_session),
@@ -244,7 +358,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         def do_OPTIONS(self):
             self.send_response(204)
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "content-type")
             self.end_headers()
 
@@ -252,7 +366,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
             parsed = urlparse(self.path)
             qs = parse_qs(parsed.query)
             body = None
-            if method == "POST":
+            if method in {"POST", "PATCH"}:
                 length = int(self.headers.get("Content-Length") or 0)
                 try:
                     body = json.loads(self.rfile.read(length) or b"{}")
@@ -271,6 +385,8 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
 
         do_GET = lambda self: self._dispatch("GET")
         do_POST = lambda self: self._dispatch("POST")
+        do_PATCH = lambda self: self._dispatch("PATCH")
+        do_DELETE = lambda self: self._dispatch("DELETE")
 
         def _serve_static(self, path):
             if path in ("/", "/index.html"):

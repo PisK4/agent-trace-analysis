@@ -12,7 +12,7 @@ from ata.schema import envelope
 DEFAULT_URL = "http://127.0.0.1:17877"
 # CLI 子命令集合的唯一归属地：__main__ 据此把机器读路径分发进本模块，
 # 两处各写一遍会漂移（架构评审二轮候选 7）。
-CLI_SUBCOMMANDS = {"read", "rate"}
+CLI_SUBCOMMANDS = {"read", "rate", "evaluation", "evaluations", "eval"}
 
 
 def build_parser():
@@ -63,14 +63,13 @@ def _local(ledger_path, args):
     return {"ok": True, "compactions": list_compactions(led.read(args.sid))}
 
 
-def _request(base, path, body=None):
-    """CLI 统一 HTTP 通道（架构评审二轮候选 7）：错误纪律与超时只有一份。
-    CLI 是短命进程，失败直接退出，没有重试语义可谈。"""
-    data = json.dumps(body).encode() if body is not None else None
+def _request(base, path, body=None, method=None):
+    """CLI 统一 HTTP 通道；错误纪律与超时只有一份。"""
+    data = json.dumps(body, ensure_ascii=False).encode() if body is not None else None
     req = urllib.request.Request(
         base.rstrip("/") + path, data=data,
         headers={"content-type": "application/json"} if data is not None else {},
-        method="POST" if data is not None else "GET")
+        method=method or ("POST" if data is not None else "GET"))
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.load(r)
@@ -115,6 +114,8 @@ def apply_client_filters(data, args):
 def main(argv):
     if argv and argv[0] == "rate":
         return _rate_main(argv)
+    if argv and argv[0] in {"evaluation", "evaluations", "eval"}:
+        return _evaluation_main(argv)
     args = build_parser().parse_args(argv[1:] if argv and argv[0] == "read" else argv)
     if args.ledger:
         data = _local(args.ledger, args)
@@ -160,3 +161,58 @@ def post_json(base, path, body):
 
 def get_json(base, path):
     return _request(base, path)
+
+
+def _evaluation_main(argv):
+    """Evaluation 的 CRUD、membership 与 history 命令统一走 HTTP facade。"""
+    p = argparse.ArgumentParser(prog="ata evaluation")
+    p.add_argument("--url", default=os.environ.get("ATA_URL") or DEFAULT_URL)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("list", aliases=["ls"])
+    create = sub.add_parser("create", aliases=["new"])
+    create.add_argument("title", nargs="?")
+    create.add_argument("--title", dest="title_opt")
+    show = sub.add_parser("show", aliases=["get"])
+    show.add_argument("evaluation_id")
+    hist = sub.add_parser("history", aliases=["events"])
+    hist.add_argument("evaluation_id")
+    rename = sub.add_parser("rename")
+    rename.add_argument("evaluation_id")
+    rename.add_argument("title", nargs="?")
+    rename.add_argument("--title", dest="title_opt")
+    delete = sub.add_parser("delete", aliases=["remove"])
+    delete.add_argument("evaluation_id")
+    add = sub.add_parser("add", aliases=["add-session", "member"])
+    add.add_argument("evaluation_id")
+    add.add_argument("session_id")
+    add.add_argument("--task-label", default="")
+    remove = sub.add_parser("remove-session", aliases=["remove-member", "rm", "rm-session"])
+    remove.add_argument("evaluation_id")
+    remove.add_argument("session_id")
+    a = p.parse_args(argv[1:])
+    base = a.url.rstrip("/")
+    cmd = a.cmd
+    if cmd in {"list", "ls"}:
+        result = get_json(base, "/api/evaluations")
+    elif cmd in {"create", "new"}:
+        title = (a.title_opt if a.title_opt is not None else a.title or "").strip()
+        if not title:
+            p.error("create requires title")
+        result = post_json(base, "/api/evaluations", {"title": title})
+    elif cmd in {"show", "get"}:
+        result = get_json(base, f"/api/evaluations/{a.evaluation_id}")
+    elif cmd in {"history", "events"}:
+        result = get_json(base, f"/api/evaluations/{a.evaluation_id}/history")
+    elif cmd == "rename":
+        title = (a.title_opt if a.title_opt is not None else a.title or "").strip()
+        if not title:
+            p.error("rename requires title")
+        result = _request(base, f"/api/evaluations/{a.evaluation_id}", {"title": title}, "PATCH")
+    elif cmd in {"delete", "remove"}:
+        result = _request(base, f"/api/evaluations/{a.evaluation_id}", method="DELETE")
+    elif cmd in {"add", "add-session", "member"}:
+        result = post_json(base, f"/api/evaluations/{a.evaluation_id}/sessions",
+                           {"session_id": a.session_id, "task_label": a.task_label})
+    else:
+        result = _request(base, f"/api/evaluations/{a.evaluation_id}/sessions/{a.session_id}", method="DELETE")
+    print(json.dumps(result, ensure_ascii=False))
