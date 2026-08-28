@@ -93,8 +93,8 @@ function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump:
   const { byTurn, susp } = useMemo(() => {
     const byT = new Map<string | number, UsageTurn>()
     for (const t of turns) byT.set(turnIdentityKey(t) ?? `turn:${t.turn}`, t)
-    const sp = new Map<number, string>()
-    for (const f of a.findings) if (f.rule !== 'missing') sp.set(f.turn, f.rule)
+    const sp = new Map<string, string>()
+    for (const f of a.findings) if (f.rule !== 'missing') sp.set(turnIdentityKey(f) ?? `turn:${f.turn}`, f.rule)
     return { byTurn: byT, susp: sp }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 见上：data 引用即缓存键
   }, [data])
@@ -133,7 +133,7 @@ function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump:
     minHitAnno = (
       <g>
         <circle cx={ax} cy={ay} r={3} className="uc-hitmin" />
-        <text x={ax + dx} y={ay - 7} textAnchor={anchor} className="uc-anno">命中率最低 T{minT.turn} · {rate}%</text>
+        <text x={ax + dx} y={ay - 7} textAnchor={anchor} className="uc-anno">命中率最低 {turnIdentityLabel(minT) ?? `Observed ${minT.turn}`} · {rate}%</text>
       </g>
     )
   }
@@ -150,11 +150,11 @@ function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump:
 
   // compaction：竖线贯穿两层 + 落差标注（−N）。
   const compAnno = (data.compactions || []).flatMap((c, i) => {
-    if (c.turn == null) return []
-    const turnNo: number = c.turn
-    const curT = turns.find((t) => t.turn === turnNo)
+    if (c.turn == null && c.run_id == null && c.observed_turn_ordinal == null) return []
+    const curT = turns.find((t) => turnIdentityKey(t) === turnIdentityKey(c))
     const cx = curT ? x(curT) : L
-    const prev = [...rep].reverse().find((r) => r.turn < turnNo)
+    const curPos = curT ? position(curT) : -1
+    const prev = [...rep].reverse().find((r) => position(r) < curPos)
     if (!prev || !curT) return <line key={i} x1={cx} y1={OCC_TOP} x2={cx} y2={HIT_BOT} className="uc-comp" />
     const drop = (prev.context || 0) > (curT.context || 0)
       ? (prev.context || 0) - (curT.context || 0) : null
@@ -168,7 +168,7 @@ function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump:
     )
   })
 
-  const dots = rep.filter((t) => susp.has(t.turn)).map((t) => (
+  const dots = rep.filter((t) => susp.has(turnKey(t))).map((t) => (
     <circle
       key={turnKey(t)}
       cx={x(t)} cy={yIn(t.context || t.input || 0)} r={4}
@@ -241,8 +241,8 @@ function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump:
             </div>
             {tipTurn.cache_write != null && <div>缓存写入 {fmtNum(tipTurn.cache_write)}</div>}
             <div>总 {fmtNum(tipTurn.total_tokens)} tok{tipTurn.cost != null ? ` · $${tipTurn.cost}` : ''}</div>
-            {susp.get(tipTurn.turn) && (
-              <div className="uc-tip-bad">{RULE_LABEL[susp.get(tipTurn.turn)!] ?? susp.get(tipTurn.turn)}</div>
+            {susp.get(turnKey(tipTurn)) && (
+              <div className="uc-tip-bad">{RULE_LABEL[susp.get(turnKey(tipTurn))!] ?? susp.get(turnKey(tipTurn))}</div>
             )}
           </div>
         )}
@@ -251,7 +251,7 @@ function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump:
         <details className="ufindings">
           <summary>{a.findings.length} 处发现</summary>
           {a.findings.map((f, i) => {
-            const row = byTurn.get(f.turn)
+            const row = byTurn.get(turnIdentityKey(f) ?? `turn:${f.turn}`)
             return (
               <button
                 key={i}
@@ -260,7 +260,7 @@ function UsagePanelBody({ data, onJump, onClose }: { data: UsageSummary; onJump:
                 onClick={() => { if (row?.seq) onJump(row.seq) }}
               >
                 <span className={`uf-rule ${f.rule}`}>{RULE_LABEL[f.rule] ?? f.rule}</span>
-                <span className="uf-turn">T{f.turn}</span>
+                <span className="uf-turn">{turnIdentityLabel(f) ?? `Observed ${f.turn}`}</span>
                 <span className="uf-detail">{f.detail}</span>
               </button>
             )

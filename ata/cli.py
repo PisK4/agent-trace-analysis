@@ -146,8 +146,9 @@ def _rate_main(argv):
     if isinstance(meta, list):  # 远端 /api/sessions 返回裸数组
         meta = {"ok": True, "sessions": meta}
     mine = next((r for r in meta.get("sessions", []) if r["id"] == a.sid), None)
-    agent = mine["agent"] if mine else "pi"
-    ev = build_score_event(agent, a.sid, a.value, a.note)
+    if mine is None:
+        sys.exit('error: {"ok": false, "error": "unknown session"}')
+    ev = build_score_event(mine["agent"], a.sid, a.value, a.note)
     result = post_json(a.url, "/api/events", {"events": [ev]})
     print(json.dumps(result, ensure_ascii=False))
 

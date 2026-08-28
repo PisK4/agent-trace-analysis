@@ -65,9 +65,7 @@ def _identity(event):
     if "run_id" in event or "turn_number" in event or "observed_turn_ordinal" in event:
         return (event.get("run_id"), event.get("turn_number"),
                 event.get("observed_turn_ordinal"))
-    # 迁移期兼容旧账本：旧 turn 不是 canonical Turn，只是观测顺序。
-    legacy = event.get("turn")
-    return (None, None, legacy)
+    return (None, None, None)
 
 
 def _row_identity(event):
@@ -105,6 +103,9 @@ def project_session(session_id, agent, recs, *, tail=None, before=None):
             continue
         if ev["type"] == "session.scored":
             scores.append({"value": p.get("value"), "note": p.get("note"), "ts": ev["ts"]})
+            continue
+        if ev["type"] == "session.score.cleared":
+            scores.clear()
             continue
         if ev["type"] == "turn.ended":
             identity = _identity(ev)

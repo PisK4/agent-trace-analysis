@@ -13,6 +13,7 @@ from ata.projection_cache import ProjectionCache
 from ata.queries import audit_usage, list_compactions, list_tools, project_session, summarize_timing, summarize_tools, summarize_usage, tail_preview
 from ata.schema import ValidationError, envelope, parse_event
 from ata.evaluation import EvaluationStore, EvaluationValidationError
+from ata.runtime import RuntimeCoordinator
 
 
 def _fallback_runs(ledger, sid):
@@ -71,6 +72,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
     cache = ProjectionCache()
     pi_states = PiHookStates() if pi_states is None else pi_states
     evaluations = EvaluationStore(ledger)
+    runtime = RuntimeCoordinator(ledger)
 
     def cached_summary(sid):
         """便捷层统一入口：rev 门控 + read。rev 取自 session 行，调用前已确保
@@ -237,8 +239,12 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
                          "children": ledger.children(sid)}
         if sub == "usage":
             def usage_body(recs):
-                compactions = [{"turn": r["event"].get("turn"), "seq": r["seq"]}
-                               for r in recs if r["event"]["type"] == "compaction.boundary"]
+                compactions = [
+                    {"seq": r["seq"], "run_id": r["event"].get("run_id"),
+                     "turn_number": r["event"].get("turn_number"),
+                     "observed_turn_ordinal": r["event"].get("observed_turn_ordinal")}
+                    for r in recs if r["event"]["type"] == "compaction.boundary"
+                ]
                 return {"ok": True, **summarize_usage(recs),
                         "audit": audit_usage(recs),
                         "compactions": compactions}
@@ -291,6 +297,33 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
             "lineage": body.get("lineage") or {},
         }
         try:
+            lifecycle_id = body.get("external_lifecycle_id")
+            if body["name"] == "agent_start":
+                result = runtime.start(
+                    sid,
+                    external_lifecycle_id=lifecycle_id,
+                    boundary_source="pi.agent_start",
+                    ts=event.get("timestamp"),
+                    payload={key: value for key, value in {
+                        "host": body.get("host"), "runtime": body.get("runtime"),
+                        "channel": body.get("channel"), "title": body.get("title"),
+                    }.items() if value is not None},
+                )
+                if result.get("scope") is not None:
+                    bucket["run_id"] = result["scope"].run_id
+            elif body["name"] == "agent_end":
+                result = runtime.end(
+                    sid,
+                    external_lifecycle_id=lifecycle_id,
+                    boundary_source="pi.agent_end",
+                    ts=event.get("timestamp"),
+                    payload={key: value for key, value in {
+                        "host": body.get("host"), "runtime": body.get("runtime"),
+                        "channel": body.get("channel"), "title": body.get("title"),
+                    }.items() if value is not None},
+                )
+                if result.get("status") in {"matched", "duplicate"}:
+                    bucket.pop("run_id", None)
             events = translate_hook(body["name"], event, ctx, bucket)
             seqs = []
             for ev in events:

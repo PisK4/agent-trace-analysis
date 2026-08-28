@@ -13,13 +13,13 @@ from ata.schema import parse_event
 def seed_long(ledger: Ledger):
     ledger.append({
         "v": 1, "id": "o", "agent_id": "pi", "session_id": "pi-long",
-        "ts": 1, "type": "session.opened", "turn": None, "payload": {"title": "long"},
+        "ts": 1, "type": "session.opened", "run_id": None, "turn_number": None, "observed_turn_ordinal": None, "payload": {"title": "long"},
     })
     for i in range(1, 121):
         role = "user" if i % 2 else "assistant"
         ledger.append({
             "v": 1, "id": f"m{i}", "agent_id": "pi", "session_id": "pi-long",
-            "ts": i, "type": "message.upserted", "turn": (i + 1) // 2,
+            "ts": i, "type": "message.upserted", "run_id": None, "turn_number": None, "observed_turn_ordinal": (i + 1) // 2,
             "payload": {
                 "message_id": f"m{i}", "role": role, "text": f"row {i}",
                 "status": "completed", "request_no": None if role == "user" else i,
@@ -31,18 +31,18 @@ def seed_long(ledger: Ledger):
 
 def seed_demo(ledger: Ledger):
     pi = [
-        {"v":1,"id":"o","agent_id":"pi","session_id":"pi-compact","ts":1786694320000,"type":"session.opened","turn":None,"payload":{"title":"synthetic pi turn"}},
-        {"v":1,"id":"t1s","agent_id":"pi","session_id":"pi-compact","ts":1786694320100,"type":"turn.started","turn":1,"payload":{}},
-        {"v":1,"id":"u1","agent_id":"pi","session_id":"pi-compact","ts":1786694320200,"type":"message.upserted","turn":1,"payload":{"message_id":"u1","role":"user","text":"user asks to mark missing usage","status":"completed","request_no":None,"usage":None,"started_at":1786694320200,"duration_ms":40,"output_text":None}},
-        {"v":1,"id":"a1","agent_id":"pi","session_id":"pi-compact","ts":1786694320380,"type":"message.upserted","turn":1,"payload":{"message_id":"a1","role":"assistant","text":"reported usage on this turn","status":"completed","request_no":1,"usage":{"status":"reported","input":1840,"output":612,"cache_read":220,"cache_write":48,"total_tokens":2720,"cost":None},"started_at":1786694320380,"duration_ms":920,"output_text":"reported usage on this turn"}},
-        {"v":1,"id":"c1","agent_id":"pi","session_id":"pi-compact","ts":1786694321120,"type":"tool.upserted","turn":1,"payload":{"tool_call_id":"c1","parent_message_id":"a1","name":"Read","text":"ledger.md","status":"completed","payload":{"path":"ledger.md"},"result":"ok","started_at":1786694321120,"duration_ms":210}},
-        {"v":1,"id":"t1e","agent_id":"pi","session_id":"pi-compact","ts":1786694321400,"type":"turn.ended","turn":1,"payload":{"usage":{"status":"reported","input":1840,"output":612,"cache_read":220,"cache_write":48,"total_tokens":2720,"cost":None}}},
-        {"v":1,"id":"t2s","agent_id":"pi","session_id":"pi-compact","ts":1786694322280,"type":"turn.started","turn":2,"payload":{}},
-        {"v":1,"id":"u2","agent_id":"pi","session_id":"pi-compact","ts":1786694322280,"type":"message.upserted","turn":2,"payload":{"message_id":"u2","role":"user","text":"do not amortize session totals","status":"completed","request_no":None,"usage":None,"started_at":1786694322280,"duration_ms":20,"output_text":None}},
-        {"v":1,"id":"a2","agent_id":"pi","session_id":"pi-compact","ts":1786694322520,"type":"message.upserted","turn":2,"payload":{"message_id":"a2","role":"assistant","text":"second turn keeps reported usage","status":"completed","request_no":2,"usage":{"status":"reported","input":2104,"output":388,"cache_read":1800,"cache_write":64,"total_tokens":4356,"cost":None},"started_at":1786694322520,"duration_ms":1480,"output_text":"second turn keeps reported usage"}},
-        {"v":1,"id":"c2","agent_id":"pi","session_id":"pi-compact","ts":1786694323120,"type":"tool.upserted","turn":2,"payload":{"tool_call_id":"c2","parent_message_id":"a2","name":"Grep","text":"pattern: cue","status":"completed","payload":{"pattern":"cue"},"result":"Found 1 match","started_at":1786694323120,"duration_ms":233}},
-        {"v":1,"id":"c3","agent_id":"pi","session_id":"pi-compact","ts":1786694323640,"type":"tool.upserted","turn":2,"payload":{"tool_call_id":"c3","parent_message_id":"a2","name":"Read","text":"denied.md","status":"failed","payload":{"path":"denied.md"},"result":"EACCES","started_at":1786694323640,"duration_ms":210}},
-        {"v":1,"id":"t2e","agent_id":"pi","session_id":"pi-compact","ts":1786694324000,"type":"turn.ended","turn":2,"payload":{"usage":{"status":"reported","input":2104,"output":388,"cache_read":1800,"cache_write":64,"total_tokens":4356,"cost":None}}},
+        {"v":1,"id":"o","agent_id":"pi","session_id":"pi-compact","ts":1786694320000,"type":"session.opened","run_id":None,"turn_number":None,"observed_turn_ordinal":None,"payload":{"title":"synthetic pi turn"}},
+        {"v":1,"id":"t1s","agent_id":"pi","session_id":"pi-compact","ts":1786694320100,"type":"turn.started","run_id":None,"turn_number":None,"observed_turn_ordinal":1,"payload":{}},
+        {"v":1,"id":"u1","agent_id":"pi","session_id":"pi-compact","ts":1786694320200,"type":"message.upserted","run_id":None,"turn_number":None,"observed_turn_ordinal":1,"payload":{"message_id":"u1","role":"user","text":"user asks to mark missing usage","status":"completed","request_no":None,"usage":None,"started_at":1786694320200,"duration_ms":40,"output_text":None}},
+        {"v":1,"id":"a1","agent_id":"pi","session_id":"pi-compact","ts":1786694320380,"type":"message.upserted","run_id":None,"turn_number":None,"observed_turn_ordinal":1,"payload":{"message_id":"a1","role":"assistant","text":"reported usage on this turn","status":"completed","request_no":1,"usage":{"status":"reported","input":1840,"output":612,"cache_read":220,"cache_write":48,"total_tokens":2720,"cost":None},"started_at":1786694320380,"duration_ms":920,"output_text":"reported usage on this turn"}},
+        {"v":1,"id":"c1","agent_id":"pi","session_id":"pi-compact","ts":1786694321120,"type":"tool.upserted","run_id":None,"turn_number":None,"observed_turn_ordinal":1,"payload":{"tool_call_id":"c1","parent_message_id":"a1","name":"Read","text":"ledger.md","status":"completed","payload":{"path":"ledger.md"},"result":"ok","started_at":1786694321120,"duration_ms":210}},
+        {"v":1,"id":"t1e","agent_id":"pi","session_id":"pi-compact","ts":1786694321400,"type":"turn.ended","run_id":None,"turn_number":None,"observed_turn_ordinal":1,"payload":{"usage":{"status":"reported","input":1840,"output":612,"cache_read":220,"cache_write":48,"total_tokens":2720,"cost":None}}},
+        {"v":1,"id":"t2s","agent_id":"pi","session_id":"pi-compact","ts":1786694322280,"type":"turn.started","run_id":None,"turn_number":None,"observed_turn_ordinal":2,"payload":{}},
+        {"v":1,"id":"u2","agent_id":"pi","session_id":"pi-compact","ts":1786694322280,"type":"message.upserted","run_id":None,"turn_number":None,"observed_turn_ordinal":2,"payload":{"message_id":"u2","role":"user","text":"do not amortize session totals","status":"completed","request_no":None,"usage":None,"started_at":1786694322280,"duration_ms":20,"output_text":None}},
+        {"v":1,"id":"a2","agent_id":"pi","session_id":"pi-compact","ts":1786694322520,"type":"message.upserted","run_id":None,"turn_number":None,"observed_turn_ordinal":2,"payload":{"message_id":"a2","role":"assistant","text":"second turn keeps reported usage","status":"completed","request_no":2,"usage":{"status":"reported","input":2104,"output":388,"cache_read":1800,"cache_write":64,"total_tokens":4356,"cost":None},"started_at":1786694322520,"duration_ms":1480,"output_text":"second turn keeps reported usage"}},
+        {"v":1,"id":"c2","agent_id":"pi","session_id":"pi-compact","ts":1786694323120,"type":"tool.upserted","run_id":None,"turn_number":None,"observed_turn_ordinal":2,"payload":{"tool_call_id":"c2","parent_message_id":"a2","name":"Grep","text":"pattern: cue","status":"completed","payload":{"pattern":"cue"},"result":"Found 1 match","started_at":1786694323120,"duration_ms":233}},
+        {"v":1,"id":"c3","agent_id":"pi","session_id":"pi-compact","ts":1786694323640,"type":"tool.upserted","run_id":None,"turn_number":None,"observed_turn_ordinal":2,"payload":{"tool_call_id":"c3","parent_message_id":"a2","name":"Read","text":"denied.md","status":"failed","payload":{"path":"denied.md"},"result":"EACCES","started_at":1786694323640,"duration_ms":210}},
+        {"v":1,"id":"t2e","agent_id":"pi","session_id":"pi-compact","ts":1786694324000,"type":"turn.ended","run_id":None,"turn_number":None,"observed_turn_ordinal":2,"payload":{"usage":{"status":"reported","input":2104,"output":388,"cache_read":1800,"cache_write":64,"total_tokens":4356,"cost":None}}},
     ]
     for ev in pi:
         ledger.append(parse_event(ev))

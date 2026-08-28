@@ -46,6 +46,17 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
     }
     ts = int(event.get("timestamp") or state.get("ts") or 1)
     state["ts"] = ts
+    run_id = state.get("run_id")
+
+    def turn_scope(turn):
+        if run_id is not None:
+            return {"run_id": int(run_id), "turn_number": int(turn)}
+        return {"observed_turn_ordinal": int(turn)}
+
+    def event_id(suffix):
+        prefix = f"{session_id}:run:{run_id}:" if run_id is not None else f"{session_id}:"
+        return prefix + suffix
+
     out = []
     if name == "before_agent_start":
         # Pi 契约：systemPrompt + systemPromptOptions（toolSnippets 是
@@ -86,13 +97,20 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
             session_id=session_id,
             type_="system.upserted",
             payload=payload,
-            turn=None,
             ts=ts,
             eid=f"{session_id}:system:{n}",
         ))
         state["last_prompt"] = prompt
         return out
     if name == "agent_start":
+        if run_id is not None:
+            previous_run = state.get("run_id")
+            state["run_id"] = int(run_id)
+            if previous_run != state["run_id"]:
+                for key in ("turn", "turn_started", "user_pending", "last_assistant_id",
+                            "request_no", "asst_no", "msg_start_ts", "msg_dur",
+                            "tool_args", "tool_start_ts"):
+                    state.pop(key, None)
         if not state.get("opened"):
             state["opened"] = True
             title = ctx.get("title") or session_id
@@ -116,7 +134,6 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 session_id=session_id,
                 type_="session.opened",
                 payload=payload,
-                turn=None,
                 ts=ts,
                 eid=f"{session_id}:opened",
             ))
@@ -143,9 +160,9 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                         session_id=session_id,
                         type_="turn.started",
                         payload={},
-                        turn=state["turn"],
+                        **turn_scope(state["turn"]),
                         ts=ts,
-                        eid=f"{session_id}:turn:{state['turn']}:start",
+                        eid=event_id(f"turn:{state['turn']}:start"),
                     ))
                 # Pi 未显式命名会话时（getSessionName 未设置），标题取第一条用户消息。
                 if not state.get("title_set") and (ctx.get("title") or "") in {"", session_id}:
@@ -157,7 +174,6 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                             session_id=session_id,
                             type_="session.opened",
                             payload={"title": first[:80]},
-                            turn=None,
                             ts=ts,
                             eid=f"{session_id}:opened:title",
                         ))
@@ -215,9 +231,9 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 "provider": msg.get("provider"),
                 "output_text": text if role == "assistant" else None,
             },
-            turn=turn,
+            **turn_scope(turn),
             ts=ts,
-            eid=f"{session_id}:msg:{mid}:{name}",
+            eid=event_id(f"msg:{mid}:{name}"),
         ))
         return out
     if name == "tool_execution_start":
@@ -242,9 +258,9 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 "started_at": ts,
                 "duration_ms": None,
             },
-            turn=state.get("turn") or 1,
+            **turn_scope(state.get("turn") or 1),
             ts=ts,
-            eid=f"{session_id}:tool:{cid}:start",
+            eid=event_id(f"tool:{cid}:start"),
         ))
         return out
     if name == "tool_execution_end":
@@ -271,9 +287,9 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                 "started_at": ts,
                 "duration_ms": duration,
             },
-            turn=state.get("turn") or 1,
+            **turn_scope(state.get("turn") or 1),
             ts=ts,
-            eid=f"{session_id}:tool:{cid}:end",
+            eid=event_id(f"tool:{cid}:end"),
         ))
         return out
     if name == "turn_end":
@@ -311,9 +327,9 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
                         "provider": msg.get("provider"),
                         "output_text": text,
                     },
-                    turn=turn,
+                    **turn_scope(turn),
                     ts=ts,
-                    eid=f"{session_id}:msg:{mid}:end",
+                    eid=event_id(f"msg:{mid}:end"),
                 ))
         stop = (msg.get("stopReason") if isinstance(msg, dict) else None)
         status = {"error": "failed", "aborted": "cancelled"}.get(stop)
@@ -330,9 +346,9 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
             session_id=session_id,
             type_="turn.ended",
             payload=ended_payload,
-            turn=turn,
+            **turn_scope(turn),
             ts=ts,
-            eid=f"{session_id}:turn:{turn}:end",
+            eid=event_id(f"turn:{turn}:end"),
         ))
         return out
     # agent_end / agent_settled / 其他：不做收尾。以前把 agent_end 当会话结束，
