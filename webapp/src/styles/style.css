@@ -536,8 +536,16 @@
       font-size: 12px;
       vertical-align: middle;
     }
-    .idx { width: 92px; color: var(--ink-3); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; }
-    .evt { width: 132px; text-align: left; position: relative; overflow: visible; padding-left: 28px; }
+    /* 列宽钉在 <col> 上：table-layout: fixed 下，列宽由首行 td 的 width 决定，
+       但虚拟滚动时首行可能是 <tr class="spacer"><td colSpan=3>（无 class、无 width），
+       浏览器把 3 列强行 3 等分 → idx/evt 从 92/132 撑到 ~250，列间距突变。
+       colgroup 的 <col class="col-idx"> 等显式宽度由 <col> 接管，td 上即使没
+       .idx/.evt class 也不影响列宽。 */
+    col.col-idx { width: 92px; }
+    col.col-evt { width: 132px; }
+    col.col-content { width: auto; }
+    .idx { color: var(--ink-3); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; }
+    .evt { text-align: left; position: relative; overflow: visible; padding-left: 28px; }
     tbody tr { cursor: default; }
     tbody tr:hover { background: var(--hover); }
     tbody tr[data-selected="true"] { background: var(--accent-tint); }

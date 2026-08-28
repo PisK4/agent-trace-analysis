@@ -156,7 +156,16 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
         {/* 全局搜索入口在顶栏（旧版同布局），这里不再重复 */}
       </div>
       <div className="table-wrap" ref={scrollerRef} onScroll={onScroll}>
+        {/* colgroup 把列宽钉死：table-layout: fixed 下首行 td 的 width 才决定列宽，
+            但首行是 virtual <tr class="spacer"> 的 colSpan=3 空 td，会把 3 列 3 等分（~250px），
+            把 .idx/.evt 的 92/132 撑成等宽且 evt→content 看似"第一跟第二列间隔突然变大"。
+            <col> 显式锁定后，无论首行是 older / spacer / summary，列宽都不再被首行内容重排。 */}
         <table>
+          <colgroup>
+            <col className="col-idx" />
+            <col className="col-evt" />
+            <col className="col-content" />
+          </colgroup>
           <tbody>
             {win.hasOlderButton && (
               <tr className="older" data-kind="older">
