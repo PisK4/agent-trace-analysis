@@ -120,25 +120,6 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
             return 400, {"ok": False, "error": str(exc)}
         return 200, {"ok": True, "evaluation_id": m["eid"], "session_id": m["sid"]}
 
-    def h_runs(m, qs, body):
-        assigns = ledger.assign_events()
-        out = []
-        for r in ledger.runs():
-            r["assignment_count"] = sum(
-                1 for a in assigns if a.get("run_id") == r["run_id"])
-            out.append(r)
-        return 200, out
-
-    def h_run_detail(m, qs, body):
-        rid = m["rid"]
-        run = ledger.run(rid)
-        if run is None:
-            return 404, {"ok": False, "error": "unknown run"}
-        run["assignments"] = [
-            a for a in ledger.assign_events() if a.get("run_id") == rid]
-        return 200, {"ok": True, **run}
-
->>>>>>> 13f81aa (feat: expose evaluation HTTP and CLI)
     def h_sessions(m, qs, body):
         return 200, ledger.sessions()
 
