@@ -2,9 +2,12 @@ import { useState } from 'react'
 import type { SessionMeta } from '../../api/types'
 
 interface Props {
+  // 添加会话时传入的 sessions 已被 useEvaluations.availableSessions 过滤：
+  // 排除当前 Evaluation 成员 + 其他 active Evaluation 成员。客户端只做
+  // 早期 UI 过滤，最终约束以 API 为准——后端 400 时表单不回填、不清空。
   sessions: SessionMeta[]
-  onCreate: (title: string) => Promise<void>
-  onAdd: (sessionId: string, taskLabel: string) => Promise<void>
+  onCreate: (title: string) => Promise<unknown>
+  onAdd: (sessionId: string, taskLabel: string) => Promise<unknown>
   evaluationId: string | null
   onCancel?: () => void
 }
@@ -14,7 +17,8 @@ export function EvaluationForm({ sessions, onCreate, onAdd, evaluationId, onCanc
   const [sessionId, setSessionId] = useState(sessions[0]?.id ?? '')
   const [taskLabel, setTaskLabel] = useState('')
   const [saving, setSaving] = useState(false)
-
+  // 写失败时由调用方 toast/inline alert 展示；表单只在自己 submit 期间置 saving，
+  // 不主动吞错误，也不清空字段——用户可立刻看到「哪些已填好」并修正后重试。
   const submit = async () => {
     if (saving) return
     const value = evaluationId ? sessionId : title.trim()
@@ -23,6 +27,7 @@ export function EvaluationForm({ sessions, onCreate, onAdd, evaluationId, onCanc
     try {
       if (evaluationId) {
         await onAdd(sessionId, taskLabel.trim())
+        // 成功才清 task label；sessionId 保留以便用户继续添加多条。
         setTaskLabel('')
       } else {
         await onCreate(title.trim())
@@ -38,6 +43,7 @@ export function EvaluationForm({ sessions, onCreate, onAdd, evaluationId, onCanc
       {evaluationId ? (
         <>
           <select className="board-input" aria-label="选择会话" value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
+            {sessions.length === 0 && <option value="">没有可添加的会话</option>}
             {sessions.map((session) => <option key={session.id} value={session.id}>{session.title || session.id}</option>)}
           </select>
           <input className="board-input" value={taskLabel} maxLength={120} placeholder="任务标签（可选）" onChange={(e) => setTaskLabel(e.target.value)} />
