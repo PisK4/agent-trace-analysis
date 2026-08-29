@@ -58,6 +58,7 @@ class CaptureProxyTest(unittest.TestCase):
     def tearDown(self):
         self.upstream.shutdown()
         self.upstream.server_close()
+        self.ledger.close()
         self.tmp.cleanup()
 
     def _wait_ledger(self, sid, timeout=5.0):
@@ -78,8 +79,15 @@ class CaptureProxyTest(unittest.TestCase):
             "127.0.0.1", 0, f"http://127.0.0.1:{self.upstream_port}",
             "claude", lambda rec: ingest_capture(self.ledger, rec))
         port = httpd.server_address[1]
-        threading.Thread(target=httpd.serve_forever, daemon=True).start()
-        self.addCleanup(httpd.shutdown)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+
+        def close_proxy():
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+        self.addCleanup(close_proxy)
         return port
 
     def test_end_to_end_events_land_in_ledger(self):
@@ -236,6 +244,7 @@ class OpenAIProxyPathTest(unittest.TestCase):
         self.upstream.shutdown()
         self.upstream.server_address  # noqa
         self.upstream.server_close()
+        self.ledger.close()
         self.tmp.cleanup()
         with capture_proxy._virtual_sid_lock:
             capture_proxy._virtual_sid_cache.clear()
@@ -247,8 +256,15 @@ class OpenAIProxyPathTest(unittest.TestCase):
             "127.0.0.1", 0, f"http://127.0.0.1:{self.upstream_port}",
             "claude", lambda rec: ingest_capture(self.ledger, rec))
         port = httpd.server_address[1]
-        threading.Thread(target=httpd.serve_forever, daemon=True).start()
-        self.addCleanup(httpd.shutdown)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+
+        def close_proxy():
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+        self.addCleanup(close_proxy)
         return port
 
     def test_openai_path_injects_virtual_sid_and_lands_events(self):

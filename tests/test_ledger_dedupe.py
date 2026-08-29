@@ -18,6 +18,9 @@ class DedupeIngestTests(unittest.TestCase):
     def setUp(self):
         self.led = Ledger(Path(tempfile.mkdtemp()))
 
+    def tearDown(self):
+        self.led.close()
+
     def test_message_snapshots_collapse_to_latest(self):
         payload = {"message_id": "m1", "role": "assistant", "status": "pending",
                    "usage": None}

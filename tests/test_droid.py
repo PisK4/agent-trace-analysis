@@ -51,6 +51,7 @@ class DroidTest(unittest.TestCase):
         evs, _ = translate_file(Path("testdata/vendor/droid-sample.jsonl"))
         with tempfile.TemporaryDirectory() as td:
             led = Ledger(Path(td))
+            self.addCleanup(led.close)
             for ev in evs:
                 led.append(parse_event(ev))
             sess = project_session("droid-missing", "droid", led.read("droid-missing"))
@@ -137,6 +138,7 @@ class DroidTest(unittest.TestCase):
             still_new.write_text(json.dumps(
                 {"type": "session_start", "id": "sid-2", "title": "New Session"}) + "\n")
             led = Ledger(root / "ledger.sqlite")
+            self.addCleanup(led.close)
             for sid in ("sid-1", "sid-2"):
                 led.append({"v": 1, "id": "o", "agent_id": "droid", "session_id": sid,
                             "ts": 1, "type": "session.opened", "observed_turn_ordinal": None,
@@ -165,6 +167,7 @@ class DroidTest(unittest.TestCase):
             (root / "sid-9.jsonl").write_text(json.dumps(
                 {"type": "session_start", "id": "sid-9", "title": "新标题"}) + "\n")
             led = Ledger(root / "ledger.sqlite")
+            self.addCleanup(led.close)
             led.append({"v": 1, "id": "o", "agent_id": "droid", "session_id": "sid-9",
                         "ts": 1, "type": "session.opened", "observed_turn_ordinal": None,
                         "payload": {"title": "New Session"}})
@@ -184,6 +187,7 @@ class DroidTest(unittest.TestCase):
             (root / "ghost.jsonl").write_text(json.dumps(
                 {"type": "session_start", "id": "ghost", "title": "幽灵"}) + "\n")
             led = Ledger(root / "ledger.sqlite")
+            self.addCleanup(led.close)
             refresh_titles(root, led)
             self.assertIsNone(led.session("ghost"))
 

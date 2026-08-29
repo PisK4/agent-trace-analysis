@@ -167,6 +167,9 @@ class PiTest(unittest.TestCase):
                 self.assertEqual(listed["turns"], 2)
             finally:
                 httpd.shutdown()
+                httpd.server_close()
+                th.join(timeout=2)
+                led.close()
 
 if __name__ == "__main__":
     unittest.main()

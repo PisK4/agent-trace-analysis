@@ -64,6 +64,9 @@ class CueTest(unittest.TestCase):
                 self.assertEqual(event["payload"]["runtime"], "pi")
             finally:
                 httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=2)
+                ledger.close()
 
     def test_http_hook_stamps_arrival_ts_when_event_has_none(self):
         # pi 运行时多数 hook 事件不带 timestamp（类型上只有 turn_start 有），
@@ -101,6 +104,9 @@ class CueTest(unittest.TestCase):
                 self.assertGreaterEqual(end["payload"]["duration_ms"], 1)
             finally:
                 httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=2)
+                ledger.close()
 
     def test_installer_writes_cue_owned_extension(self):
         with tempfile.TemporaryDirectory() as td:

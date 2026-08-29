@@ -25,6 +25,7 @@ class LedgerTest(unittest.TestCase):
     def test_append_and_idempotent(self):
         with tempfile.TemporaryDirectory() as td:
             led = Ledger(Path(td))
+            self.addCleanup(led.close)
             self.assertEqual(led.append(opened()), 1)
             self.assertEqual(led.append(opened()), 1)
             self.assertEqual(len(led.read("s1")), 1)
@@ -32,6 +33,7 @@ class LedgerTest(unittest.TestCase):
     def test_run_identity_is_stored_and_run_index_projected(self):
         with tempfile.TemporaryDirectory() as td:
             led = Ledger(Path(td))
+            self.addCleanup(led.close)
             led.append(opened())
             led.append(parse_event(envelope(
                 "pi", "s1", "run.started",
@@ -46,6 +48,7 @@ class LedgerTest(unittest.TestCase):
     def test_same_natural_key_isolated_by_run_namespace(self):
         with tempfile.TemporaryDirectory() as td:
             led = Ledger(Path(td))
+            self.addCleanup(led.close)
             led.append(message("s1", "m1", 1787000000010, 1, 1))
             led.append(message("s1", "m2", 1787000000020, 2, 1))
             self.assertEqual(len(led.read("s1")), 2)

@@ -81,13 +81,17 @@ class DroidHookEndpointTest(unittest.TestCase):
         cls.ledger = Ledger(Path(cls.tmp.name) / "led.sqlite")
         cls.httpd = make_server(cls.ledger, Path(cls.tmp.name), "127.0.0.1", 0)
         cls.port = cls.httpd.server_address[1]
-        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+        cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
+        cls.thread.start()
         # audit log 路径临时化: monkey-patch home dir 不可行, 用 droid_hooks 里的常量
         # 但我们这里只断言端点 200, 不验证文件路径 (WriteHookEventTest 覆盖了文件层)
 
     @classmethod
     def tearDownClass(cls):
         cls.httpd.shutdown()
+        cls.httpd.server_close()
+        cls.thread.join(timeout=2)
+        cls.ledger.close()
         cls.tmp.cleanup()
 
     def _post(self, body: dict) -> tuple:
@@ -101,7 +105,10 @@ class DroidHookEndpointTest(unittest.TestCase):
             with urllib.request.urlopen(req) as resp:
                 return resp.status, json.loads(resp.read())
         except urllib.error.HTTPError as e:
-            return e.code, json.loads(e.read())
+            try:
+                return e.code, json.loads(e.read())
+            finally:
+                e.close()
 
     def test_pretooluse_returns_200_fast(self):
         # PreToolUse 是最关键的 fast 路径 (droid 会 AgentAbortError)

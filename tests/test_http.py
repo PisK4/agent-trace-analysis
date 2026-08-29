@@ -13,7 +13,8 @@ class HttpTest(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         root = Path(self.td.name)
-        led = Ledger(root)
+        self.led = Ledger(root)
+        led = self.led
         led.append({
             "v":1,"id":"o","agent_id":"droid","session_id":"droid-missing","ts":1,
             "type":"session.opened","observed_turn_ordinal":None,"payload":{"title":"missing"},
@@ -31,6 +32,9 @@ class HttpTest(unittest.TestCase):
 
     def tearDown(self):
         self.httpd.shutdown()
+        self.httpd.server_close()
+        self.th.join(timeout=2)
+        self.led.close()
         self.td.cleanup()
 
     def get(self, path):
@@ -42,9 +46,12 @@ class HttpTest(unittest.TestCase):
         self.assertEqual(data["rows"][0]["usage"]["status"], "missing")
 
     def test_unknown_session_is_404(self):
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.get("/api/sessions/nope")
-        self.assertEqual(ctx.exception.code, 404)
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.get("/api/sessions/nope")
+            self.assertEqual(ctx.exception.code, 404)
+        finally:
+            ctx.exception.close()
 
     def test_list_includes_last_ts(self):
         data = self.get("/api/sessions")

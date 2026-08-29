@@ -22,11 +22,14 @@ class TestRemovedRegressionProductSurface(unittest.TestCase):
                                            ts=1000, eid="open")))
         cls.httpd = make_server(cls.led, Path(cls.tmp.name), "127.0.0.1", 0)
         cls.port = cls.httpd.server_address[1]
-        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+        cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
+        cls.thread.start()
 
     @classmethod
     def tearDownClass(cls):
         cls.httpd.shutdown()
+        cls.httpd.server_close()
+        cls.thread.join(timeout=2)
         cls.led.close()
         cls.tmp.cleanup()
 
@@ -36,10 +39,13 @@ class TestRemovedRegressionProductSurface(unittest.TestCase):
                 return response.status, json.load(response)
         except urllib.error.HTTPError as exc:
             try:
-                body = json.load(exc)
-            except ValueError:
-                body = {}
-            return exc.code, body
+                try:
+                    body = json.load(exc)
+                except ValueError:
+                    body = {}
+                return exc.code, body
+            finally:
+                exc.close()
 
     def test_legacy_global_runs_route_is_unavailable(self):
         code, body = self.get("/api/runs")

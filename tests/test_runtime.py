@@ -11,6 +11,9 @@ class RuntimeCoordinatorTest(unittest.TestCase):
         self.ledger = Ledger(Path(tempfile.mkdtemp()))
         self.runtime = RuntimeCoordinator(self.ledger)
 
+    def tearDown(self):
+        self.ledger.close()
+
     def test_start_allocates_persistent_run_and_turn(self):
         first = self.runtime.start("s1", external_lifecycle_id="x", boundary_source="hook", ts=10)
         self.assertEqual(first["status"], "created")

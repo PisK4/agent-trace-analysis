@@ -15,6 +15,9 @@ class TestLineage(unittest.TestCase):
     def setUp(self):
         self.led = Ledger(Path(tempfile.mkdtemp()) / "t.sqlite")
 
+    def tearDown(self):
+        self.led.close()
+
     def test_parent_captured_on_open(self):
         self.led.append(opened_ev("child", parent="parent-1"))
         self.assertEqual(self.led.session("child")["parent_session_id"], "parent-1")

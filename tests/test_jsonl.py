@@ -26,6 +26,7 @@ class JsonlTailTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             led = Ledger(root / "ledger")
+            self.addCleanup(led.close)
             state = {}
             # 第一轮：目录里一个文件
             (root / "a.jsonl").write_text(_line("user", "u1", "first"))
@@ -45,12 +46,14 @@ class JsonlTailTest(unittest.TestCase):
             # 仍只有 session.opened(无 message.upserted, 无 turn.started)
             types = {r["event"]["type"] for r in events}
             self.assertEqual(types, {"session.opened"})
+            led.close()
 
     def test_max_age_days_skips_historical_files(self):
         import os
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             led = Ledger(root / "ledger")
+            self.addCleanup(led.close)
             state = {}
             new = root / "new.jsonl"
             new.write_text(_line("user", "u-new", "recent"))
@@ -77,6 +80,7 @@ class JsonlTailTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             led = Ledger(root / "ledger")
+            self.addCleanup(led.close)
             state = {}
             f = root / "session.jsonl"
             with open(f, "w") as fp:
@@ -106,6 +110,7 @@ class JsonlTailTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             led = Ledger(root / "ledger")
+            self.addCleanup(led.close)
             state = {}
             f = root / "multi.jsonl"
             with open(f, "w") as fp:
@@ -150,6 +155,7 @@ class ClaudeJsonlNoMessageEmitTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             led = Ledger(root / "ledger")
+            self.addCleanup(led.close)
             state = {}
             f = root / "no-msg.jsonl"
             with open(f, "w") as fp:
@@ -177,6 +183,7 @@ class ClaudeJsonlNoMessageEmitTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             led = Ledger(root / "ledger")
+            self.addCleanup(led.close)
             state = {}
             f = root / "meta.jsonl"
             with open(f, "w") as fp:

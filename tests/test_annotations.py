@@ -77,11 +77,14 @@ class TitleRouteTest(unittest.TestCase):
         cls.led.append(opened("s1"))
         cls.httpd = make_server(cls.led, Path(cls.tmp.name), "127.0.0.1", 0)
         cls.port = cls.httpd.server_address[1]
-        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+        cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
+        cls.thread.start()
 
     @classmethod
     def tearDownClass(cls):
         cls.httpd.shutdown()
+        cls.httpd.server_close()
+        cls.thread.join(timeout=2)
         cls.led.close()
         cls.tmp.cleanup()
 
@@ -93,7 +96,10 @@ class TitleRouteTest(unittest.TestCase):
             with urllib.request.urlopen(req) as response:
                 return response.status, json.load(response)
         except urllib.error.HTTPError as exc:
-            return exc.code, json.load(exc)
+            try:
+                return exc.code, json.load(exc)
+            finally:
+                exc.close()
 
     def get(self, path):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}") as response:

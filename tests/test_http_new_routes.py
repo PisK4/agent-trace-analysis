@@ -26,18 +26,25 @@ class TestRoutes(unittest.TestCase):
                                     "status": "completed"}})
         cls.httpd = make_server(cls.led, cls.tmp, "127.0.0.1", 0)
         cls.port = cls.httpd.server_address[1]
-        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+        cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
+        cls.thread.start()
 
     @classmethod
     def tearDownClass(cls):
         cls.httpd.shutdown()
+        cls.httpd.server_close()
+        cls.thread.join(timeout=2)
+        cls.led.close()
 
     def get(self, path):
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}") as r:
                 return r.status, json.load(r)
         except urllib.error.HTTPError as e:
-            return e.code, json.load(e)
+            try:
+                return e.code, json.load(e)
+            finally:
+                e.close()
 
     def test_legacy_global_runs_route_is_gone(self):
         code, out = self.get("/api/runs")
