@@ -36,12 +36,37 @@ _Avoid_: 用 extension 泛指任何适配器
 一次 agent 对话的完整轨迹trace，是账本的归属单位。
 _Avoid_: conversation、对话（指整体轨迹时）
 
+**运行（Run）**：
+Session 内一次从 `agent_start` 到 `agent_end` 的 Agent 执行生命周期。一个 Session 可以包含多个 Run；Run 不跨 Session。Run 是 ATA 拥有的 canonical 对象，在可确认的生命周期起点建立自己的 identity，并由显式的 `run.started` / `run.ended` 事实表达边界。Run 的 Session-local ordinal 从 1 开始递增，且只增不复用；`(session_id, run_id)` 是 Run 的 canonical identity，它不是全局唯一标识。每个明确观察到的 `agent_start` 都启动一个新的 Run；若前一 Run 尚未观察到 `agent_end` 又收到新的 `agent_start`，保留前者为 open/incomplete 并分配下一个 ordinal。宿主提供的 `run_id`、`turn_id`、`task_id` 或其他 correlation ID 不等同于 ATA Run identity，只能作为外部关联元数据；缺少生命周期证据的适配器不得猜测并物化 Run。若事件已有可靠的 Session / Turn / ToolCall 事实、但没有可确认的 Run 边界，则事件可以暂时没有 Run 归属；未知不制造特殊 Run，也不因缺少 Run 而丢弃事实，旧事件不因后来获得新证据而被猜测性回填。
+_Avoid_: 用旧回归实验语义的 run 指代 Agent 执行生命周期
+
+**Run 生命周期证据**：
+只有实际且明确的 `agent_start` / `agent_end` 生命周期 hook 才是 Run 的边界事实。`before_agent_start`、`turn_start` 与 `agent_settled` 不因名称相似而自动等同于 Run 边界；`session.opened` 也不自动表示 Run 开始。
+
+**Run 生命周期 correlation**：
+对于能提供稳定生命周期 correlation 的适配器，外部 lifecycle ID 可用于把同一生命周期的 start/end 关联起来；它仍不取代 ATA 的 Session-local Run ordinal 与 `(session_id, run_id)` canonical identity。Pi/Cue Extension 可以为每次实际 Agent 生命周期生成全局唯一的 UUID（或等价的 opaque ID），并在对应的 start/end 中携带；后端以 `(session_id, external_lifecycle_id)` 做严格匹配，同时由 ATA 分配自己的 Run ordinal。外部 ID 的全局唯一性由 Extension 保证，ATA 不依赖其可读语义。
+
+**Run correlation 冲突**：
+外部 lifecycle ID 的重复 start 若内容相同则可幂等；内容冲突、缺少 ID、start/end 不匹配或同一 ID 对应多个生命周期时，不覆盖既有事实，也不猜测 Run 归属；相关生命周期事实保持未归属并记录冲突。
+
+**Run 边界事件**：
+`run.started` / `run.ended` 保存 ATA Run identity、外部 lifecycle ID（若有）及边界来源；`run.ended` 表示实际观察到的 `agent_end`。异常恢复使用独立的恢复事实或状态（如 `run.recovered`），不得伪装成 `run.ended`。
+
+**Run 事件归属**：
+Run-scoped canonical event 的统一 envelope 携带 Session-local `run_id`；`run.started` / `run.ended` 自身也携带该 ID。尚无可确认 Run 归属的事件，其 `run_id` 保持缺失或 NULL，不使用 `0`、`unknown` 或虚构 Run。
+
+**Run 结束状态**：
+观察到 `agent_end` 时，Run 正常结束；若生命周期在未观察到 `agent_end` 时中断，Run 保留未完成事实，并可另有明确的恢复/推断状态，但推断结束不等同于宿主真实发出的 `agent_end`。
+
+**普通用户消息与 Run**：
+上一 Run 结束后的普通用户消息在语义上触发新的 Agent 执行，但只有随后观察到明确的 `agent_start` 才物化新的 canonical Run。未观察到 start 时，消息仍保留为 Session 事实，不因内容相似度、task_label 或最近 Run 猜测归属。
+
 **对话视图**：
 webapp 里只看「人说的话 + 模型答的话」的阅读模式，工具收成单行链；与完整轨迹视图相对。
 
 **轮次（turn）**：
-一轮对话，从一条真实用户消息到模型收尾。「轮次」这个词专属于 turn。
-_Avoid_: 用「轮次」指 experiment run
+一次模型调用，以及该调用触发的全部工具执行；工具结果回填后再次调用模型，进入下一个 Turn。「轮次」这个词专属于 turn。Turn number 在每个 Run 内从 1 开始；Turn 的 canonical identity 是 `(run_id, turn_number)`，不跨 Run 延续编号。若事件尚无可确认的 Run 归属，仍可保留 Session-local 的 `observed_turn_ordinal` 作为观测排序号，但它不是 canonical `turn_number`，也不能暗示 Run 边界。
+_Avoid_: 用「轮次」指完整 Run 或 Evaluation
 
 **Step**：
 一轮内的第几次模型请求。一轮 ≠ 一次请求，故有 Step。
@@ -53,10 +78,10 @@ _Avoid_: 用「轮次」指 experiment run
 会话中途以 `<system-reminder>` 等前缀注入的用户侧内容。它不是 SYSTEM。CONTEXT 注入不算新轮次。
 
 **压缩点（compaction）**：
-上下文被压缩的事件边界（compaction.boundary）。
+上下文被压缩的事件边界（compaction.boundary）。Compaction 本身不是 `agent_start` / `agent_end`，不创建 Run；只有宿主提供可验证的等价生命周期事实时，才可按该适配器的明确语义建立 Run。若无法证明 compaction 前后属于同一 Agent 生命周期，后续事件可以继续无 Run 归属，不因未知而创建 inferred Run。
 
 **血缘（lineage）**：
-会话的父子派生关系（parent_session_id / session.opened.payload.parent_session）。拿不到就是 NULL，NULL 是事实不是错误。
+会话的父子派生关系（parent_session_id / session.opened.payload.parent_session）。拿不到就是 NULL，NULL 是事实不是错误。Subagent 使用自己的 child Session，并在该 Session 内拥有自己的 Run；父子关系不通过把子 Run 挂到父 Session 表达。
 
 ### Agent 身份
 
@@ -75,6 +100,24 @@ _Avoid_: 用「轮次」指 experiment run
 人类在会话上打的主观真值：good / bad / partial 加可选备注。真值锚。入口是 Web UI 标注控件与 CLI `ata rate`。
 _Avoid_: score（指人工那一路时）、评分
 
+**Evaluation**：
+由人创建的持久观察集合，包含一个标题和若干已存在的 Session。一个 Session 只能属于一个 Evaluation。Evaluation 用于把一组 Session 放在一起观察、标注或比较；它不触发 Run，不拥有 Run 的生命周期，也不改变 Session、Run、Turn 或 Trace。创建、加入、移除和删除 Evaluation 都是人工归组操作；membership 可以携带属于该集合关系的 `task_label: string`；删除 Evaluation 不删除 Session 或事件账本，只解除集合关系。被移除的 Session 可以重新加入同一个 Evaluation；Evaluation 删除后，Session 可以加入新的 Evaluation；历史加入、移除和重新加入事实保留，当前 membership 由最新有效状态决定。
+
+**观察标注**：
+Evaluation 复用 Session 上已有的标注与 score 记录保存人工结论；Evaluation 只是观察与操作标注的上下文，不复制一套 Evaluation-level 评分事实。Session 视图与 Evaluation 视图看到的是同一份标注；删除 Evaluation 不删除标注。
+
+**Evaluation 产品表面**：
+前端、公开 HTTP API 和 `ata` skill 以 Evaluation 作为人工观察与归组入口，以 Session / Run / Turn 作为轨迹查询入口；标注仍是 Session 事实，`task_label` 属于 Evaluation–Session membership。当前直接切换新领域契约，不保留旧回归 taskset、实验批次 run、assignment 或 compare 的兼容表面；具体命令、路由和组件属于接口设计，不改变这些领域边界。
+
+**Evaluation 删除**：
+删除是 Evaluation identity 的终态；历史 membership 仍可审计，但不再是 active 集合。再次创建同名 Evaluation 得到新的 identity；Session 可加入新的 Evaluation。
+
+**EvaluationCase**：
+暂不属于当前模型。它未来可以表示预先定义的固定评估问题或规则，但当前 Evaluation 不通过 EvaluationCase 触发 Run，也不要求 EvaluationCase 存在。
+
+**task_label**：
+人工在 Evaluation 中为 Session 指定的任意字符串，用来记录被观察 Agent 的外部业务 Task 标签，例如“日报”。ATA 不知道该 Task 的业务生命周期、成功条件或执行规则；`task_label` 不是 ATA 的权威 Task 对象，也不等于 Evaluation。
+
 **score**：
 挂在会话上的评分事实的数据形状：名字 + 数值 + 类型（number/boolean/categorical）+ 来源（human/machine）。标注是 source=human 的 score。
 
@@ -85,24 +128,9 @@ _Avoid_: 机器标注
 **墓碑（tombstone）**：
 以追加事件撤销先前事实的写法（如 session.score.cleared、session.unassigned），读取端 latest-wins 折叠后即消失。
 
-### 飞轮：回归与实验
+### 回归与实验（已移出当前产品）
 
-**任务集（taskset）**：
-回归题目的集合，存 `~/.ata/regression/tasks.jsonl`，本地 git 管版本，整册有一个指纹。不入 repos/ata 仓库——题目是真实会话正文。
-
-**任务项（task item）**：
-任务集里的一道题：冻结的首条用户消息原文（input）、channel/model 固定项、可选 k。提取即冻结，改题面等于出新版任务集。
-_Avoid_: 把 task_id 单独叫「任务」
-
-**run**：
-一次实验运行：干预后对同一版任务集重跑一遍。对比发生在 run 与 run 之间。run 不译。
-_Avoid_: 实验轮次、「创建一轮实验」的说法（应说「创建一个 run」）
-
-**归组（assignment)**:
-把一个会话挂到某个 run 下的格子上（session.assigned：run_id + task_id）。格子标签允许先于任务项自由创建，不必指向 tasks.jsonl 里的题；此时它只是归属记账，不是一道题。
-
-**对照对比（compare）**:
-两个 run 各自的分数快照摆出一张差异表。任一侧数据缺失则 Δ 为 n/a，不参与汇总；跨版本任务集不做逐格差值。
+回归实验的 `taskset`、task item、实验批次 run、assignment 与 compare 概念不属于当前 ATA 领域模型。当前产品只保留 Agent Runtime Trace 与 Evaluation；对应的代码、API、UI、schema、SQLite 表和开发数据均可破坏式移除或重建，不保留兼容层。未来若重新需要，作为独立 bounded context 重新设计。
 
 ### 代理采集
 
