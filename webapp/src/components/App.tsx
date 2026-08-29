@@ -98,7 +98,6 @@ export function App() {
                   {s.error_count > 0 && (
                     <span className="errs" title={`${s.error_count} failed tool calls`}>⚠ {s.error_count}</span>
                   )}
-                  {(s as SessionMeta & { scores?: unknown[] }).scores?.length ? <span className="adot" /> : null}
                   <span className="ts">{shortTime(s.first_ts)}</span>
                 </span>
               </button>
