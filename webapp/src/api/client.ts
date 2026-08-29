@@ -1,4 +1,4 @@
-import type { EvaluationDetail, EvaluationsPage, RunInfo, SessionMeta, SessionResponse, TimingSummary, UsageSummary } from './types'
+import type { EvaluationDetail, EvaluationHistoryEntry, EvaluationsPage, RunInfo, SessionMeta, SessionResponse, TimingSummary, TurnInfo, UsageSummary } from './types'
 
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(path)
@@ -57,10 +57,18 @@ export const api = {
   removeEvaluationSession: (id: string, sessionId: string) =>
     requestJSON<{ ok: true }>(`/api/evaluations/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}`, 'DELETE'),
   runs: (sessionId: string) => getJSON<{ ok: true; runs: RunInfo[] }>(`/api/sessions/${encodeURIComponent(sessionId)}/runs`),
+  // turn 折叠身份由后端按 (run_id, turn_number) 给出，runless 事件以
+  // observed_turn_ordinal 兜底；客户端不再以裸 turn number 推断归属。
   turns: (sessionId: string, runId?: number) => {
     const suffix = runId == null ? '' : `?run_id=${runId}`
-    return getJSON<{ ok: true; turns: unknown[] }>(`/api/sessions/${encodeURIComponent(sessionId)}/turns${suffix}`)
+    return getJSON<{ ok: true; turns: TurnInfo[] }>(`/api/sessions/${encodeURIComponent(sessionId)}/turns${suffix}`)
   },
+  // Evaluation fact 流的唯一 seam：原样返回 seq + event，不折叠不重排。
+  // 路径段做 encodeURIComponent 以兼容含 `/` 的 evaluation_id。
+  evaluationHistory: (id: string) =>
+    getJSON<{ ok: true; evaluation_id: string; events: EvaluationHistoryEntry[] }>(
+      `/api/evaluations/${encodeURIComponent(id)}/history`,
+    ),
   appendEvent: (event: Record<string, unknown>) =>
     postJSON<{ ok: true; seq: number }>('/api/events', event),
 

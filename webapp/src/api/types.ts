@@ -144,6 +144,18 @@ export interface EvaluationsPage {
   evaluations: EvaluationSummary[]
 }
 
+// GET /api/evaluations/{id}/history（ata/ledger.read_evaluation_events）：
+// 服务端直接吐「seq + event」原样记录，客户端不折叠、不重排；
+// UI 按 seq 升序展示 fact type 与 payload 安全摘要。
+export interface EvaluationHistoryEntry {
+  seq: number
+  event: {
+    type: string
+    ts: number
+    payload: Record<string, unknown>
+  }
+}
+
 export interface RunInfo {
   run_id: number
   external_lifecycle_id: string | null
@@ -154,6 +166,19 @@ export interface RunInfo {
   ended_ts: number | null
   max_turn_number: number
   conflict_count: number
+}
+
+// GET /api/sessions/{id}/turns 折叠行（ata/queries.py list_turns）：
+// run_id+turn_number 是 canonical 身份，observed_turn_ordinal 是 runless
+// fallback；客户端按 (run_id, turn_number) 做 identity，绝不据裸 turn number
+// 推断归属。status 来自 turn.ended 的 payload；open 表示尚未收到 ended。
+export interface TurnInfo {
+  run_id: number | null
+  turn_number: number | null
+  observed_turn_ordinal: number | null
+  status: string
+  first_seq: number
+  last_seq: number
 }
 
 // ── Usage 全周期（GET /api/sessions/{id}/usage，project.py summarize_usage/audit_usage）──
