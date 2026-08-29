@@ -26,11 +26,15 @@ class TestSessionRev(unittest.TestCase):
         cls.led.append(message("root", "m1"))
         cls.httpd = make_server(cls.led, cls.tmp, "127.0.0.1", 0)
         cls.port = cls.httpd.server_address[1]
-        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+        cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
+        cls.thread.start()
 
     @classmethod
     def tearDownClass(cls):
         cls.httpd.shutdown()
+        cls.httpd.server_close()
+        cls.thread.join(timeout=2)
+        cls.led.close()
 
     def get(self, path):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}") as r:
@@ -51,7 +55,7 @@ class TestSessionRev(unittest.TestCase):
 
     def test_stale_rev_returns_page_with_new_rev(self):
         _, full = self.get("/api/sessions/root")
-        self.led.append(message("root", "m2", turn=2))
+        self.led.append(message("root", "m2", observed_turn_ordinal=2))
         code, out = self.get(f"/api/sessions/root?rev={full['rev']}")
         self.assertEqual(code, 200)
         self.assertNotIn("unchanged", out)
