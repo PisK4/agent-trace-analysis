@@ -430,10 +430,6 @@ class Ledger:
         """返回 score facts 的最新 Session-level 视图。"""
         return self._score_rows()
 
-    def assign_events(self) -> list[dict]:
-        """历史内部调用的空结果；assignment 已不属于公开 Runtime API。"""
-        return []
-
     def _append_evaluation_locked(self, fact: dict) -> int:
         """调用方必须持有 _lock；Evaluation seq 独立于 Session seq。"""
         eid = fact["evaluation_id"]

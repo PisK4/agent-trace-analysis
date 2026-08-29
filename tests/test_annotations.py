@@ -48,11 +48,6 @@ class AnnotationsTest(unittest.TestCase):
             "pi", "s1", "session.score.cleared", {}, ts=1004, eid="c1")))
         self.assertEqual(self.scores("s1"), [])
 
-    def test_assignment_projection_removed(self):
-        """assignment 旧 Session facts 已删除，Session 读取不生成 assignment 视图。"""
-        self.led.append(opened("s1"))
-        self.assertEqual(self.led.assign_events(), [])
-
     def test_score_is_a_session_fact_with_session_meta(self):
         self.led.append(opened("s1"))
         self.led.append(parse_event(envelope(
