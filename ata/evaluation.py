@@ -94,7 +94,9 @@ def fold_evaluation_events(evaluation_id: str, records: list[dict]) -> dict | No
         typ = event.get("type")
         seen = True
         if typ == "evaluation.created":
-            state["title"] = payload.get("title")
+            # 删除是 identity 的终态；即使旧账本已有非法 created，也不能复活。
+            if not state["deleted"]:
+                state["title"] = payload.get("title")
         elif typ == "evaluation.renamed":
             state["title"] = payload.get("title")
         elif typ == "evaluation.deleted":
@@ -128,9 +130,29 @@ class EvaluationStore:
         """追加 fact；同一 Evaluation 下重复 fact id 幂等。"""
         fact = validate_fact(raw)
         with self.ledger._lock:
+            existing = self.ledger._conn.execute(
+                "SELECT seq FROM evaluation_events WHERE evaluation_id=? AND event_id=?",
+                (fact["evaluation_id"], fact["id"]),
+            ).fetchone()
+            if existing:
+                return int(existing["seq"])
+            self._validate_transition_locked(fact)
             seq = self.ledger._append_evaluation_locked(fact)
             self.ledger._conn.commit()
             return seq
+
+    def _validate_transition_locked(self, fact: dict):
+        """调用方持有 Ledger 锁；阻止未知或已删除 identity 的状态变更。"""
+        evaluation_id = fact["evaluation_id"]
+        state = self.ledger._fold_evaluation_locked(evaluation_id)
+        if fact["type"] == "evaluation.created":
+            if state is not None:
+                raise EvaluationValidationError("evaluation already exists")
+            return
+        if state is None:
+            raise EvaluationValidationError("evaluation not found")
+        if state["deleted"]:
+            raise EvaluationValidationError("evaluation deleted")
 
     def read(self, evaluation_id: str) -> list[dict]:
         return self.ledger.read_evaluation_events(evaluation_id)

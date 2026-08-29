@@ -457,14 +457,10 @@ class Ledger:
         return seq
 
     def append_evaluation(self, fact: dict) -> int:
-        """追加已校验的 Evaluation fact；外部优先使用 EvaluationStore。"""
-        from ata.evaluation import validate_fact
+        """追加 Evaluation fact，并应用 EvaluationStore 的状态守卫。"""
+        from ata.evaluation import EvaluationStore
 
-        fact = validate_fact(fact)
-        with self._lock:
-            seq = self._append_evaluation_locked(fact)
-            self._conn.commit()
-            return seq
+        return EvaluationStore(self).append(fact)
 
     def append_evaluation_event(self, fact: dict) -> int:
         """Evaluation fact 追加的显式名称。"""

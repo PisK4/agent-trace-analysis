@@ -80,6 +80,31 @@ class EvaluationTest(unittest.TestCase):
             self.store.append(evaluation_envelope("e-1", "evaluation.deleted", {"x": 1}))
         self.assertIsNone(fold_evaluation_events("e-none", []))
 
+    def test_append_cannot_resurrect_deleted_evaluation(self):
+        eid = self.store.create("eval", evaluation_id="e-1", ts=10)
+        self.store.delete(eid, ts=11)
+        for typ, payload in (
+            ("evaluation.created", {"title": "new"}),
+            ("evaluation.renamed", {"title": "new"}),
+            ("evaluation.session.added", {"session_id": "s1", "task_label": "x"}),
+            ("evaluation.session.removed", {"session_id": "s1"}),
+        ):
+            with self.assertRaisesRegex(EvaluationValidationError, "evaluation (already exists|deleted)"):
+                self.store.append(evaluation_envelope(eid, typ, payload))
+        self.assertTrue(self.store.fold(eid)["deleted"])
+
+    def test_append_requires_existing_evaluation(self):
+        with self.assertRaisesRegex(EvaluationValidationError, "evaluation not found"):
+            self.store.append(evaluation_envelope(
+                "missing", "evaluation.renamed", {"title": "x"}))
+
+    def test_ledger_evaluation_entrypoint_uses_transition_guard(self):
+        eid = self.store.create("eval", evaluation_id="e-1", ts=10)
+        self.store.delete(eid, ts=11)
+        with self.assertRaisesRegex(EvaluationValidationError, "evaluation already exists"):
+            self.ledger.append_evaluation(evaluation_envelope(
+                eid, "evaluation.created", {"title": "new"}, ts=12))
+
 
 if __name__ == "__main__":
     unittest.main()
