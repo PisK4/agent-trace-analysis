@@ -1,6 +1,6 @@
-# ATA（Agent Trace Analysis）
+# Agent Trace Analysis (ATA)
 
-把 Pi、Cue、Claude Code、Codex、Droid 五家 agent 的会话翻译成统一事件账本，在浏览器里按轮次回看，并以「采集 → 观测 → 诊断 → 干预 → 对照复跑」飞轮支撑 agent 调优。产品 UI 名是 **Atatrace**；ATA 是项目与服务名。
+把 Pi、Cue、Claude Code、Codex、Droid 五家 agent 的会话翻译成统一事件账本，在浏览器里按轮次回看，并以「采集 → 观测 → 诊断 → 干预 → 对照复跑」飞轮支撑 agent 调优。产品名是 **Agent Trace Analysis** (ATA)。
 
 ## Language
 
@@ -8,18 +8,18 @@
 
 **账本（ledger）**：
 全部事实的唯一存放处：一个 SQLite 文件（生产为 `~/.ata/ata.sqlite`）。写入只经一条追加路径（事件追加门），单一 writer。
-_Avoid_: 数据库、存储、ata.sqlite 指称概念时
+*Avoid*: 数据库、存储、ata.sqlite 指称概念时
 
 **事件（event）**:
 发生过的一条事实，带类型词表、轮次号与 payload。账本里只有追加，没有更新；同一实体的多次快照靠幂等键收敛到最新一行。
 
 **适配器（adapter）**：
 把某家 agent 的方言翻译成统一事件的组件，位于 `plugins/`。每家一个。
-_Avoid_: 插件、翻译器
+*Avoid*: 插件、翻译器
 
 **extension**:
 特指 `extensions/pi-atatrace`——装在 Pi/Cue 运行时里的采集端组件，负责把 hook 推给 ATA。它不是适配器；翻译发生在服务端的适配器里。
-_Avoid_: 用 extension 泛指任何适配器
+*Avoid*: 用 extension 泛指任何适配器
 
 **投影（projection）**：
 从事件流折叠出的可读视图（会话行、标注聚合、usage 合计等）。投影可重建，不是事实源。
@@ -34,11 +34,11 @@ _Avoid_: 用 extension 泛指任何适配器
 
 **会话（session）**：
 一次 agent 对话的完整轨迹trace，是账本的归属单位。
-_Avoid_: conversation、对话（指整体轨迹时）
+*Avoid*: conversation、对话（指整体轨迹时）
 
 **运行（Run）**：
 Session 内一次从 `agent_start` 到 `agent_end` 的 Agent 执行生命周期。一个 Session 可以包含多个 Run；Run 不跨 Session。Run 是 ATA 拥有的 canonical 对象，在可确认的生命周期起点建立自己的 identity，并由显式的 `run.started` / `run.ended` 事实表达边界。Run 的 Session-local ordinal 从 1 开始递增，且只增不复用；`(session_id, run_id)` 是 Run 的 canonical identity，它不是全局唯一标识。每个明确观察到的 `agent_start` 都启动一个新的 Run；若前一 Run 尚未观察到 `agent_end` 又收到新的 `agent_start`，保留前者为 open/incomplete 并分配下一个 ordinal。宿主提供的 `run_id`、`turn_id`、`task_id` 或其他 correlation ID 不等同于 ATA Run identity，只能作为外部关联元数据；缺少生命周期证据的适配器不得猜测并物化 Run。若事件已有可靠的 Session / Turn / ToolCall 事实、但没有可确认的 Run 边界，则事件可以暂时没有 Run 归属；未知不制造特殊 Run，也不因缺少 Run 而丢弃事实，旧事件不因后来获得新证据而被猜测性回填。
-_Avoid_: 用旧回归实验语义的 run 指代 Agent 执行生命周期
+*Avoid*: 用旧回归实验语义的 run 指代 Agent 执行生命周期
 
 **Run 生命周期证据**：
 只有实际且明确的 `agent_start` / `agent_end` 生命周期 hook 才是 Run 的边界事实。`before_agent_start`、`turn_start` 与 `agent_settled` 不因名称相似而自动等同于 Run 边界；`session.opened` 也不自动表示 Run 开始。
@@ -66,7 +66,7 @@ webapp 里只看「人说的话 + 模型答的话」的阅读模式，工具收�
 
 **轮次（turn）**：
 一次模型调用，以及该调用触发的全部工具执行；工具结果回填后再次调用模型，进入下一个 Turn。「轮次」这个词专属于 turn。Turn number 在每个 Run 内从 1 开始；Turn 的 canonical identity 是 `(run_id, turn_number)`，不跨 Run 延续编号。若事件尚无可确认的 Run 归属，仍可保留 Session-local 的 `observed_turn_ordinal` 作为观测排序号，但它不是 canonical `turn_number`，也不能暗示 Run 边界。
-_Avoid_: 用「轮次」指完整 Run 或 Evaluation
+*Avoid*: 用「轮次」指完整 Run 或 Evaluation
 
 **Step**：
 一轮内的第几次模型请求。一轮 ≠ 一次请求，故有 Step。
@@ -98,7 +98,7 @@ _Avoid_: 用「轮次」指完整 Run 或 Evaluation
 
 **标注**：
 人类在会话上打的主观真值：good / bad / partial 加可选备注。真值锚。入口是 Web UI 标注控件与 CLI `ata rate`。
-_Avoid_: score（指人工那一路时）、评分
+*Avoid*: score（指人工那一路时）、评分
 
 **Evaluation**：
 由人创建的持久观察集合，包含一个标题和若干已存在的 Session。一个 Session 只能属于一个 Evaluation。Evaluation 用于把一组 Session 放在一起观察、标注或比较；它不触发 Run，不拥有 Run 的生命周期，也不改变 Session、Run、Turn 或 Trace。创建、加入、移除和删除 Evaluation 都是人工归组操作；membership 可以携带属于该集合关系的 `task_label: string`；删除 Evaluation 不删除 Session 或事件账本，只解除集合关系。被移除的 Session 可以重新加入同一个 Evaluation；Evaluation 删除后，Session 可以加入新的 Evaluation；历史加入、移除和重新加入事实保留，当前 membership 由最新有效状态决定。
@@ -123,7 +123,7 @@ Evaluation 复用 Session 上已有的标注与 score 记录保存人工结论�
 
 **信号**：
 机器从轨迹里检测出的失败线索。线索，不是真值。与标注分开存、分开统计。
-_Avoid_: 机器标注
+*Avoid*: 机器标注
 
 **墓碑（tombstone）**：
 以追加事件撤销先前事实的写法（如 session.score.cleared、session.unassigned），读取端 latest-wins 折叠后即消失。
@@ -136,17 +136,20 @@ _Avoid_: 机器标注
 
 **代理通道（capture）**：
 转发式采集代理：截获 agent↔LLM 的 HTTP 流量，解析出账本别处拿不到的事实（SYSTEM 快照、tools 目录、每轮 usage）作为规范事件并入账本。补充通道，不是权威平面；只发增量事实，从不替代第一方 transcript 适配器。
-_Avoid_: 万能代理、以代理流量当账本、把代理叫「反向代理组件」
+*Avoid*: 万能代理、以代理流量当账本、把代理叫「反向代理组件」
 
 **并入（merge-on-write）**：
 代理截获的流量恢复出宿主 sessionId 后往同一 session 追加，靠幂等键收敛；恢复不了就丢弃并放弃该次采集，绝不新建孤儿会话。
-_Avoid_: 平行会话、读取侧归并
+*Avoid*: 平行会话、读取侧归并
 
 ## 数据边界速记
 
-| agent | SYSTEM 快照 | usage |
-| --- | --- | --- |
-| pi / cue | 有 | reported |
-| claude | 无（代理通道开启时有） | reported（缺失或全 0 → missing）；每轮 usage 经代理通道补全 |
-| codex | 有 | reported |
-| droid | 无 | 恒 missing |
+
+| agent    | SYSTEM 快照   | usage                                       |
+| -------- | ----------- | ------------------------------------------- |
+| pi / cue | 有           | reported                                    |
+| claude   | 无（代理通道开启时有） | reported（缺失或全 0 → missing）；每轮 usage 经代理通道补全 |
+| codex    | 有           | reported                                    |
+| droid    | 无           | 恒 missing                                   |
+
+
