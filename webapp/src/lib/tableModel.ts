@@ -41,6 +41,16 @@ export function rowContent(row: ProjectedRow, rows: ProjectedRow[]): string {
 
 const compactPreview = (text: string) => String(text || '').replace(/\s+/g, ' ').trim()
 
+/**
+ * 按 Run 过滤投影行：`null` = 全部；正整数只保留 `run_id === runId` 的行。
+ * 不基于裸 `turn` 过滤——同一 Session 中不同 Run 的 T1 不能碰撞，
+ * observed（run_id=null）的行只在「全部」视图中出现。
+ */
+export function filterRowsByRun(rows: ProjectedRow[], runId: number | null): ProjectedRow[] {
+  if (runId == null) return rows
+  return rows.filter((row) => row.run_id === runId)
+}
+
 function matchesSearch(row: ProjectedRow, terms: string[]): boolean {
   if (!terms.length) return true
   const blob = [

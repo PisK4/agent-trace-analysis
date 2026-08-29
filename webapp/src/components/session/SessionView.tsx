@@ -1,10 +1,11 @@
 // 会话页：顶栏（crumb / 刷新）+ overview 区（统计 / Usage 徽章 / Timeline）
 // + Ledger 表格 + 右侧 Inspector。数据走 useSession（rev 门控轮询 + loadOlder 前插）。
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import type { ProjectedRow } from '../../api/types'
 import { CONTENT_ROW_HEIGHT } from '../../lib/tableModel'
 import type { Viewport } from '../../lib/timelineModel'
 import { useSession } from '../../api/useSession'
+import { useRuns } from '../../api/useRuns'
 import { SessionTable } from './SessionTable'
 import { StatsBadges } from './StatsPanel'
 import { UsageBadges, UsagePanel } from './UsagePanel'
@@ -13,6 +14,7 @@ import { TopBar } from './TopBar'
 import { Inspector } from './Inspector'
 import { TimeBadge } from './TimeBadge'
 import { ConversationView } from './ConversationView'
+import { RunPanel } from './RunPanel'
 import { sameTurnIdentity } from '../../lib/turnIdentity'
 
 interface Props {
@@ -21,6 +23,7 @@ interface Props {
 
 export function SessionView({ sessionId }: Props) {
   const { data, error, refresh, loadOlder } = useSession(sessionId)
+  const { runs, selectedRunId, selectRun, loading: runsLoading, error: runsError, refresh: refreshRuns } = useRuns(sessionId)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [usageOpen, setUsageOpen] = useState(false)
   // Ledger 双视图：trace 是既有账本表格，chat 是只看对话的渲染视图
@@ -74,10 +77,17 @@ export function SessionView({ sessionId }: Props) {
   const jumpToSeq = useCallback((seq: number) => jumpToRow((r) => r._seq === seq), [jumpToRow])
   const jumpToId = useCallback((id: string) => jumpToRow((r) => r.id === id), [jumpToRow])
 
-  // 时间拆解弹层点某轮 → 跳到该轮起始行（user 行 start=true）
+  // 时间拆解弹层点某轮 → 跳到该轮起始行（user 行 start=true）。
+  // 优先使用 Runtime identity：传入即匹配（cross-Run 唯一）；无 identity
+  // 时按裸 turn 仅匹配 observed 行（run_id=null），不再用裸 turn 去匹配
+  // canonical 行，避免 R1 · T1 / R2 · T1 撞同号。
   const jumpToTurn = useCallback(
-    (turn: number, identity?: { run_id?: number | null; turn_number?: number | null; observed_turn_ordinal?: number | null }) =>
-      jumpToRow((r) => r.start === true && (identity ? sameTurnIdentity(r, identity) : r.turn === turn)),
+    (turn: number, identity?: { run_id?: number | null; turn_number?: number | null; observed_turn_ordinal?: number | null }) => {
+      if (identity && (identity.run_id != null || identity.turn_number != null || identity.observed_turn_ordinal != null)) {
+        return jumpToRow((r) => r.start === true && sameTurnIdentity(r, identity))
+      }
+      return jumpToRow((r) => r.start === true && r.run_id == null && r.turn === turn)
+    },
     [jumpToRow],
   )
 
@@ -117,7 +127,9 @@ export function SessionView({ sessionId }: Props) {
 
   // 焦点集在 SessionTable 内部由 focusRange 计算（需要行序号几何）
 
-  // 换会话清掉标题覆盖与搜索（旧版 openSession 的状态重置同义）
+  // 换会话清掉标题覆盖与搜索（旧版 openSession 的状态重置同义）；
+  // useRuns 自带 epoch 守卫清掉 runs/selectedRunId，但 selectedRunId 在新
+  // runs 到达前仍可能短暂渲染旧值，所以这里也显式重置一次避免视觉跳变。
   const [prevSid, setPrevSid] = useState(sessionId)
   if (prevSid !== sessionId) {
     setPrevSid(sessionId)
@@ -125,7 +137,20 @@ export function SessionView({ sessionId }: Props) {
     setSearch('')
     setRange(null)
     setLedgerView('trace')
+    selectRun(null)
   }
+
+  // observed 行计数（run_id=null）：单独提示「无 Run 的行有 N 条」，不当作 Run
+  const runlessTurnCount = useMemo(
+    () => (data?.rows ?? []).filter((r) => r.run_id == null).length,
+    [data?.rows],
+  )
+
+  // session 主刷新同时拉一次 Run 列表：避免两套数据各自过期
+  const handleRefresh = useCallback(() => {
+    refresh()
+    void refreshRuns()
+  }, [refresh, refreshRuns])
 
   if (error) return <div className="board-empty">加载失败：{error}</div>
   if (!data) return <div className="home-empty">加载中…</div>
@@ -142,7 +167,9 @@ export function SessionView({ sessionId }: Props) {
         search={search}
         onSearchChange={setSearch}
         onRenamed={(title, crumb) => setTitleOverride({ title, crumb })}
-        onRefresh={refresh}
+        onRefresh={handleRefresh}
+        runs={runs}
+        selectedRunId={selectedRunId}
       />
       <section className="overview">
         <div className="zone-bar">
@@ -196,6 +223,14 @@ export function SessionView({ sessionId }: Props) {
             </div>
             <span className="hint">{data.rows.length} 行 · T{Math.max(data.turns, 0)} 轮</span>
           </div>
+          <RunPanel
+            runs={runs}
+            selectedRunId={selectedRunId}
+            onSelect={selectRun}
+            runlessTurnCount={runlessTurnCount}
+            loading={runsLoading}
+            error={runsError}
+          />
           {ledgerView === 'trace' ? (
             <SessionTable
               data={viewData}
@@ -208,6 +243,7 @@ export function SessionView({ sessionId }: Props) {
               onFollowChange={setFollow}
               search={search}
               scrollerRef={scrollerRef}
+              runId={selectedRunId}
             />
           ) : (
             <ConversationView

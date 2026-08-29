@@ -3,6 +3,7 @@ import {
   collapsibleAssistants,
   collapsibleTurns,
   displayRecords,
+  filterRowsByRun,
   virtualWindow,
   type DisplayRow,
 } from './tableModel'
@@ -113,5 +114,33 @@ describe('collapsibles', () => {
       row({ id: 'a2', kind: 'assistant', tag: 'ASSISTANT' }),
     ]
     expect(collapsibleAssistants(rows)).toEqual(['a1'])
+  })
+})
+
+describe('filterRowsByRun', () => {
+  it('filters canonical rows by run without colliding on turn number', () => {
+    const rows = [
+      row({ id: 'r1t1', run_id: 1, turn_number: 1, observed_turn_ordinal: null, turn: 1 }),
+      row({ id: 'r2t1', run_id: 2, turn_number: 1, observed_turn_ordinal: null, turn: 2 }),
+      row({ id: 'obs1', run_id: null, turn_number: null, observed_turn_ordinal: 1, turn: 3 }),
+    ]
+    expect(filterRowsByRun(rows, 1).map((r) => r.id)).toEqual(['r1t1'])
+    expect(filterRowsByRun(rows, 2).map((r) => r.id)).toEqual(['r2t1'])
+  })
+
+  it('keeps observed rows only in the all-runs view', () => {
+    const rows = [
+      row({ id: 'r1t1', run_id: 1, turn_number: 1 }),
+      row({ id: 'obs1', run_id: null, turn_number: null, observed_turn_ordinal: 1 }),
+    ]
+    expect(filterRowsByRun(rows, null).map((r) => r.id)).toEqual(['r1t1', 'obs1'])
+    expect(filterRowsByRun(rows, 1).map((r) => r.id)).toEqual(['r1t1'])
+    // 选了具体 Run 后 observed 行不出现，避免「Observed 1」与 R1 · T1 误撞
+    expect(filterRowsByRun(rows, 1).some((r) => r.id === 'obs1')).toBe(false)
+  })
+
+  it('returns all rows unchanged when runId is null', () => {
+    const rows = [row({ id: 'a' }), row({ id: 'b' })]
+    expect(filterRowsByRun(rows, null)).toBe(rows)
   })
 })

@@ -7,6 +7,7 @@ import {
   collapsibleAssistants,
   collapsibleTurns,
   displayRecords,
+  filterRowsByRun,
   rowContent,
   virtualWindow,
   type TableFilter,
@@ -29,9 +30,11 @@ interface Props {
   search?: string
   /** 外层要读滚动位置（loadOlder 补偿 / 跳转定位），共享同一个滚动容器 */
   scrollerRef?: React.RefObject<HTMLDivElement | null>
+  /** Run 过滤：`null` = 全部 Runs（含 observed），正整数只显示该 Run 的行 */
+  runId?: number | null
 }
 
-export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingOlder, focusRange, follow = true, onFollowChange, search = '', scrollerRef: outerRef }: Props) {
+export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingOlder, focusRange, follow = true, onFollowChange, search = '', scrollerRef: outerRef, runId = null }: Props) {
   const [filter, setFilter] = useState<TableFilter>('')
   const [collapsedTurns, setCollapsedTurns] = useState<Set<string | number>>(new Set())
   const [collapsedAssistants, setCollapsedAssistants] = useState<Set<string>>(new Set())
@@ -41,29 +44,40 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
   const scrollerRef = outerRef ?? innerRef
   const lastRowsRef = useRef(data.rows)
 
+  // Run 过滤先行；后续折叠/搜索/虚拟窗口都基于过滤后的行集。
+  const filteredRows = useMemo(() => filterRowsByRun(data.rows, runId), [data.rows, runId])
+
+  // runId 切换时清掉旧 Run 的折叠态：旧 identity key 留在 set 里没意义
+  // 还会让 displayRecords 错把当前 Run 的行折叠成 SUMMARY。
+  useEffect(() => {
+    setCollapsedTurns(new Set())
+    setCollapsedAssistants(new Set())
+  }, [runId])
+
   const display = useMemo(
-    () => displayRecords(data.rows, { filter, search, collapsedTurns, collapsedAssistants }),
-    [data.rows, filter, search, collapsedTurns, collapsedAssistants],
+    () => displayRecords(filteredRows, { filter, search, collapsedTurns, collapsedAssistants }),
+    [filteredRows, filter, search, collapsedTurns, collapsedAssistants],
   )
   const win = useMemo(
     () => virtualWindow(display, { hasOlder: data.hasOlder, scrollTop, viewportHeight }),
     [display, data.hasOlder, scrollTop, viewportHeight],
   )
 
-  const turns = useMemo(() => collapsibleTurns(data.rows), [data.rows])
-  const assistants = useMemo(() => collapsibleAssistants(data.rows), [data.rows])
+  const turns = useMemo(() => collapsibleTurns(filteredRows), [filteredRows])
+  const assistants = useMemo(() => collapsibleAssistants(filteredRows), [filteredRows])
 
   // 焦点集：Timeline 选区覆盖的行（按行序几何：行 i 占 [i, i+1]）。
   // range 为空或无命中时全部正常显示；命中时窗口外行 data-focus="out" 变暗。
+  // 焦点集按过滤后的行集计算——切 Run 后不在当前 Run 的行不会出现在 focusIds。
   const focusIds = useMemo(() => {
     if (!focusRange) return null
     const ids = new Set<string>()
-    for (const r of data.rows) {
+    for (const r of filteredRows) {
       const i = r.index
       if (i <= focusRange.end && i + 1 >= focusRange.start) ids.add(r.id)
     }
     return ids.size ? ids : null
-  }, [focusRange, data.rows])
+  }, [focusRange, filteredRows])
 
   // 跟随尾部：行数据变化且 follow 开着时贴底。用行数组引用变化判断，
   // unchanged 拍不产生新数组，不会无谓跳滚动。
@@ -197,7 +211,7 @@ export function SessionTable({ data, selectedId, onSelect, onLoadOlder, loadingO
                 <TableRow
                   key={r.id}
                   row={r}
-                  rows={data.rows}
+                  rows={filteredRows}
                   /** 裁窗后首行的原始 _seq。无 older 时 server 给 cursor=0，0+row.index+1 == 1-based 局部序号；
                       有 older 时 cursor>0，idx 跳到真实绝对序号，避免视觉上 "01" 误读成 older 行的序号。 */
                   cursor={data.cursor}

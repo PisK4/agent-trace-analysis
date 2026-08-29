@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { api } from '../../api/client'
 import type { SessionData } from '../../api/merge'
+import type { RunInfo } from '../../api/types'
 import { useToast } from '../toast'
 
 const SCORES = ['good', 'bad', 'partial'] as const
@@ -16,9 +17,13 @@ interface Props {
   onSearchChange: (v: string) => void
   onRenamed: (title: string, crumb: string) => void
   onRefresh: () => void
+  /** 当前 Session 的 Run 列表（来自 useRuns） */
+  runs: RunInfo[]
+  /** 当前选中的 Run id：null = 全部 Runs（含 observed） */
+  selectedRunId: number | null
 }
 
-export function TopBar({ sessionId, data, follow, onFollowChange, search, onSearchChange, onRenamed, onRefresh }: Props) {
+export function TopBar({ sessionId, data, follow, onFollowChange, search, onSearchChange, onRenamed, onRefresh, runs, selectedRunId }: Props) {
   const toast = useToast()
   const [scoreOpen, setScoreOpen] = useState(false)
   const [note, setNote] = useState('')
@@ -100,8 +105,19 @@ export function TopBar({ sessionId, data, follow, onFollowChange, search, onSear
             />
           </div>
         )}
-        <span className="stat-badge" title="Run 由真实 agent_start 生命周期产生">
+        <span className="stat-badge" title="Run 由真实 agent_start 生命周期产生；Turns 是后端权威计数；冲突由 Run 派生">
+          <span>Runs</span><b>{runs.length}</b>
+          <span className="meta-sep">·</span>
           <span>Turns</span><b>{data.turns || '暂无'}</b>
+          {runs.some((r) => r.conflict_count > 0) ? (
+            <span className="meta-sep meta-warn" data-testid="conflict-count">
+              · <span className="meta-warn-label">冲突</span>
+              <b>{runs.reduce((sum, r) => sum + r.conflict_count, 0)}</b>
+            </span>
+          ) : null}
+          {selectedRunId != null ? (
+            <span className="meta-sep">· R{selectedRunId}</span>
+          ) : null}
         </span>
       </span>
       <div className="divider" />
