@@ -38,40 +38,43 @@ def _local(ledger_path, args):
     from ata.ledger import Ledger
     from ata.queries import list_compactions, list_tools, summarize_usage, list_runs, list_turns
     led = Ledger(ledger_path)
-    if args.what == "sessions":
-        rows = led.sessions()
-        if args.agent:
-            rows = [r for r in rows if r["agent"] == args.agent]
-        if args.since_days is not None:
-            cutoff = int(time.time() * 1000) - args.since_days * 86400000
-            rows = [r for r in rows if r.get("last_ts", 0) >= cutoff]
-        if args.limit:
-            rows = rows[:args.limit]
-        return {"ok": True, "sessions": rows}
-    if not args.sid:
-        sys.exit("error: sid required")
-    if led.session(args.sid) is None:
-        sys.exit('error: {"ok": false, "error": "unknown session"}')
-    if args.what == "events":
-        recs = [r for r in led.read(args.sid)
-                if args.after_seq is None or r["seq"] > args.after_seq]
-        if args.limit:
-            recs = recs[: args.limit]
-        return {"ok": True, "events": recs,
-                "next_after_seq": recs[-1]["seq"] if recs else (args.after_seq or 0)}
-    if args.what == "runs":
-        return {"ok": True, "runs": list_runs(led, args.sid)}
-    if args.what == "turns":
-        return {"ok": True, "turns": list_turns(led, args.sid)}
-    if args.what == "lineage":
-        return {"ok": True, "ancestors": led.ancestry(args.sid),
-                "children": led.children(args.sid)}
-    if args.what == "usage":
-        return {"ok": True, **summarize_usage(led.read(args.sid))}
-    if args.what == "tools":
-        rows = list_tools(led.read(args.sid), args.status, args.name)
-        return {"ok": True, "tools": rows}
-    return {"ok": True, "compactions": list_compactions(led.read(args.sid))}
+    try:
+        if args.what == "sessions":
+            rows = led.sessions()
+            if args.agent:
+                rows = [r for r in rows if r["agent"] == args.agent]
+            if args.since_days is not None:
+                cutoff = int(time.time() * 1000) - args.since_days * 86400000
+                rows = [r for r in rows if r.get("last_ts", 0) >= cutoff]
+            if args.limit:
+                rows = rows[:args.limit]
+            return {"ok": True, "sessions": rows}
+        if not args.sid:
+            sys.exit("error: sid required")
+        if led.session(args.sid) is None:
+            sys.exit('error: {"ok": false, "error": "unknown session"}')
+        if args.what == "events":
+            recs = [r for r in led.read(args.sid)
+                    if args.after_seq is None or r["seq"] > args.after_seq]
+            if args.limit:
+                recs = recs[: args.limit]
+            return {"ok": True, "events": recs,
+                    "next_after_seq": recs[-1]["seq"] if recs else (args.after_seq or 0)}
+        if args.what == "runs":
+            return {"ok": True, "runs": list_runs(led, args.sid)}
+        if args.what == "turns":
+            return {"ok": True, "turns": list_turns(led, args.sid)}
+        if args.what == "lineage":
+            return {"ok": True, "ancestors": led.ancestry(args.sid),
+                    "children": led.children(args.sid)}
+        if args.what == "usage":
+            return {"ok": True, **summarize_usage(led.read(args.sid))}
+        if args.what == "tools":
+            rows = list_tools(led.read(args.sid), args.status, args.name)
+            return {"ok": True, "tools": rows}
+        return {"ok": True, "compactions": list_compactions(led.read(args.sid))}
+    finally:
+        led.close()
 
 
 def _request(base, path, body=None, method=None):
@@ -85,7 +88,11 @@ def _request(base, path, body=None, method=None):
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
-        sys.exit(f"error: {e.read().decode()}")
+        try:
+            message = e.read().decode()
+        finally:
+            e.close()
+        sys.exit(f"error: {message}")
     except urllib.error.URLError as e:
         sys.exit(f"error: service unreachable ({e.reason}); "
                  f"try --ledger ~/.ata/ata.sqlite for read-only ops")

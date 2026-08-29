@@ -77,8 +77,11 @@ def main(argv=None):
     args = p.parse_args(argv)
     led = Ledger(Path(args.ledger))
     if args.cmd == "seed":
-        seed_demo(led)
-        print(f"seeded {led.path}")
+        try:
+            seed_demo(led)
+            print(f"seeded {led.path}")
+        finally:
+            led.close()
         return
     start_tails(
         led,

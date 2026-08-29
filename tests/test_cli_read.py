@@ -17,6 +17,11 @@ class TestCliRead(unittest.TestCase):
         led.append({"v": 1, "id": "ts1", "agent_id": "pi", "session_id": "s1",
                     "ts": 1002, "type": "turn.started", "run_id": 1,
                     "turn_number": 1, "observed_turn_ordinal": None, "payload": {}})
+        led.close()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.led_dir)
 
     def run_cli(self, *argv):
         buf = io.StringIO()
