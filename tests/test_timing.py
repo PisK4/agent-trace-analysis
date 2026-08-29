@@ -2,9 +2,9 @@ import unittest
 from ata.project import summarize_timing
 
 
-def rec(seq, typ, ts, payload, turn=1):
+def rec(seq, typ, ts, payload, observed_turn_ordinal=1):
     return {"seq": seq, "event": {"v": 1, "id": f"e{seq}", "agent_id": "pi",
-            "session_id": "s", "ts": TS0 + ts, "type": typ, "observed_turn_ordinal": turn,
+            "session_id": "s", "ts": TS0 + ts, "type": typ, "observed_turn_ordinal": observed_turn_ordinal,
             "payload": payload}}
 
 
@@ -75,9 +75,9 @@ class TestSummarizeTiming(unittest.TestCase):
     def test_multi_turn_per_turn_rows(self):
         recs = [
             rec(1, "message.upserted", 1000, {"message_id": "a1", "role": "assistant",
-                "status": "completed", "duration_ms": 4000}, turn=1),
+                "status": "completed", "duration_ms": 4000}, observed_turn_ordinal=1),
             rec(2, "message.upserted", 9000, {"message_id": "a2", "role": "assistant",
-                "status": "completed", "duration_ms": 6000}, turn=2),
+                "status": "completed", "duration_ms": 6000}, observed_turn_ordinal=2),
         ]
         out = summarize_timing(recs)
         self.assertEqual(out["turns"], 2)

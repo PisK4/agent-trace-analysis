@@ -98,7 +98,7 @@ export function isUnchanged(res: SessionResponse): res is Unchanged {
   return 'unchanged' in res && res.unchanged === true
 }
 
-// ── Session score 只读视图（旧 annotations 响应保留类型兼容）──
+// ── Session score 只读视图；Evaluation 复用同一份 Session 事实 ──
 
 export interface ScoreEntry {
   session_id: string

@@ -2,9 +2,9 @@ import unittest
 from ata.project import project_session
 
 
-def rec(seq, typ, payload, turn=None):
+def rec(seq, typ, payload, observed_turn_ordinal=None):
     return {"seq": seq, "event": {"v": 1, "id": f"e{seq}", "agent_id": "cue",
-            "session_id": "s", "ts": seq * 1000, "type": typ, "observed_turn_ordinal": turn,
+            "session_id": "s", "ts": seq * 1000, "type": typ, "observed_turn_ordinal": observed_turn_ordinal,
             "payload": payload}}
 
 
@@ -15,7 +15,7 @@ class TestScoreProjection(unittest.TestCase):
             rec(2, "session.scored", {"value": "bad", "note": "方向跑偏"}),
             rec(3, "message.upserted", {"message_id": "m1", "role": "user",
                                         "text": "hi", "status": "completed",
-                                        "started_at": 3000}, turn=1),
+                                        "started_at": 3000}, observed_turn_ordinal=1),
             rec(4, "session.scored", {"value": "good"}),
         ]
         page = project_session("s", "cue", recs)

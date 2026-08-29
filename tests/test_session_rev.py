@@ -10,11 +10,11 @@ def opened(sid):
             "ts": 1000, "type": "session.opened", "observed_turn_ordinal": None, "payload": {"title": sid}}
 
 
-def message(sid, mid, turn=1):
+def message(sid, mid, observed_turn_ordinal=1):
     return {"v": 1, "id": mid, "agent_id": "pi", "session_id": sid,
-            "ts": 1001 + turn, "type": "message.upserted", "observed_turn_ordinal": turn,
+            "ts": 1001 + observed_turn_ordinal, "type": "message.upserted", "observed_turn_ordinal": observed_turn_ordinal,
             "payload": {"message_id": mid, "role": "user", "text": "hi",
-                        "started_at": 1000 + turn, "status": "completed"}}
+                        "started_at": 1000 + observed_turn_ordinal, "status": "completed"}}
 
 
 class TestSessionRev(unittest.TestCase):
