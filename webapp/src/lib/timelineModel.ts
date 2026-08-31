@@ -3,6 +3,7 @@
 // 旧版时间轴已固定 Sequence 视图（Actual time / Duration / Usage 模式已移除，
 // 见 web/index.html zone-bar 注释），故这里只保留 sequence 分支——index 即时间轴坐标。
 import type { ProjectedRow } from '../api/types'
+import { rowTurnKey, rowTurnLabel } from './turnIdentity'
 
 /** 泳道分配：tool/subtool=2 · assistant/compacted=1 · 其余(user/context/system)=0 */
 export function laneOf(kind: ProjectedRow['kind']): number {
@@ -21,6 +22,8 @@ export interface TSpan {
 
 export interface TurnBound {
   turn: number
+  key: string | number
+  label: string
   /** 该轮起始行在 sequence 轴上的位置 */
   time: number
 }
@@ -51,7 +54,10 @@ export function buildTimeline(rows: ProjectedRow[]): TimelineModel {
   const bounds: TurnBound[] = []
   base.forEach((row, i) => {
     // turn 0 是 falsy：与旧版同口径，turn==null 或 0 都不画分隔线
-    if (row.start && row.turn) bounds.push({ turn: row.turn, time: i })
+    const key = rowTurnKey(row)
+    const label = rowTurnLabel(row)
+    const turn = row.turn_number ?? row.turn
+    if (row.start && turn && key != null && label) bounds.push({ turn, key, label, time: i })
   })
   return { start: 0, end: Math.max(1, spans.length), spans, bounds }
 }

@@ -2,6 +2,7 @@
 title: 指标体系与对比输出
 labels: [wayfinder:grilling]
 status: closed
+superseded_by: Evaluation membership in runtime-runs-and-evaluations.md
 assignee: pis
 claimed_at: 2026-08-23
 closed_at: 2026-08-23

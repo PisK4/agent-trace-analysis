@@ -4,15 +4,17 @@
 
 | 词 | 定义 |
 | --- | --- |
-| 规范事件 | 13 种 `type` 之一（见下表）；`v=1`、`agent_id` 白名单、`session_id` 非空、ts 是数值；见 `ata/schema.py` `ALLOWED_TYPES` |
+| 规范事件 | Runtime 事件由 `ata/schema.py` `ALLOWED_TYPES` 校验；Evaluation facts 走独立的 subject-aware envelope 与表，不混入 Session 事件 |
 | 单 writer | 账本写入只在 `Ledger._append_locked` 一处；`threading.Lock` 串行化；任何适配器、HTTP 端点、代理通道都走这一道门 |
 | 幂等键 | 翻译层为不同阶段发的确定性 event id（`:message_start` / `:message_end`、tool start/end）；同键后写覆盖前写 |
 | 投影 | 从事件流折叠出的可读视图（会话列表、标注、usage 合计、工具卡片等）；可重建，不是事实源 |
 | 折叠 | 把事件流折成「会话级」元事实（标题、turns、最近 ts、血缘）的纯函数；定义在 `ata/fold.py` |
 
-## 13 种规范事件
+## Runtime 事件
 
-| 类型 | turn 约束 | 含义 | 自然键 |
+当前 Runtime 事件使用 `run_id`、`turn_number` 与 `observed_turn_ordinal` 表达 identity；旧的全局 `turn` 字段和 assignment 事件不再属于生产 schema。
+
+| 类型 | identity 约束 | 含义 | 自然键 |
 | --- | --- | --- | --- |
 | `session.opened` | null | 会话起点，附 title / 可选 `parent_session` | `session.opened:` |
 | `session.renamed` | null | 用户改名，触发 latest-wins | — |
@@ -25,10 +27,11 @@
 | `compaction.boundary` | 正整数 | 上下文压缩点 | — |
 | `session.scored` | null | 人工标注（good / bad / partial + note） | — |
 | `session.score.cleared` | null | 标注墓碑 | — |
-| `session.assigned` | null | 归组入 run / task | — |
-| `session.unassigned` | null | 归组墓碑 | — |
+| `run.started` | run only | Runtime Run 起点 | — |
+| `run.ended` | run only | Runtime Run 终点 | — |
+| `run.lifecycle.conflict` | null | 生命周期冲突事实 | — |
 
-`session.*` 与 `system.upserted` 的 `turn` 字段必须为 `null`；其他类型必须为正整数。校验见 `ata/schema.py` `parse_event`。
+`session.*` 与 conflict 不携带 Runtime identity；Turn 事件必须携带 canonical Run/Turn identity 或显式 observed ordinal。校验见 `ata/schema.py` `parse_event`。
 
 ## 单 writer 的强制
 
@@ -38,7 +41,7 @@
 | Pi live hook | `POST /api/pi-hooks`（`ata/http.py` `h_pi_hooks`）→ `ledger.append` |
 | 代理通道 | `POST /api/captures`（`ata/http.py` `h_capture`）→ `ata/plugins/capture.py` `ingest_capture` → `ledger.append` |
 | 通用 `POST /api/events` | 直接走 `parse_event` + `ledger.append` |
-| 改名 / 归组 | `POST /api/sessions/<sid>/title` / `POST /api/runs/<rid>/name` → `ledger.append`（发 `session.renamed` / `session.assigned`） |
+| 改名 | `POST /api/sessions/<sid>/title` → `ledger.append`（发 `session.renamed`）；assignment 写路径已移除 |
 
 任何路径都不绕过 `Ledger._append_locked`。`threading.Lock` 串行化确保代理通道与文件 tail 同写一个会话时靠幂等键收敛。
 
@@ -82,7 +85,7 @@
 
 | 边界 | 不外推成 |
 | --- | --- |
-| 13 种事件 | 全部 agent 行为；适配器可以不发，但不许发表外类型 |
+| Runtime 事件 | 全部 agent 行为；适配器可以不发，但不许发表外类型 |
 | 幂等键收敛 | 「账本能解决一切重复」；轮次口径漂移不在幂等键范围（见 [`proxy-capture-channel.md`](proxy-capture-channel.md)） |
 | `fold_session_meta` 纯函数 | 「事件流与投影必然一致」；两侧必须都对同一事件流调用同函数 |
 
@@ -90,7 +93,7 @@
 
 | 概念 | 文件 · 符号 |
 | --- | --- |
-| 13 种事件白名单 | `ata/schema.py` `ALLOWED_TYPES` |
+| Runtime 事件白名单 | `ata/schema.py` `ALLOWED_TYPES` |
 | 事件校验 | `ata/schema.py` `parse_event` |
 | 幂等键 | `ata/ledger.py` `_dedupe_key` |
 | 单 writer | `ata/ledger.py` `Ledger.append` + `_append_locked` |

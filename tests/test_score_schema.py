@@ -7,7 +7,7 @@ def scored(value, note=None):
     if note is not None:
         payload["note"] = note
     return {"v": 1, "id": "x1", "agent_id": "cue", "session_id": "s1",
-            "ts": 1000, "type": "session.scored", "turn": None, "payload": payload}
+            "ts": 1000, "type": "session.scored", "observed_turn_ordinal": None, "payload": payload}
 
 
 class TestScored(unittest.TestCase):

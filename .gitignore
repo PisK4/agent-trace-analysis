@@ -8,3 +8,5 @@ data/
 __pycache__/
 # Vite 构建产物：webapp build 输出，服务启动时从磁盘读，不入库
 web/dist/
+node_modules
+.claude

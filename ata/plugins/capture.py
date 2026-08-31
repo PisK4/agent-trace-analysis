@@ -216,7 +216,6 @@ def _translate(rec, state):
                 session_id=sid,
                 type_="system.upserted",
                 payload={"prompt_text": prompt_text, "tools_catalog": catalog},
-                turn=None,
                 ts=ts,
                 eid=f"{sid}:system:{h}",
             ))
@@ -284,7 +283,7 @@ def _translate(rec, state):
                 "thinking": None,
                 "model": None,
             },
-            turn=real_ordinal,
+            observed_turn_ordinal=real_ordinal,
             ts=ts,
             eid=f"{sid}:msg:{raw_mid}",
         ))
@@ -323,7 +322,7 @@ def _translate(rec, state):
                 "thinking": thinking_joined,
                 "model": req.get("model"),
             },
-            turn=turn,
+            observed_turn_ordinal=turn,
             ts=ts,
             eid=f"{sid}:msg:{resp_id}",
         ))
@@ -337,7 +336,7 @@ def _translate(rec, state):
                 type_="turn.ended",
                 payload={"usage": usage_from_counts(
                     inp, outp, cr, cw, total_tokens=inp + outp + cr + cw)},
-                turn=turn,
+                observed_turn_ordinal=turn,
                 ts=ts,
                 eid=f"{sid}:turn:{turn}:ended:{rid or ts}",
             ))
@@ -371,7 +370,7 @@ def _translate(rec, state):
             session_id=sid,
             type_="tool.upserted",
             payload=tool_start_payload(cid, response_id, name, args, text, started),
-            turn=turn,
+            observed_turn_ordinal=turn,
             ts=ts,
             eid=f"{sid}:tool:{cid}:start",
         ))
@@ -404,7 +403,7 @@ def _translate(rec, state):
                 session_id=sid,
                 type_="tool.upserted",
                 payload=tool_end_payload(prev, cid, response_id, res_text, completed),
-                turn=turn,
+                observed_turn_ordinal=turn,
                 ts=ts,
                 eid=f"{sid}:tool:{cid}:end",
             ))

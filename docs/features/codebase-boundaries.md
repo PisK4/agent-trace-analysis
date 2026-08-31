@@ -26,13 +26,13 @@ ATA 的几条不可越线。任何改动若触线，先回这里；测试与 lin
 
 | 对象 | 红线 |
 | --- | --- |
-| 账本 | 写入只走 `Ledger._append_locked`；适配器 / HTTP 端点 / 代理通道都过这一道门 |
-| 事件 schema | 13 种 `type` 收在 `ata/schema.py` `ALLOWED_TYPES`；新事件必须先扩白名单 |
+| 账本 | Session 与 Evaluation facts 都在同一 `Ledger` writer / transaction discipline 下写入；适配器 / HTTP 端点 / 代理通道都过这一道门 |
+| 事件 schema | Runtime event type 收在 `ata/schema.py` `ALLOWED_TYPES`；新事件必须先扩白名单；Evaluation fact type 单独校验并存于 `evaluation_events` |
 | 端口 | launchd 服务一个；dev 临时端口一个；不并发跑 |
 | 视觉体系 | React 版样式只在 `webapp/src/styles/`；不为同一规则建立第二份 CSS |
-| 折叠 | 标题 / turns / 血缘的 latest-wins 规则唯一归属地在 `ata/fold.py` `fold_session_meta` |
-| 翻译词汇 | envelope / 工具双行 / 轮次递增 / usage 三态收在 `ata/plugins/common.py` |
-| 投影 | usage / tools / tool-stats / timing / compactions 由 `ata/project.py` 集中 |
+| 折叠 | Session 标题 / 最近 ts / 血缘的 latest-wins 规则归属 `ata/fold.py` `fold_session_meta`；Runtime Run/Turn 与 Evaluation membership 分别由各自 domain fold 负责 |
+| 翻译词汇 | envelope / 工具双行 / observed 轮次 / usage 三态收在 `ata/plugins/common.py`；canonical Run/Turn identity 由 `ata/runtime.py` 统一分配 |
+| 投影 | Session / Run / Turn / Evaluation 读取先经过 `ata/queries.py`；usage / tools / tool-stats / timing / compactions 的投影实现仍集中在 `ata/project.py` |
 | 便捷层缓存 | `ata/projection_cache.py` 单一归属地；rev 门控短路 |
 
 ## 测试替身与数据

@@ -1,6 +1,7 @@
 // Ledger 表格的数据模型：过滤 → 折叠投影 → 虚拟窗口，全部纯函数。
 // 语义平移自旧版 web/js/model.js displayRecords / table.js virtualRows。
 import type { ProjectedRow } from '../api/types'
+import { rowTurnKey, rowTurnLabel } from './turnIdentity'
 
 export type TableFilter = '' | 'failed' | 'tools'
 
@@ -17,7 +18,8 @@ export interface SummaryRow {
   kind: 'summary'
   tag: 'SUMMARY'
   text: string
-  expandTurn?: number
+  expandTurn?: string | number
+  turnLabel?: string | null
   expandAssistant?: string
 }
 
@@ -39,6 +41,16 @@ export function rowContent(row: ProjectedRow, rows: ProjectedRow[]): string {
 
 const compactPreview = (text: string) => String(text || '').replace(/\s+/g, ' ').trim()
 
+/**
+ * 按 Run 过滤投影行：`null` = 全部；正整数只保留 `run_id === runId` 的行。
+ * 不基于裸 `turn` 过滤——同一 Session 中不同 Run 的 T1 不能碰撞，
+ * observed（run_id=null）的行只在「全部」视图中出现。
+ */
+export function filterRowsByRun(rows: ProjectedRow[], runId: number | null): ProjectedRow[] {
+  if (runId == null) return rows
+  return rows.filter((row) => row.run_id === runId)
+}
+
 function matchesSearch(row: ProjectedRow, terms: string[]): boolean {
   if (!terms.length) return true
   const blob = [
@@ -58,7 +70,7 @@ export function displayRecords(
   opts: {
     filter: TableFilter
     search: string
-    collapsedTurns: Set<number>
+    collapsedTurns: Set<string | number>
     collapsedAssistants: Set<string>
   },
 ): DisplayRow[] {
@@ -71,21 +83,23 @@ export function displayRecords(
     return base.filter((r) => matchesSearch(r, terms)).map((r) => ({ ...r, virtual: 'content' }))
   }
 
-  const byTurn = new Map<number, ProjectedRow[]>()
+  const byTurn = new Map<string | number, ProjectedRow[]>()
   for (const row of base) {
-    if (row.turn == null) continue
-    const list = byTurn.get(row.turn) ?? []
+    const key = rowTurnKey(row)
+    if (key == null) continue
+    const list = byTurn.get(key) ?? []
     list.push(row)
-    byTurn.set(row.turn, list)
+    byTurn.set(key, list)
   }
 
   const out: DisplayRow[] = []
   for (const row of base) {
-    if (row.turn == null || !opts.collapsedTurns.has(row.turn) || row.kind === 'system') {
+    const turnKey = rowTurnKey(row)
+    if (turnKey == null || !opts.collapsedTurns.has(turnKey) || row.kind === 'system') {
       out.push({ ...row, virtual: 'content' })
       continue
     }
-    const content = (byTurn.get(row.turn) ?? []).filter((item) => item.kind !== 'system')
+    const content = (byTurn.get(turnKey) ?? []).filter((item) => item.kind !== 'system')
     if (content.length <= 1 || row.id !== content[0].id) continue
     out.push({ ...row, virtual: 'content' })
     const rest = content.slice(1)
@@ -99,7 +113,8 @@ export function displayRecords(
       kind: 'summary',
       tag: 'SUMMARY',
       text: `${steps} ${steps === 1 ? 'step' : 'steps'} · ${tools} tool ${tools === 1 ? 'call' : 'calls'}`,
-      expandTurn: row.turn,
+      expandTurn: turnKey,
+      turnLabel: rowTurnLabel(row),
     })
   }
 
@@ -181,11 +196,12 @@ export function virtualWindow(
 }
 
 /** 可折叠的 turn 集合：行数 >1 的 turn 才有折叠意义 */
-export function collapsibleTurns(rows: ProjectedRow[]): number[] {
-  const counts = new Map<number, number>()
+export function collapsibleTurns(rows: ProjectedRow[]): Array<string | number> {
+  const counts = new Map<string | number, number>()
   for (const row of rows) {
-    if (row.turn == null || row.kind === 'system') continue
-    counts.set(row.turn, (counts.get(row.turn) ?? 0) + 1)
+    const key = rowTurnKey(row)
+    if (key == null || row.kind === 'system') continue
+    counts.set(key, (counts.get(key) ?? 0) + 1)
   }
   return [...counts.entries()].filter(([, n]) => n > 1).map(([turn]) => turn)
 }

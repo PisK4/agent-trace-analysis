@@ -64,6 +64,9 @@ class AcceptTest(unittest.TestCase):
                 self.assertEqual(asst["usage"]["status"], "missing")
             finally:
                 httpd.shutdown()
+                httpd.server_close()
+                th.join(timeout=2)
+                led.close()
 
     # web/dist 是构建产物不入库（见 .gitignore）；fresh clone 上跳过而非红，
     # 构建方式在 skip 理由里给出。
@@ -75,7 +78,8 @@ class AcceptTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             led = Ledger(Path(td))
             httpd = make_server(led, Path("web/dist"), "127.0.0.1", 0)
-            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            th = threading.Thread(target=httpd.serve_forever, daemon=True)
+            th.start()
             try:
                 with urllib.request.urlopen(f"http://127.0.0.1:{httpd.server_port}/") as r:
                     html = r.read().decode()
@@ -84,6 +88,9 @@ class AcceptTest(unittest.TestCase):
                 self.assertIn("/assets/", html)
             finally:
                 httpd.shutdown()
+                httpd.server_close()
+                th.join(timeout=2)
+                led.close()
 
 
 if __name__ == "__main__":

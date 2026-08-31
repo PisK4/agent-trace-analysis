@@ -1,35 +1,26 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
-import time
 import urllib.error
 import urllib.request
-import uuid
-from pathlib import Path
+import time
+from urllib.parse import urlencode
 
 from ata.schema import envelope
 
 DEFAULT_URL = "http://127.0.0.1:17877"
-REGRESSION_DIR = Path.home() / ".ata" / "regression"
-TASKS_FILE = REGRESSION_DIR / "tasks.jsonl"
-RUNS_DIR = REGRESSION_DIR / "runs"
-# 指标词表：客观过程信号 + 主观标注。最终清单由「指标清单定稿」票裁决后在此增删。
-METRICS = ["human_score", "turns", "tool_fail_rate",
-           "tokens_reported", "usage_missing_turns", "duration_s"]
-
 # CLI 子命令集合的唯一归属地：__main__ 据此把机器读路径分发进本模块，
 # 两处各写一遍会漂移（架构评审二轮候选 7）。
-CLI_SUBCOMMANDS = {"read", "rate", "tasks", "run", "compare"}
+CLI_SUBCOMMANDS = {"read", "rate", "evaluation", "evaluations", "eval"}
 
 
 def build_parser():
     p = argparse.ArgumentParser(prog="ata read")
     p.add_argument("what", choices=[
-        "sessions", "events", "lineage", "usage", "tools", "compactions"])
+        "sessions", "runs", "turns", "events", "lineage", "usage", "tools", "compactions"])
     p.add_argument("sid", nargs="?", help="session id（sessions 子命令不需要）")
     p.add_argument("--agent")
     p.add_argument("--since-days", type=int)
@@ -45,48 +36,63 @@ def build_parser():
 
 def _local(ledger_path, args):
     from ata.ledger import Ledger
-    from ata.project import list_compactions, list_tools, summarize_usage
+    from ata.queries import list_compactions, list_tools, summarize_usage, list_runs, list_turns
     led = Ledger(ledger_path)
-    if args.what == "sessions":
-        rows = led.sessions()
-        if args.agent:
-            rows = [r for r in rows if r["agent"] == args.agent]
-        return {"ok": True, "sessions": rows}
-    if not args.sid:
-        sys.exit("error: sid required")
-    if led.session(args.sid) is None:
-        sys.exit('error: {"ok": false, "error": "unknown session"}')
-    if args.what == "events":
-        recs = [r for r in led.read(args.sid)
-                if args.after_seq is None or r["seq"] > args.after_seq]
-        if args.limit:
-            recs = recs[: args.limit]
-        return {"ok": True, "events": recs,
-                "next_after_seq": recs[-1]["seq"] if recs else (args.after_seq or 0)}
-    if args.what == "lineage":
-        return {"ok": True, "ancestors": led.ancestry(args.sid),
-                "children": led.children(args.sid)}
-    if args.what == "usage":
-        return {"ok": True, **summarize_usage(led.read(args.sid))}
-    if args.what == "tools":
-        rows = list_tools(led.read(args.sid), args.status, args.name)
-        return {"ok": True, "tools": rows}
-    return {"ok": True, "compactions": list_compactions(led.read(args.sid))}
+    try:
+        if args.what == "sessions":
+            rows = led.sessions()
+            if args.agent:
+                rows = [r for r in rows if r["agent"] == args.agent]
+            if args.since_days is not None:
+                cutoff = int(time.time() * 1000) - args.since_days * 86400000
+                rows = [r for r in rows if r.get("last_ts", 0) >= cutoff]
+            if args.limit:
+                rows = rows[:args.limit]
+            return {"ok": True, "sessions": rows}
+        if not args.sid:
+            sys.exit("error: sid required")
+        if led.session(args.sid) is None:
+            sys.exit('error: {"ok": false, "error": "unknown session"}')
+        if args.what == "events":
+            recs = [r for r in led.read(args.sid)
+                    if args.after_seq is None or r["seq"] > args.after_seq]
+            if args.limit:
+                recs = recs[: args.limit]
+            return {"ok": True, "events": recs,
+                    "next_after_seq": recs[-1]["seq"] if recs else (args.after_seq or 0)}
+        if args.what == "runs":
+            return {"ok": True, "runs": list_runs(led, args.sid)}
+        if args.what == "turns":
+            return {"ok": True, "turns": list_turns(led, args.sid)}
+        if args.what == "lineage":
+            return {"ok": True, "ancestors": led.ancestry(args.sid),
+                    "children": led.children(args.sid)}
+        if args.what == "usage":
+            return {"ok": True, **summarize_usage(led.read(args.sid))}
+        if args.what == "tools":
+            rows = list_tools(led.read(args.sid), args.status, args.name)
+            return {"ok": True, "tools": rows}
+        return {"ok": True, "compactions": list_compactions(led.read(args.sid))}
+    finally:
+        led.close()
 
 
-def _request(base, path, body=None):
-    """CLI 统一 HTTP 通道（架构评审二轮候选 7）：错误纪律与超时只有一份。
-    CLI 是短命进程，失败直接退出，没有重试语义可谈。"""
-    data = json.dumps(body).encode() if body is not None else None
+def _request(base, path, body=None, method=None):
+    """CLI 统一 HTTP 通道；错误纪律与超时只有一份。"""
+    data = json.dumps(body, ensure_ascii=False).encode() if body is not None else None
     req = urllib.request.Request(
         base.rstrip("/") + path, data=data,
         headers={"content-type": "application/json"} if data is not None else {},
-        method="POST" if data is not None else "GET")
+        method=method or ("POST" if data is not None else "GET"))
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
-        sys.exit(f"error: {e.read().decode()}")
+        try:
+            message = e.read().decode()
+        finally:
+            e.close()
+        sys.exit(f"error: {message}")
     except urllib.error.URLError as e:
         sys.exit(f"error: service unreachable ({e.reason}); "
                  f"try --ledger ~/.ata/ata.sqlite for read-only ops")
@@ -97,17 +103,17 @@ def _remote(base, what, sid, filters):
     本函数不再依赖 argparse.Namespace 的形状（假 Namespace 七个 None 的骗局已拆）。"""
     q = []
     if filters.get("after_seq") is not None:
-        q.append(f"after_seq={filters['after_seq']}")
+        q.append(("after_seq", filters["after_seq"]))
     if filters.get("limit"):
-        q.append(f"limit={filters['limit']}")
+        q.append(("limit", filters["limit"]))
     if filters.get("status"):
-        q.append(f"status={filters['status']}")
+        q.append(("status", filters["status"]))
     if filters.get("name"):
-        q.append(f"name={filters['name']}")
+        q.append(("name", filters["name"]))
     if filters.get("full"):
-        q.append("full=true")
+        q.append(("full", "true"))
     path = "/api/sessions" if what == "sessions" else f"/api/sessions/{sid}/{what}"
-    return _request(base, path + ("?" + "&".join(q) if q else ""))
+    return _request(base, path + ("?" + urlencode(q) if q else ""))
 
 
 def apply_client_filters(data, args):
@@ -115,9 +121,12 @@ def apply_client_filters(data, args):
     if args.what == "sessions" and isinstance(data, list):
         data = {"ok": True, "sessions": data}
     if args.what == "sessions" and "sessions" in data:
-        # /api/sessions 服务端不支持过滤参数，limit/agent 由客户端裁剪
+        # /api/sessions 服务端不支持过滤参数，limit/agent/time 由客户端裁剪
         if args.agent:
             data["sessions"] = [r for r in data["sessions"] if r["agent"] == args.agent]
+        if args.since_days is not None:
+            cutoff = int(time.time() * 1000) - args.since_days * 86400000
+            data["sessions"] = [r for r in data["sessions"] if r.get("last_ts", 0) >= cutoff]
         if args.limit:
             data["sessions"] = data["sessions"][: args.limit]
     return data
@@ -126,12 +135,8 @@ def apply_client_filters(data, args):
 def main(argv):
     if argv and argv[0] == "rate":
         return _rate_main(argv)
-    if argv and argv[0] == "tasks":
-        return _tasks_main(argv)
-    if argv and argv[0] == "run":
-        return _run_main(argv)
-    if argv and argv[0] == "compare":
-        return _compare_main(argv)
+    if argv and argv[0] in {"evaluation", "evaluations", "eval"}:
+        return _evaluation_main(argv)
     args = build_parser().parse_args(argv[1:] if argv and argv[0] == "read" else argv)
     if args.ledger:
         data = _local(args.ledger, args)
@@ -158,8 +163,9 @@ def _rate_main(argv):
     if isinstance(meta, list):  # 远端 /api/sessions 返回裸数组
         meta = {"ok": True, "sessions": meta}
     mine = next((r for r in meta.get("sessions", []) if r["id"] == a.sid), None)
-    agent = mine["agent"] if mine else "pi"
-    ev = build_score_event(agent, a.sid, a.value, a.note)
+    if mine is None:
+        sys.exit('error: {"ok": false, "error": "unknown session"}')
+    ev = build_score_event(mine["agent"], a.sid, a.value, a.note)
     result = post_json(a.url, "/api/events", {"events": [ev]})
     print(json.dumps(result, ensure_ascii=False))
 
@@ -179,166 +185,56 @@ def get_json(base, path):
     return _request(base, path)
 
 
-# ---- 回归任务集与实验轮次（T5 决议：文件放 ~/.ata/regression/，本地 git 管版本）----
-
-def _tasks_main(argv):
-    p = argparse.ArgumentParser(prog="ata tasks")
-    sub = p.add_subparsers(dest="cmd", required=True)
-    add = sub.add_parser("add", help="追加一道题（题面从 stdin 贴入）")
-    add.add_argument("--channel", required=True,
-                     help="重跑时用哪个宿主（cue/pi/droid/claude/codex）")
-    add.add_argument("--model")
-    add.add_argument("--thinking-level")
-    add.add_argument("--k", type=int, default=1,
-                     help="独立重跑次数，pass^k 用；默认 1")
-    add.add_argument("--taskset", type=Path, default=TASKS_FILE)
-    lst = sub.add_parser("list", help="列出全部题目")
-    lst.add_argument("--taskset", type=Path, default=TASKS_FILE)
-    a = p.parse_args(argv[1:])
-    if a.cmd == "add":
-        text = sys.stdin.read().strip()
-        if not text:
-            sys.exit("error: 题面为空；把首条用户消息原文从 stdin 贴入")
-        task = {"task_id": "t-" + uuid.uuid4().hex[:8], "input": text,
-                "channel": a.channel, "model": a.model,
-                "thinking_level": a.thinking_level, "k": a.k}
-        a.taskset.parent.mkdir(parents=True, exist_ok=True)
-        with a.taskset.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(task, ensure_ascii=False) + "\n")
-        print(json.dumps({"ok": True, "task_id": task["task_id"],
-                          "taskset": str(a.taskset)}, ensure_ascii=False))
-    else:
-        rows = []
-        if a.taskset.exists():
-            for line in a.taskset.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    rows.append(json.loads(line))
-        print(json.dumps({"ok": True, "tasks": rows}, ensure_ascii=False))
-
-
-def _run_main(argv):
-    p = argparse.ArgumentParser(prog="ata run")
-    sub = p.add_subparsers(dest="cmd", required=True)
-    new = sub.add_parser("new", help="创建一轮实验（干预后先建 run 再重跑）")
-    new.add_argument("--desc", required=True, help="这轮改了什么，一句话")
-    new.add_argument("--taskset", type=Path, default=TASKS_FILE)
-    new.add_argument("--url", default=os.environ.get("ATA_URL") or DEFAULT_URL)
-    lst = sub.add_parser("list", help="列出现有轮次")
-    lst.add_argument("--url", default=os.environ.get("ATA_URL") or DEFAULT_URL)
-    a = p.parse_args(argv[1:])
-    if a.cmd == "new":
-        fp = (hashlib.sha256(a.taskset.read_bytes()).hexdigest()[:16]
-              if a.taskset.exists() else None)
-        result = post_json(a.url, "/api/runs",
-                           {"description": a.desc, "taskset_fingerprint": fp})
-    else:
-        result = get_json(a.url, "/api/runs")
-    print(json.dumps(result, ensure_ascii=False))
-
-
-def collect_task_score(usage_resp, tools_resp, timing_resp, human_score, turns):
-    """便捷层响应 → 单会话 score 记录。缺数据记 None（missing），永不当作 0。
-
-    口径全部来自便捷层（spec 定稿端点）：fail_rate 出 /tools，tokens 出
-    /usage 逐轮 reported 合计，duration 出 /timing 的 span_ms（占位排除
-    已在其内部完成）。compare 不再自己重推一遍平行口径。
-    """
-    tools = tools_resp.get("tools") or []
-    fails = sum(1 for t in tools if t.get("status") == "failed")
-    turn_rows = usage_resp.get("turns") or []
-    reported = [r.get("total_tokens") for r in turn_rows
-                if r.get("status") == "reported" and r.get("total_tokens") is not None]
-    span_ms = timing_resp.get("span_ms")
-    return [
-        {"name": "human_score", "value": human_score,
-         "type": "categorical", "source": "human"},
-        {"name": "turns", "value": turns, "type": "number", "source": "machine"},
-        {"name": "tool_fail_rate",
-         "value": round(fails / len(tools), 4) if tools else None,
-         "type": "number", "source": "machine"},
-        {"name": "tokens_reported", "value": sum(reported) if reported else None,
-         "type": "number", "source": "machine"},
-        {"name": "usage_missing_turns",
-         "value": usage_resp.get("missing_turns") if turn_rows else None,
-         "type": "number", "source": "machine"},
-        {"name": "duration_s",
-         "value": round(span_ms / 1000, 1) if isinstance(span_ms, (int, float)) and span_ms > 0 else None,
-         "type": "number", "source": "machine"},
-    ]
-
-
-def _latest_by_task(assignments):
-    # 同一任务重跑归组多次时取最新一条
-    m = {}
-    for a in assignments:
-        m[a["task_id"]] = a["session_id"]
-    return m
-
-
-def _write_snapshot(run_id, per_task):
-    d = RUNS_DIR / run_id
-    d.mkdir(parents=True, exist_ok=True)
-    with (d / "scores.jsonl").open("w", encoding="utf-8") as f:
-        for task_id, (sid, recs) in sorted(per_task.items()):
-            for rec in recs:
-                f.write(json.dumps({"task_id": task_id, "session_id": sid, **rec},
-                                   ensure_ascii=False) + "\n")
-
-
-def _cell(per_task, task_id, name):
-    for rec in per_task.get(task_id, ([], []))[1]:
-        if rec["name"] == name:
-            return rec["value"]
-    return None
-
-
-def _delta(x, y):
-    if isinstance(x, (int, float)) and isinstance(y, (int, float)):
-        return f"{y - x:+g}"
-    return "n/a"  # 任一侧 missing 不算差值
-
-
-def _compare_main(argv):
-    p = argparse.ArgumentParser(prog="ata compare")
-    p.add_argument("run_a")
-    p.add_argument("run_b")
+def _evaluation_main(argv):
+    """Evaluation 的 CRUD、membership 与 history 命令统一走 HTTP facade。"""
+    p = argparse.ArgumentParser(prog="ata evaluation")
     p.add_argument("--url", default=os.environ.get("ATA_URL") or DEFAULT_URL)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("list", aliases=["ls"])
+    create = sub.add_parser("create", aliases=["new"])
+    create.add_argument("title", nargs="?")
+    create.add_argument("--title", dest="title_opt")
+    show = sub.add_parser("show", aliases=["get"])
+    show.add_argument("evaluation_id")
+    hist = sub.add_parser("history", aliases=["events"])
+    hist.add_argument("evaluation_id")
+    rename = sub.add_parser("rename")
+    rename.add_argument("evaluation_id")
+    rename.add_argument("title", nargs="?")
+    rename.add_argument("--title", dest="title_opt")
+    delete = sub.add_parser("delete", aliases=["remove"])
+    delete.add_argument("evaluation_id")
+    add = sub.add_parser("add", aliases=["add-session", "member"])
+    add.add_argument("evaluation_id")
+    add.add_argument("session_id")
+    add.add_argument("--task-label", default="")
+    remove = sub.add_parser("remove-session", aliases=["remove-member", "rm", "rm-session"])
+    remove.add_argument("evaluation_id")
+    remove.add_argument("session_id")
     a = p.parse_args(argv[1:])
     base = a.url.rstrip("/")
-    ra = get_json(base, f"/api/runs/{a.run_a}")
-    rb = get_json(base, f"/api/runs/{a.run_b}")
-
-    def fetch_scores(run):
-        base_path = "/api/sessions"
-        out = {}
-        for task_id, sid in _latest_by_task(run["assignments"]).items():
-            usage = get_json(base, f"{base_path}/{sid}/usage")
-            tools = get_json(base, f"{base_path}/{sid}/tools")
-            timing = get_json(base, f"{base_path}/{sid}/timing")
-            proj = get_json(base, f"{base_path}/{sid}")
-            score_events = proj.get("scores") or []
-            human = score_events[-1]["value"] if score_events else None
-            out[task_id] = (sid, collect_task_score(
-                usage, tools, timing, human, proj.get("turns")))
-        return out
-
-    sa, sb = fetch_scores(ra), fetch_scores(rb)
-    _write_snapshot(a.run_a, sa)
-    _write_snapshot(a.run_b, sb)
-
-    lines = [
-        f"# compare {a.run_a} vs {a.run_b}",
-        f"- A: {ra['description']}（任务集 {ra.get('taskset_fingerprint')}）",
-        f"- B: {rb['description']}（任务集 {rb.get('taskset_fingerprint')}）",
-        "- 同版任务集才可比；miss 表示数据缺失，n/a 表示差值不可算。",
-        "",
-    ]
-    header = "| task | " + " | ".join(f"{m} A | {m} B | Δ{m}" for m in METRICS) + " |"
-    lines += [header, "|" + "---|" * (len(METRICS) * 3 + 1)]
-    for t in sorted(set(sa) | set(sb)):
-        cells = []
-        for m in METRICS:
-            x, y = _cell(sa, t, m), _cell(sb, t, m)
-            cells += ["miss" if v is None else str(v) for v in (x, y)] + [_delta(x, y)]
-        lines.append(f"| {t} | " + " | ".join(cells) + " |")
-    print("\n".join(lines))
+    cmd = a.cmd
+    if cmd in {"list", "ls"}:
+        result = get_json(base, "/api/evaluations")
+    elif cmd in {"create", "new"}:
+        title = (a.title_opt if a.title_opt is not None else a.title or "").strip()
+        if not title:
+            p.error("create requires title")
+        result = post_json(base, "/api/evaluations", {"title": title})
+    elif cmd in {"show", "get"}:
+        result = get_json(base, f"/api/evaluations/{a.evaluation_id}")
+    elif cmd in {"history", "events"}:
+        result = get_json(base, f"/api/evaluations/{a.evaluation_id}/history")
+    elif cmd == "rename":
+        title = (a.title_opt if a.title_opt is not None else a.title or "").strip()
+        if not title:
+            p.error("rename requires title")
+        result = _request(base, f"/api/evaluations/{a.evaluation_id}", {"title": title}, "PATCH")
+    elif cmd in {"delete", "remove"}:
+        result = _request(base, f"/api/evaluations/{a.evaluation_id}", method="DELETE")
+    elif cmd in {"add", "add-session", "member"}:
+        result = post_json(base, f"/api/evaluations/{a.evaluation_id}/sessions",
+                           {"session_id": a.session_id, "task_label": a.task_label})
+    else:
+        result = _request(base, f"/api/evaluations/{a.evaluation_id}/sessions/{a.session_id}", method="DELETE")
+    print(json.dumps(result, ensure_ascii=False))

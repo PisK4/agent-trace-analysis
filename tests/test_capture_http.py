@@ -28,10 +28,14 @@ class CaptureHttpTest(unittest.TestCase):
         self.ledger = Ledger(Path(self.tmp.name))
         self.httpd = make_server(self.ledger, Path(self.tmp.name), "127.0.0.1", 0)
         self.port = self.httpd.server_address[1]
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
 
     def tearDown(self):
         self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=2)
+        self.ledger.close()
         self.tmp.cleanup()
 
     def post(self, payload):
@@ -43,7 +47,10 @@ class CaptureHttpTest(unittest.TestCase):
             with urllib.request.urlopen(req) as resp:
                 return resp.status, json.loads(resp.read())
         except urllib.error.HTTPError as err:
-            return err.code, json.loads(err.read())
+            try:
+                return err.code, json.loads(err.read())
+            finally:
+                err.close()
 
     def test_ingest_via_http(self):
         payload = {

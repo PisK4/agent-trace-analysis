@@ -30,7 +30,11 @@ export interface ProjectedRow {
   _seq: number
   _first?: number
   index: number
+  /** 旧投影的 Session-global turn；Runtime 投影优先使用下面三项 identity。 */
   turn: number | null
+  run_id?: number | null
+  turn_number?: number | null
+  observed_turn_ordinal?: number | null
   kind: 'user' | 'assistant' | 'context' | 'system' | 'tool' | 'subtool' | 'compacted'
   tag: string
   text: string
@@ -94,7 +98,7 @@ export function isUnchanged(res: SessionResponse): res is Unchanged {
   return 'unchanged' in res && res.unchanged === true
 }
 
-// ── 标注板（board）──
+// ── Session score 只读视图；Evaluation 复用同一份 Session 事实 ──
 
 export interface ScoreEntry {
   session_id: string
@@ -108,38 +112,84 @@ export interface ScoreEntry {
   error_count: number
 }
 
-export interface AssignmentEntry {
+// Evaluation HTTP contract：独立事实集合只引用现有 Session，不复制评分事实。
+export interface EvaluationMember {
   session_id: string
-  run_id: string | null
-  task_id: string | null
-  ts: number
-  seq: number
-  agent: string | null
-  title: string | null
-  event_count: number
-  error_count: number
+  task_label: string
+  ts?: number
+  seq?: number
+  title?: string | null
+  agent?: string | null
+  event_count?: number
+  error_count?: number
+  score?: { value: string; note: string | null; ts: number } | null
+  session?: SessionMeta | null
 }
 
-// GET /api/annotations（ledger.annotations：latest-wins 折叠墓碑后）
-export interface AnnotationsPage {
-  ok: true
-  scores: ScoreEntry[]
-  assignments: AssignmentEntry[]
+export interface EvaluationSummary {
+  evaluation_id: string
+  title: string
+  deleted: boolean
+  member_count?: number
+  created_ts?: number
+  members?: EvaluationMember[]
+}
+
+export interface EvaluationDetail extends EvaluationSummary {
+  members: EvaluationMember[]
+}
+
+export interface EvaluationsPage {
+  ok?: true
+  evaluations: EvaluationSummary[]
+}
+
+// GET /api/evaluations/{id}/history（ata/ledger.read_evaluation_events）：
+// 服务端直接吐「seq + event」原样记录，客户端不折叠、不重排；
+// UI 按 seq 升序展示 fact type 与 payload 安全摘要。
+export interface EvaluationHistoryEntry {
+  seq: number
+  event: {
+    type: string
+    ts: number
+    payload: Record<string, unknown>
+  }
 }
 
 export interface RunInfo {
-  run_id: string
-  description: string
-  taskset_fingerprint: string | null
-  created_ts: number
-  assignment_count?: number
+  run_id: number
+  external_lifecycle_id: string | null
+  status: 'open' | 'ended' | 'incomplete'
+  started_seq: number | null
+  ended_seq: number | null
+  started_ts: number | null
+  ended_ts: number | null
+  max_turn_number: number
+  conflict_count: number
+}
+
+// GET /api/sessions/{id}/turns 折叠行（ata/queries.py list_turns）：
+// run_id+turn_number 是 canonical 身份，observed_turn_ordinal 是 runless
+// fallback；客户端按 (run_id, turn_number) 做 identity，绝不据裸 turn number
+// 推断归属。status 来自 turn.ended 的 payload；open 表示尚未收到 ended。
+export interface TurnInfo {
+  run_id: number | null
+  turn_number: number | null
+  observed_turn_ordinal: number | null
+  status: string
+  first_seq: number
+  last_seq: number
 }
 
 // ── Usage 全周期（GET /api/sessions/{id}/usage，project.py summarize_usage/audit_usage）──
 
 // 逐轮 usage：context 是方言感知的上下文占用（后端算好）
 export interface UsageTurn {
+  /** Usage 的轮次也按 Runtime identity 分组；turn 仅为旧接口兼容。 */
   turn: number
+  run_id?: number | null
+  turn_number?: number | null
+  observed_turn_ordinal?: number | null
   seq: number
   agent: string
   model: string | null
@@ -157,6 +207,9 @@ export interface UsageTurn {
 export interface UsageAuditFinding {
   rule: 'missing' | 'placeholder' | 'duplicate' | 'cliff'
   turn: number
+  run_id?: number | null
+  turn_number?: number | null
+  observed_turn_ordinal?: number | null
   detail: string
 }
 
@@ -166,13 +219,17 @@ export interface UsageSummary {
   total: { input: number; output: number; cache_read: number; cache_write: number; total_tokens: number }
   missing_turns: number
   audit: { findings: UsageAuditFinding[]; reported_turns: number; expected_turns: number }
-  compactions: Array<{ turn: number | null; seq: number }>
+  compactions: Array<{ turn?: number | null; run_id?: number | null; turn_number?: number | null; observed_turn_ordinal?: number | null; seq: number }>
 }
 
 // ── 会话时间拆解（GET /api/sessions/{id}/timing，project.py summarize_timing）──
 
 export interface TimingTurn {
+  /** Timing 的轮次也不以裸 turn number 作为 React key。 */
   turn: number
+  run_id?: number | null
+  turn_number?: number | null
+  observed_turn_ordinal?: number | null
   llm_ms: number
   tool_ms: number
   steps: number

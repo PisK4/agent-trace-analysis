@@ -65,9 +65,11 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
     # `id` 字段，且带 `title`；v1 形状（marketplace 描述）用顶层 `sessionId`。
     # 注意 `id` 只从 session_start 取——message 行的 `id` 是消息 id，会污染 session_id。
     if typ == "session_start":
-        session_id = raw.get("sessionId") or raw.get("id") or state.get("session_id") or "droid-session"
+        session_id = raw.get("sessionId") or raw.get("id") or state.get("session_id")
     else:
-        session_id = raw.get("sessionId") or state.get("session_id") or "droid-session"
+        session_id = raw.get("sessionId") or state.get("session_id")
+    if not session_id:
+        return []
     state["session_id"] = session_id
     agent_id = "droid"
     # droid v2 的 timestamp 是 ISO 字符串（如 2026-07-21T04:33:47.111Z），统一转毫秒。
@@ -84,7 +86,6 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 session_id=session_id,
                 type_="session.opened",
                 payload={"title": title},
-                turn=None,
                 ts=ts,
                 eid=f"{session_id}:opened",
             ))
@@ -98,7 +99,6 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
             session_id=session_id,
             type_="session.opened",
             payload={"title": session_id},
-            turn=None,
             ts=ts,
             eid=f"{session_id}:opened",
         ))
@@ -118,7 +118,6 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 "removed_count": raw.get("removedCount"),
                 "raw": summary[:2000] if raw.get("summaryText") else None,
             },
-            turn=turn,
             ts=ts,
             eid=f"{session_id}:compact:{raw.get('id') or ts}",
         ))
@@ -138,7 +137,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
             session_id=session_id,
             type_="turn.ended",
             payload=payload,
-            turn=turn,
+            observed_turn_ordinal=turn,
             ts=ts,
             eid=eid,
         ))
@@ -187,7 +186,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                     "output_text": text if role == "assistant" else None,
                     "thinking": thinking or None,
                 },
-                turn=turn,
+                observed_turn_ordinal=turn,
                 ts=ts,
                 eid=f"{session_id}:msg:{mid}",
             ))
@@ -212,7 +211,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                     session_id=session_id,
                     type_="tool.upserted",
                     payload=payload,
-                    turn=state.get("turn") or 1,
+                    observed_turn_ordinal=state.get("turn") or 1,
                     ts=ts,
                     eid=f"{session_id}:tool:{cid}:start",
                 ))
@@ -228,17 +227,17 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                     session_id=session_id,
                     type_="tool.upserted",
                     payload=end_payload,
-                    turn=state.get("turn") or 1,
+                    observed_turn_ordinal=state.get("turn") or 1,
                     ts=ts,
                     eid=f"{session_id}:tool:{cid}:end",
                 ))
     return out
 
 
-def translate_file(path: Path, offset: int = 0):
+def translate_file(path: Path, offset: int = 0, state: dict | None = None):
     # 增量 JSONL 读取/半行容错/坏行跳过统一在 plugins/jsonl.py（与 claude/codex 共用）。
     from ata.plugins.jsonl import translate_file as _jfile
-    return _jfile(path, translate_line, offset)
+    return _jfile(path, translate_line, offset, state)
 
 
 def _blocks(content):

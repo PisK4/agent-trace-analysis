@@ -51,6 +51,7 @@ class DroidTest(unittest.TestCase):
         evs, _ = translate_file(Path("testdata/vendor/droid-sample.jsonl"))
         with tempfile.TemporaryDirectory() as td:
             led = Ledger(Path(td))
+            self.addCleanup(led.close)
             for ev in evs:
                 led.append(parse_event(ev))
             sess = project_session("droid-missing", "droid", led.read("droid-missing"))
@@ -64,12 +65,12 @@ class DroidTest(unittest.TestCase):
         # 更早的 marketplace 样本把 role/content 放顶层。两层都要翻译。
         raw = {"type": "message", "id": "x1", "role": "user",
                "content": [{"type": "text", "text": "hi"}]}
-        evs = translate_line(raw, {})
+        evs = translate_line(raw, {"session_id": "droid-session"})
         hit = [e for e in evs if e["type"] == "message.upserted" and e["payload"]["text"] == "hi"]
         self.assertTrue(hit)
 
     def test_context_does_not_start_turn(self):
-        state = {}
+        state = {"session_id": "droid-session"}
         evs = []
         evs += translate_line({"type": "message", "id": "u1", "role": "user",
                                "content": [{"type": "text", "text": "hello"}]}, state)
@@ -78,7 +79,7 @@ class DroidTest(unittest.TestCase):
         turns = [e for e in evs if e["type"] == "turn.started"]
         self.assertEqual(len(turns), 1)
         ctx = [e for e in evs if e["type"] == "message.upserted" and e["payload"]["message_id"] == "c1"][0]
-        self.assertEqual(ctx["turn"], 1)
+        self.assertEqual(ctx["observed_turn_ordinal"], 1)
 
     def test_hook_event_lines_are_skipped(self):
         # Droid 把 hook 执行记录写成 role=user 的 message 行（content 空、带
@@ -96,13 +97,13 @@ class DroidTest(unittest.TestCase):
         def row(eid, text, seq):
             return {"seq": seq, "event": {
                 "v": 1, "id": eid, "agent_id": "droid", "session_id": "s",
-                "ts": seq, "type": "message.upserted", "turn": 1,
+                "ts": seq, "type": "message.upserted", "observed_turn_ordinal": 1,
                 "payload": {"message_id": eid, "role": "user", "text": text,
                             "status": "completed", "started_at": seq,
                             "duration_ms": 0}}}
         recs = [{"seq": 1, "event": {
             "v": 1, "id": "o", "agent_id": "droid", "session_id": "s",
-            "ts": 1, "type": "session.opened", "turn": None,
+            "ts": 1, "type": "session.opened", "observed_turn_ordinal": None,
             "payload": {"title": "t"}}},
             row("junk", "", 2),
             row("real", "real question", 3)]
@@ -119,7 +120,7 @@ class DroidTest(unittest.TestCase):
                    {"type": "thinking", "thinking": "planning..."},
                    {"type": "text", "text": "answer"},
                ]}}
-        evs = translate_line(raw, {})
+        evs = translate_line(raw, {"session_id": "droid-session"})
         msg = [e for e in evs if e["type"] == "message.upserted"][-1]
         self.assertEqual(msg["payload"]["text"], "answer")
         self.assertEqual(msg["payload"]["thinking"], "planning...")
@@ -137,9 +138,10 @@ class DroidTest(unittest.TestCase):
             still_new.write_text(json.dumps(
                 {"type": "session_start", "id": "sid-2", "title": "New Session"}) + "\n")
             led = Ledger(root / "ledger.sqlite")
+            self.addCleanup(led.close)
             for sid in ("sid-1", "sid-2"):
                 led.append({"v": 1, "id": "o", "agent_id": "droid", "session_id": sid,
-                            "ts": 1, "type": "session.opened", "turn": None,
+                            "ts": 1, "type": "session.opened", "observed_turn_ordinal": None,
                             "payload": {"title": "New Session"}})
             refresh_titles(root, led)
             self.assertEqual(led.session("sid-1")["title"], "真实标题")
@@ -165,8 +167,9 @@ class DroidTest(unittest.TestCase):
             (root / "sid-9.jsonl").write_text(json.dumps(
                 {"type": "session_start", "id": "sid-9", "title": "新标题"}) + "\n")
             led = Ledger(root / "ledger.sqlite")
+            self.addCleanup(led.close)
             led.append({"v": 1, "id": "o", "agent_id": "droid", "session_id": "sid-9",
-                        "ts": 1, "type": "session.opened", "turn": None,
+                        "ts": 1, "type": "session.opened", "observed_turn_ordinal": None,
                         "payload": {"title": "New Session"}})
             led._lock.acquire()
             led._conn.execute("UPDATE sessions SET title='手工修正过' WHERE session_id='sid-9'")
@@ -184,12 +187,14 @@ class DroidTest(unittest.TestCase):
             (root / "ghost.jsonl").write_text(json.dumps(
                 {"type": "session_start", "id": "ghost", "title": "幽灵"}) + "\n")
             led = Ledger(root / "ledger.sqlite")
+            self.addCleanup(led.close)
             refresh_titles(root, led)
             self.assertIsNone(led.session("ghost"))
 
     def test_cancelled_outcome_marks_assistant(self):
         state = {}
         evs = []
+        state = {"session_id": "droid-session"}
         evs += translate_line({"type": "message", "id": "u1", "role": "user",
                                "content": [{"type": "text", "text": "hello"}]}, state)
         evs += translate_line({"type": "message", "id": "a1",

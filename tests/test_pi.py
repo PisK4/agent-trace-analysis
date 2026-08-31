@@ -4,6 +4,14 @@ from pathlib import Path
 from ata.plugins.pi import translate_hook, usage_from_assistant
 
 class PiTest(unittest.TestCase):
+    def test_extension_lifecycle_contract(self):
+        source = Path("extensions/pi-atatrace/index.ts").read_text()
+        self.assertIn("crypto.randomUUID()", source)
+        self.assertIn('name === "agent_start"', source)
+        self.assertIn('name !== "before_agent_start"', source)
+        self.assertIn("void postHook", source)
+        self.assertIn("lifecycleIds.delete(session_id)", source)
+
     def test_zero_error_is_missing(self):
         u = usage_from_assistant({
             "usage": {"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"total":0}},
@@ -14,6 +22,15 @@ class PiTest(unittest.TestCase):
 
     def test_hook_stream(self):
         hooks = json.loads(Path("testdata/vendor/pi-hooks.json").read_text())
+        lifecycle_ids = {
+            h["external_lifecycle_id"]
+            for h in hooks
+            if h.get("name") == "agent_start"
+        }
+        self.assertEqual(lifecycle_ids, {"pi-lifecycle-1", "pi-lifecycle-2"})
+        for h in hooks:
+            if h.get("name") not in {"before_agent_start", "agent_start"}:
+                self.assertIn(h.get("external_lifecycle_id"), lifecycle_ids)
         evs = []
         state = {}
         for h in hooks:
@@ -24,7 +41,7 @@ class PiTest(unittest.TestCase):
         self.assertIn("session.opened", types)
         self.assertNotIn("session.closed", types)
         sys_ev = next(e for e in evs if e["type"] == "system.upserted")
-        self.assertIsNone(sys_ev["turn"])
+        self.assertIsNone(sys_ev["observed_turn_ordinal"])
         self.assertIn("prompt_text", sys_ev["payload"])
         self.assertEqual([t["name"] for t in sys_ev["payload"]["tools_catalog"]], ["read", "bash"])
         self.assertEqual(sys_ev["payload"]["skills_catalog"][0]["name"], "ata-ops")
@@ -35,11 +52,11 @@ class PiTest(unittest.TestCase):
         sys2 = [e for e in evs if e["type"] == "system.upserted"][1]
         self.assertIsNotNone(sys2["payload"]["previous_prompt"])
         self.assertEqual(
-            [e["turn"] for e in evs if e["type"] == "turn.started"],
+            [e["observed_turn_ordinal"] for e in evs if e["type"] == "turn.started"],
             [1, 2],
         )
         self.assertEqual(
-            [e["turn"] for e in evs if e["type"] == "turn.ended"],
+            [e["observed_turn_ordinal"] for e in evs if e["type"] == "turn.ended"],
             [1, 2],
         )
         last_end = [e for e in evs if e["type"] == "turn.ended"][-1]
@@ -107,6 +124,7 @@ class PiTest(unittest.TestCase):
                         "name": h["name"],
                         "session_id": (h.get("ctx") or {}).get("session_id") or "pi-compact",
                         "title": (h.get("ctx") or {}).get("title") or "synthetic pi turn",
+                        "external_lifecycle_id": h.get("external_lifecycle_id"),
                         "event": h["event"],
                     }
                     req = urllib.request.Request(
@@ -127,7 +145,7 @@ class PiTest(unittest.TestCase):
                 self.assertIn("tool", kinds)
                 self.assertIn("system", kinds)
                 sys_row = next(row for row in page["rows"] if row["kind"] == "system")
-                self.assertIsNone(sys_row["turn"])
+                self.assertIsNone(sys_row["observed_turn_ordinal"])
                 self.assertIn("You are Pi", sys_row["promptText"])
                 self.assertEqual([t["name"] for t in sys_row["toolsCatalog"]], ["read", "bash"])
                 users = [row for row in page["rows"] if row["kind"] == "user"]
@@ -149,6 +167,9 @@ class PiTest(unittest.TestCase):
                 self.assertEqual(listed["turns"], 2)
             finally:
                 httpd.shutdown()
+                httpd.server_close()
+                th.join(timeout=2)
+                led.close()
 
 if __name__ == "__main__":
     unittest.main()

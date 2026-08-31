@@ -165,10 +165,10 @@ class TranslateCaptureTest(unittest.TestCase):
         sys_ev, end_ev = evs[0], evs[-1]
         sys_ev = self.parse_event(sys_ev)
         end_ev = self.parse_event(end_ev)
-        self.assertIsNone(sys_ev["turn"])
+        self.assertIsNone(sys_ev["observed_turn_ordinal"])
         self.assertEqual(sys_ev["payload"]["prompt_text"], "You are ATA.")
         self.assertEqual(sys_ev["payload"]["tools_catalog"][0]["name"], "Read")
-        self.assertEqual(end_ev["turn"], 1)
+        self.assertEqual(end_ev["observed_turn_ordinal"], 1)
         u = end_ev["payload"]["usage"]
         self.assertEqual(u["status"], "reported")
         self.assertEqual((u["input"], u["output"], u["cache_read"],
@@ -183,15 +183,21 @@ class TranslateCaptureTest(unittest.TestCase):
         from ata.plugins.capture import ingest_capture
         with tempfile.TemporaryDirectory() as d:
             led = Ledger(Path(d))
-            r = record(json.dumps(REQ1).encode(), json.dumps(RESP1).encode())
-            ingest_capture(led, r)
-            rows1 = len(led.read("s1"))
-            led2 = Ledger(Path(d))  # 新实例 (state 空, system_hash 重算)
-            ingest_capture(led2, r)
-            rows2 = len(led2.read("s1"))
-            # 第二次: system + 两条 message 走 dedupe_key UPDATE 不增行;
-            # turn.ended 走 PRIMARY KEY (event_id) 幂等, 也不增行。
-            self.assertEqual(rows2, rows1)
+            try:
+                r = record(json.dumps(REQ1).encode(), json.dumps(RESP1).encode())
+                ingest_capture(led, r)
+                rows1 = len(led.read("s1"))
+                led2 = Ledger(Path(d))  # 新实例 (state 空, system_hash 重算)
+                try:
+                    ingest_capture(led2, r)
+                    rows2 = len(led2.read("s1"))
+                finally:
+                    led2.close()
+                # 第二次: system + 两条 message 走 dedupe_key UPDATE 不增行;
+                # turn.ended 走 PRIMARY KEY (event_id) 幂等, 也不增行。
+                self.assertEqual(rows2, rows1)
+            finally:
+                led.close()
 
     def test_system_reemitted_when_prompt_changes(self):
         self.translate(record(json.dumps(REQ1).encode(),
@@ -211,7 +217,7 @@ class TranslateCaptureTest(unittest.TestCase):
             self.state)
         end = self.parse_event(evs[-1])
         self.assertEqual(end["type"], "turn.ended")
-        self.assertEqual(end["turn"], 2)
+        self.assertEqual(end["observed_turn_ordinal"], 2)
 
     def test_missing_usage_emits_nothing(self):
         resp = dict(RESP1, usage={})
@@ -317,7 +323,7 @@ class CaptureMessageEmitTest(unittest.TestCase):
         user_ev = next(e for e in upserts if e["payload"]["role"] == "user")
         self.assertEqual(user_ev["payload"]["message_id"], "user-msg-1")
         self.assertEqual(user_ev["payload"]["text"], "hello")
-        self.assertEqual(user_ev["turn"], 1)
+        self.assertEqual(user_ev["observed_turn_ordinal"], 1)
 
     def test_assistant_message_uses_response_id(self):
         from ata.plugins.capture import translate_capture
@@ -349,10 +355,16 @@ class CaptureMessageEmitTest(unittest.TestCase):
         from ata.plugins.capture import ingest_capture
         with tempfile.TemporaryDirectory() as d:
             led = Ledger(Path(d))
-            ingest_capture(led, self._rec(sid="cap-msg-4"))
-            led2 = Ledger(Path(d))  # 新实例 (模拟 ata 重启)
-            led2.read("cap-msg-4")
-            recs = led2.read("cap-msg-4")
+            try:
+                ingest_capture(led, self._rec(sid="cap-msg-4"))
+                led2 = Ledger(Path(d))  # 新实例 (模拟 ata 重启)
+                try:
+                    led2.read("cap-msg-4")
+                    recs = led2.read("cap-msg-4")
+                finally:
+                    led2.close()
+            finally:
+                led.close()
             user_evs = [r for r in recs
                         if r["event"]["type"] == "message.upserted"
                         and r["event"]["payload"].get("role") == "user"]
@@ -723,22 +735,28 @@ class SeenPersistedAcrossInstancesTest(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as d:
             led1 = Ledger(Path(d))
-            ingest_capture(led1, rec("pers-1", "user-msg-1"))
-            recs1 = led1.read("pers-1")
-            user_upserts1 = [r for r in recs1
-                             if r["event"]["type"] == "message.upserted"
-                             and r["event"]["payload"].get("role") == "user"]
-            self.assertEqual(len(user_upserts1), 1)
+            try:
+                ingest_capture(led1, rec("pers-1", "user-msg-1"))
+                recs1 = led1.read("pers-1")
+                user_upserts1 = [r for r in recs1
+                                 if r["event"]["type"] == "message.upserted"
+                                 and r["event"]["payload"].get("role") == "user"]
+                self.assertEqual(len(user_upserts1), 1)
 
-            # 同一账本文件, 全新 Ledger 实例 (模拟 ata 重启)
-            led2 = Ledger(Path(d))
-            ingest_capture(led2, rec("pers-1", "user-msg-1"))
-            recs2 = led2.read("pers-1")
-            user_upserts2 = [r for r in recs2
-                             if r["event"]["type"] == "message.upserted"
-                             and r["event"]["payload"].get("role") == "user"]
-            # 第二次没新行, dedupe_key UNIQUE 拦了
-            self.assertEqual(len(user_upserts2), 1)
+                # 同一账本文件, 全新 Ledger 实例 (模拟 ata 重启)
+                led2 = Ledger(Path(d))
+                try:
+                    ingest_capture(led2, rec("pers-1", "user-msg-1"))
+                    recs2 = led2.read("pers-1")
+                    user_upserts2 = [r for r in recs2
+                                     if r["event"]["type"] == "message.upserted"
+                                     and r["event"]["payload"].get("role") == "user"]
+                finally:
+                    led2.close()
+                # 第二次没新行, dedupe_key UNIQUE 拦了
+                self.assertEqual(len(user_upserts2), 1)
+            finally:
+                led1.close()
 
 
 class BlockLevelContextFilterTest(unittest.TestCase):
@@ -826,7 +844,7 @@ class BlockLevelContextFilterTest(unittest.TestCase):
                     and e["payload"].get("role") == "user"]
         # 两条真实 user 消息都 emit, 且 turn 号分别是 1 / 2
         self.assertEqual(len(user_evs), 2)
-        self.assertEqual(sorted(e["turn"] for e in user_evs), [1, 2])
+        self.assertEqual(sorted(e["observed_turn_ordinal"] for e in user_evs), [1, 2])
 
 
 class StableUserMidTest(unittest.TestCase):
@@ -868,9 +886,12 @@ class StableUserMidTest(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as d:
             led = Ledger(Path(d))
-            ingest_capture(led, self._rec(turn1_msgs, "stbl-1", "r1"))
-            ingest_capture(led, self._rec(turn2_msgs, "stbl-1", "r2"))
-            recs = led.read("stbl-1")
+            try:
+                ingest_capture(led, self._rec(turn1_msgs, "stbl-1", "r1"))
+                ingest_capture(led, self._rec(turn2_msgs, "stbl-1", "r2"))
+                recs = led.read("stbl-1")
+            finally:
+                led.close()
             user_texts = sorted(
                 r["event"]["payload"]["text"]
                 for r in recs

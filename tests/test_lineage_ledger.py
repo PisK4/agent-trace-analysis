@@ -8,12 +8,15 @@ def opened_ev(sid, title="t", parent=None):
     if parent:
         payload["parent_session"] = parent
     return {"v": 1, "id": f"{sid}:opened", "agent_id": "pi", "session_id": sid,
-            "ts": 1000, "type": "session.opened", "turn": None, "payload": payload}
+            "ts": 1000, "type": "session.opened", "observed_turn_ordinal": None, "payload": payload}
 
 
 class TestLineage(unittest.TestCase):
     def setUp(self):
         self.led = Ledger(Path(tempfile.mkdtemp()) / "t.sqlite")
+
+    def tearDown(self):
+        self.led.close()
 
     def test_parent_captured_on_open(self):
         self.led.append(opened_ev("child", parent="parent-1"))

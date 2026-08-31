@@ -13,7 +13,9 @@ from ata.schema import envelope
 def translate_line(raw: dict, state: dict) -> list[dict]:
     typ = raw.get("type")
     payload = raw.get("payload") if isinstance(raw.get("payload"), dict) else {}
-    session_id = payload.get("session_id") or state.get("session_id") or "codex-session"
+    session_id = payload.get("session_id") or state.get("session_id")
+    if not session_id:
+        return []
     state["session_id"] = session_id
     agent_id = "codex"
     ts = iso_to_ms(raw.get("timestamp"), int(state.get("ts") or 1))
@@ -28,7 +30,6 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 session_id=session_id,
                 type_="session.opened",
                 payload={"title": title},
-                turn=None,
                 ts=ts,
                 eid=f"{session_id}:opened",
             ))
@@ -39,7 +40,6 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 session_id=session_id,
                 type_="system.upserted",
                 payload={"prompt_text": str(instructions), "previous_prompt": None, "tools_catalog": []},
-                turn=None,
                 ts=ts,
                 eid=f"{session_id}:system:1",
             ))
@@ -61,7 +61,6 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
             session_id=session_id,
             type_="compaction.boundary",
             payload={"summary": summary, "trigger": "compacted"},
-            turn=turn,
             ts=ts,
             eid=f"{session_id}:compact:{payload.get('window_id') or ts}",
         ))
@@ -74,8 +73,9 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
     return out
 
 
-def translate_file(path, offset: int = 0):
-    return _jfile(path, translate_line, offset)
+def translate_file(path, offset: int = 0, state: dict | None = None):
+    # 无 state 不再按文件名猜 session；生产 tail 透传持久翻译状态。
+    return _jfile(path, translate_line, offset, state)
 
 
 def _ensure_opened(state, ts, out):
@@ -87,7 +87,6 @@ def _ensure_opened(state, ts, out):
             session_id=session_id,
             type_="session.opened",
             payload={"title": session_id},
-            turn=None,
             ts=ts,
             eid=f"{session_id}:opened",
         ))
@@ -109,7 +108,7 @@ def _turn_for(state, turn_id, ts, out):
             session_id=state["session_id"],
             type_="turn.started",
             payload={},
-            turn=turn,
+            observed_turn_ordinal=turn,
             ts=ts,
             eid=f"{state['session_id']}:turn:{turn}:start",
         ))
@@ -134,7 +133,7 @@ def _event_msg(payload, state, ts, out):
             session_id=session_id,
             type_="turn.ended",
             payload={"usage": usage},
-            turn=turn,
+            observed_turn_ordinal=turn,
             ts=ts,
             eid=f"{session_id}:turn:{turn}:end",
         ))
@@ -151,7 +150,7 @@ def _event_msg(payload, state, ts, out):
                 "status": "cancelled",
                 "note": str(payload.get("reason") or "interrupted"),
             },
-            turn=turn,
+            observed_turn_ordinal=turn,
             ts=ts,
             eid=f"{session_id}:turn:{turn}:end:cancelled",
         ))
@@ -163,7 +162,6 @@ def _event_msg(payload, state, ts, out):
             session_id=session_id,
             type_="compaction.boundary",
             payload={"summary": "Context compacted", "trigger": "context_compacted"},
-            turn=turn,
             ts=ts,
             eid=f"{session_id}:compact:ctx:{ts}",
         ))
@@ -216,7 +214,7 @@ def _response_item(payload, state, ts, out):
                 "model": state.get("model") if role == "assistant" else None,
                 "effort": state.get("effort") if role == "assistant" else None,
             },
-            turn=state.get("turn") or 1,
+            observed_turn_ordinal=state.get("turn") or 1,
             ts=ts,
             eid=f"{session_id}:msg:{mid}",
         ))
@@ -238,7 +236,7 @@ def _response_item(payload, state, ts, out):
             session_id=session_id,
             type_="tool.upserted",
             payload=pld,
-            turn=state.get("turn") or 1,
+            observed_turn_ordinal=state.get("turn") or 1,
             ts=ts,
             eid=f"{session_id}:tool:{cid}:start",
         ))
@@ -255,7 +253,7 @@ def _response_item(payload, state, ts, out):
             session_id=session_id,
             type_="tool.upserted",
             payload=end_payload,
-            turn=state.get("turn") or 1,
+            observed_turn_ordinal=state.get("turn") or 1,
             ts=ts,
             eid=f"{session_id}:tool:{cid}:end",
         ))

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import time
-import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -11,14 +10,20 @@ import re
 from ata.ingest import PiHookStates
 from ata.plugins.pi import translate_hook
 from ata.projection_cache import ProjectionCache
-from ata.project import audit_usage, list_compactions, list_tools, project_session, summarize_timing, summarize_tools, summarize_usage, tail_preview
+from ata.queries import (audit_usage, list_compactions, list_tools, list_runs, list_turns,
+                        project_session, run_detail, summarize_timing, summarize_tools,
+                        summarize_usage, tail_preview)
 from ata.schema import ValidationError, envelope, parse_event
+from ata.evaluation import EvaluationStore, EvaluationValidationError
+from ata.runtime import RuntimeCoordinator
 
 
 def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
     webroot = Path(webroot)
     cache = ProjectionCache()
     pi_states = PiHookStates() if pi_states is None else pi_states
+    evaluations = EvaluationStore(ledger)
+    runtime = RuntimeCoordinator(ledger)
 
     def cached_summary(sid):
         """便捷层统一入口：rev 门控 + read。rev 取自 session 行，调用前已确保
@@ -35,29 +40,117 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
     def h_health(m, qs, body):
         return 200, {"ok": True}
 
-    def h_runs(m, qs, body):
-        assigns = ledger.assign_events()
-        out = []
-        for r in ledger.runs():
-            r["assignment_count"] = sum(
-                1 for a in assigns if a.get("run_id") == r["run_id"])
-            out.append(r)
-        return 200, out
+    def h_session_runs(m, qs, body):
+        sid = m["sid"]
+        if ledger.session(sid) is None:
+            return 404, {"ok": False, "error": "unknown session"}
+        return 200, {"ok": True, "runs": list_runs(ledger, sid)}
 
-    def h_run_detail(m, qs, body):
-        rid = m["rid"]
-        run = ledger.run(rid)
-        if run is None:
+    def h_session_run_detail(m, qs, body):
+        sid, rid = m["sid"], m["rid"]
+        if ledger.session(sid) is None:
+            return 404, {"ok": False, "error": "unknown session"}
+        result = run_detail(ledger, sid, rid)
+        if result is None:
             return 404, {"ok": False, "error": "unknown run"}
-        run["assignments"] = [
-            a for a in ledger.assign_events() if a.get("run_id") == rid]
-        return 200, {"ok": True, **run}
+        return 200, {"ok": True, **result}
+
+    def h_session_turns(m, qs, body):
+        sid = m["sid"]
+        if ledger.session(sid) is None:
+            return 404, {"ok": False, "error": "unknown session"}
+        try:
+            run_id = int(qs["run_id"][0]) if qs.get("run_id") else None
+        except (TypeError, ValueError):
+            return 400, {"ok": False, "error": "invalid run_id"}
+        return 200, {"ok": True, "turns": list_turns(ledger, sid, run_id=run_id)}
+
+    def _evaluation_detail(evaluation_id):
+        state = evaluations.fold(evaluation_id)
+        if state is None:
+            return None
+        members = []
+        for member in state["members"]:
+            sid = member["session_id"]
+            meta = ledger.session(sid)
+            row = dict(member)
+            if meta is not None:
+                row["session"] = meta
+                # 评分仍是 Session fact；Evaluation 只展示最新值，不复制事实。
+                projected = project_session(sid, meta["agent"], ledger.read(sid))
+                row["score"] = (projected.get("scores") or [None])[-1]
+            members.append(row)
+        return {**state, "members": members}
+
+    def h_evaluations(m, qs, body):
+        return 200, {"ok": True, "evaluations": evaluations.evaluations()}
+
+    def h_create_evaluation(m, qs, body):
+        title = (body.get("title") or "").strip() if isinstance(body, dict) else ""
+        if not title:
+            return 400, {"ok": False, "error": "title required"}
+        try:
+            eid = evaluations.create(title)
+        except (EvaluationValidationError, TypeError, ValueError) as exc:
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "evaluation_id": eid}
+
+    def h_rename_evaluation(m, qs, body):
+        title = (body.get("title") or "").strip() if isinstance(body, dict) else ""
+        if not title:
+            return 400, {"ok": False, "error": "title required"}
+        try:
+            evaluations.rename(m["eid"], title)
+        except EvaluationValidationError as exc:
+            if str(exc) == "evaluation not found":
+                return 404, {"ok": False, "error": "unknown evaluation"}
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "title": title}
+
+    def h_evaluation(m, qs, body):
+        eid = m["eid"]
+        state = _evaluation_detail(eid)
+        if state is None:
+            return 404, {"ok": False, "error": "unknown evaluation"}
+        sub = m.get("sub") or ""
+        if sub == "":
+            return 200, {"ok": True, **state}
+        if sub == "history":
+            return 200, {"ok": True, "evaluation_id": eid,
+                         "events": evaluations.read(eid)}
+        return 404, {"ok": False, "error": "not found"}
+
+    def h_delete_evaluation(m, qs, body):
+        try:
+            evaluations.delete(m["eid"])
+        except EvaluationValidationError as exc:
+            if str(exc) == "evaluation not found":
+                return 404, {"ok": False, "error": "unknown evaluation"}
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "evaluation_id": m["eid"]}
+
+    def h_add_evaluation_session(m, qs, body):
+        if not isinstance(body, dict) or not body.get("session_id"):
+            return 400, {"ok": False, "error": "session_id required"}
+        try:
+            evaluations.add_session(m["eid"], body["session_id"], body.get("task_label", ""))
+        except EvaluationValidationError as exc:
+            if str(exc) in {"evaluation not found", "session not found"}:
+                return 404, {"ok": False, "error": str(exc)}
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "evaluation_id": m["eid"], "session_id": body["session_id"]}
+
+    def h_remove_evaluation_session(m, qs, body):
+        try:
+            evaluations.remove_session(m["eid"], m["sid"])
+        except EvaluationValidationError as exc:
+            if str(exc) in {"evaluation not found", "session membership not found"}:
+                return 404, {"ok": False, "error": str(exc)}
+            return 400, {"ok": False, "error": str(exc)}
+        return 200, {"ok": True, "evaluation_id": m["eid"], "session_id": m["sid"]}
 
     def h_sessions(m, qs, body):
         return 200, ledger.sessions()
-
-    def h_annotations(m, qs, body):
-        return 200, {"ok": True, **ledger.annotations()}
 
     def h_session(m, qs, body):
         # 与旧版 rest.partition("/") 同语义：sub 只取第一段
@@ -66,9 +159,12 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         if meta is None:
             return 404, {"ok": False, "error": "unknown session"}
         if sub == "":
-            limit = int(qs.get("limit", ["80"])[0])
-            before = qs.get("before", [None])[0]
-            before = int(before) if before not in (None, "") else None
+            try:
+                limit = int(qs.get("limit", ["80"])[0])
+                before = qs.get("before", [None])[0]
+                before = int(before) if before not in (None, "") else None
+            except (TypeError, ValueError):
+                return 400, {"ok": False, "error": "invalid pagination"}
             # rev 门控：last_seq 未变（无任何事件追加/幂等折叠/改名/标注）时
             # 跳过全量投影，返回几十字节的 unchanged；前端据此零重绘。
             # last_seq 随每次 append 单调递增，天然是会话级版本号。
@@ -85,8 +181,11 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
             page["rev"] = int(meta["last_seq"])
             return 200, page
         if sub == "events":
-            after = int(qs.get("after_seq", ["0"])[0])
-            limit = min(int(qs.get("limit", ["100"])[0]), 500)
+            try:
+                after = int(qs.get("after_seq", ["0"])[0])
+                limit = min(int(qs.get("limit", ["100"])[0]), 500)
+            except (TypeError, ValueError):
+                return 400, {"ok": False, "error": "invalid event cursor"}
             picked = [r for r in ledger.read(sid) if r["seq"] > after][:limit]
             nxt = picked[-1]["seq"] if picked else after
             return 200, {"ok": True, "events": picked, "next_after_seq": nxt}
@@ -96,8 +195,12 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
                          "children": ledger.children(sid)}
         if sub == "usage":
             def usage_body(recs):
-                compactions = [{"turn": r["event"].get("turn"), "seq": r["seq"]}
-                               for r in recs if r["event"]["type"] == "compaction.boundary"]
+                compactions = [
+                    {"seq": r["seq"], "run_id": r["event"].get("run_id"),
+                     "turn_number": r["event"].get("turn_number"),
+                     "observed_turn_ordinal": r["event"].get("observed_turn_ordinal")}
+                    for r in recs if r["event"]["type"] == "compaction.boundary"
+                ]
                 return {"ok": True, **summarize_usage(recs),
                         "audit": audit_usage(recs),
                         "compactions": compactions}
@@ -150,26 +253,52 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
             "lineage": body.get("lineage") or {},
         }
         try:
+            lifecycle_id = body.get("external_lifecycle_id")
+            if body["name"] == "agent_start":
+                previous_run = bucket.get("run_id")
+                result = runtime.start(
+                    sid,
+                    external_lifecycle_id=lifecycle_id,
+                    boundary_source="pi.agent_start",
+                    agent_id=body.get("agent_id") or "pi",
+                    ts=event.get("timestamp"),
+                    payload={key: value for key, value in {
+                        "host": body.get("host"), "runtime": body.get("runtime"),
+                        "channel": body.get("channel"), "title": body.get("title"),
+                    }.items() if value is not None},
+                )
+                if result.get("status") in {"created", "duplicate"} and result.get("scope") is not None:
+                    if result.get("status") == "created" and previous_run != result["scope"].run_id:
+                        for key in ("turn", "turn_started", "user_pending", "last_assistant_id",
+                                    "request_no", "asst_no", "msg_start_ts", "msg_dur",
+                                    "tool_args", "tool_start_ts"):
+                            bucket.pop(key, None)
+                    bucket["run_id"] = result["scope"].run_id
+            elif body["name"] == "agent_end":
+                result = runtime.end(
+                    sid,
+                    external_lifecycle_id=lifecycle_id,
+                    boundary_source="pi.agent_end",
+                    agent_id=body.get("agent_id") or "pi",
+                    ts=event.get("timestamp"),
+                    payload={key: value for key, value in {
+                        "host": body.get("host"), "runtime": body.get("runtime"),
+                        "channel": body.get("channel"), "title": body.get("title"),
+                    }.items() if value is not None},
+                )
+                if result.get("status") in {"matched", "duplicate"}:
+                    bucket.pop("run_id", None)
             events = translate_hook(body["name"], event, ctx, bucket)
-            seqs = []
-            for ev in events:
-                parsed = parse_event(ev)
+            parsed_events = [parse_event(ev) for ev in events]
+            for parsed in parsed_events:
                 print("append %s %s %s" % (parsed["type"], parsed["id"], parsed["session_id"]))
-                seqs.append(ledger.append(parsed))
+            seqs = ledger.append_many(parsed_events)
         except (ValidationError, TypeError, ValueError) as exc:
             return 400, {"ok": False, "error": str(exc)}
         return 200, {"ok": True, "count": len(seqs), "seq": seqs[-1] if seqs else None}
 
-    def h_create_run(m, qs, body):
-        if not isinstance(body, dict) or not (body.get("description") or "").strip():
-            return 400, {"ok": False, "error": "description required"}
-        rid = "r-" + uuid.uuid4().hex[:8]
-        try:
-            ledger.create_run(rid, body["description"].strip(),
-                              body.get("taskset_fingerprint"))
-        except ValueError as exc:
-            return 400, {"ok": False, "error": str(exc)}
-        return 200, {"ok": True, "run_id": rid}
+    def h_legacy_runs(m, qs, body):
+        return 404, {"ok": False, "error": "not found"}
 
     def h_rename_session(m, qs, body):
         # 会话改名：服务端组一个 session.renamed 事件入账本，前端不必自己造 id/ts。
@@ -185,22 +314,15 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         ledger.append(ev)
         return 200, {"ok": True, "title": title}
 
-    def h_rename_run(m, qs, body):
-        name = (body.get("name") or "").strip() if isinstance(body, dict) else ""
-        # 允许清空：空组名回退显示 run_id
-        if not ledger.rename_run(m["rid"], name):
-            return 404, {"ok": False, "error": "unknown run"}
-        return 200, {"ok": True, "name": name}
-
     def h_append_events(m, qs, body):
         items = body.get("events") if isinstance(body, dict) and "events" in body else [body]
         seqs = []
         try:
-            for item in items:
-                ev = parse_event(item)
+            events = [parse_event(item) for item in items]
+            for ev in events:
                 print("append %s %s %s" % (ev["type"], ev["id"], ev["session_id"]))
-                seqs.append(ledger.append(ev))
-        except (ValidationError, TypeError, ValueError) as exc:
+            seqs = ledger.append_many(events)
+        except (ValidationError, TypeError, ValueError, KeyError) as exc:
             return 400, {"ok": False, "error": str(exc)}
         return 200, {"ok": True, "seq": seqs[-1] if seqs else 0, "seqs": seqs}
 
@@ -245,16 +367,24 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
 
     ROUTES = [
         ("GET", re.compile(r"^/api/health$"), h_health),
-        ("GET", re.compile(r"^/api/runs$"), h_runs),
-        ("GET", re.compile(r"^/api/runs/(?P<rid>.+)$"), h_run_detail),
+        ("GET", re.compile(r"^/api/runs$"), h_legacy_runs),
+        ("GET", re.compile(r"^/api/sessions/(?P<sid>[^/]+)/runs$"), h_session_runs),
+        ("GET", re.compile(r"^/api/sessions/(?P<sid>[^/]+)/runs/(?P<rid>[^/]+)$"), h_session_run_detail),
+        ("GET", re.compile(r"^/api/sessions/(?P<sid>[^/]+)/turns$"), h_session_turns),
+        ("GET", re.compile(r"^/api/evaluations$"), h_evaluations),
+        ("POST", re.compile(r"^/api/evaluations$"), h_create_evaluation),
+        ("GET", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)/(?P<sub>history)$"), h_evaluation),
+        ("GET", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)$"), h_evaluation),
+        ("PATCH", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)$"), h_rename_evaluation),
+        ("POST", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)/(?P<sub>title|rename)$"), h_rename_evaluation),
+        ("DELETE", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)$"), h_delete_evaluation),
+        ("POST", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)/sessions$"), h_add_evaluation_session),
+        ("DELETE", re.compile(r"^/api/evaluations/(?P<eid>[^/]+)/sessions/(?P<sid>[^/]+)$"), h_remove_evaluation_session),
         ("GET", re.compile(r"^/api/sessions$"), h_sessions),
-        ("GET", re.compile(r"^/api/annotations$"), h_annotations),
         ("GET", re.compile(r"^/api/sessions/(?P<rest>.+)$"), h_session),
         ("POST", re.compile(r"^/api/captures$"), h_capture),
         ("POST", re.compile(r"^/api/pi-hooks$"), h_pi_hooks),
         ("POST", re.compile(r"^/api/hooks/droid$"), h_droid_hooks),
-        ("POST", re.compile(r"^/api/runs$"), h_create_run),
-        ("POST", re.compile(r"^/api/runs/(?P<rid>[^/]+)/name$"), h_rename_run),
         ("POST", re.compile(r"^/api/sessions/(?P<sid>[^/]+)/title$"), h_rename_session),
         ("POST", re.compile(r"^/api/events$"), h_append_events),
     ]
@@ -285,7 +415,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         def do_OPTIONS(self):
             self.send_response(204)
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "content-type")
             self.end_headers()
 
@@ -293,7 +423,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
             parsed = urlparse(self.path)
             qs = parse_qs(parsed.query)
             body = None
-            if method == "POST":
+            if method in {"POST", "PATCH"}:
                 length = int(self.headers.get("Content-Length") or 0)
                 try:
                     body = json.loads(self.rfile.read(length) or b"{}")
@@ -312,6 +442,8 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
 
         do_GET = lambda self: self._dispatch("GET")
         do_POST = lambda self: self._dispatch("POST")
+        do_PATCH = lambda self: self._dispatch("PATCH")
+        do_DELETE = lambda self: self._dispatch("DELETE")
 
         def _serve_static(self, path):
             if path in ("/", "/index.html"):

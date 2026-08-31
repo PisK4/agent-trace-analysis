@@ -7,13 +7,11 @@ def opened(title="t1", ts=1000, parent=None, sid="s1"):
     p = {"title": title}
     if parent:
         p["parent_session"] = parent
-    return {"type": "session.opened", "ts": ts, "turn": None,
-            "payload": p, "session_id": sid}
+    return {"type": "session.opened", "ts": ts, "payload": p, "session_id": sid}
 
 
 def renamed(title, ts=2000):
-    return {"type": "session.renamed", "ts": ts, "turn": None,
-            "payload": {"title": title}}
+    return {"type": "session.renamed", "ts": ts, "payload": {"title": title}}
 
 
 class FoldTest(unittest.TestCase):
@@ -52,10 +50,12 @@ class FoldTest(unittest.TestCase):
         row = fold_session_meta({"parent_session_id": "p0"}, opened(parent="p1"))
         self.assertEqual(row["parent_session_id"], "p1")
 
-    def test_bump_turns(self):
-        row = fold_session_meta({"turns": 3},
-                                {"type": "message.upserted", "ts": 5, "turn": 7, "payload": {}})
-        self.assertEqual(row["turns"], 7)
+    def test_runtime_events_do_not_fold_session_turns(self):
+        row = fold_session_meta({"turns": 3}, {
+            "type": "message.upserted", "ts": 5, "run_id": 1,
+            "turn_number": 7, "payload": {},
+        })
+        self.assertEqual(row["turns"], 3)
 
     def test_floor_value(self):
         self.assertEqual(REAL_TS_FLOOR, 10 ** 12)

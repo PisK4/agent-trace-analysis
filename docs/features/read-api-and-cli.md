@@ -27,7 +27,7 @@
 
 ## CLI
 
-挂在 `python3 -m ata read` 与 `python3 -m ata rate` 两个子命令上。
+挂在 `python3 -m ata read` 与 `python3 -m ata rate` 两个子命令上。旧的 `tasks`、`run`、`compare` dispatch 已移除；当前 Runtime/Evaluation 读取不通过全局实验 CLI。
 
 | 子命令 | 对应端点 | 关键参数 |
 | --- | --- | --- |

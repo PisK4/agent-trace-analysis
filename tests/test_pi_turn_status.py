@@ -10,14 +10,14 @@ def hook(name, event, state, **ctx):
 
 class TestTurnStatus(unittest.TestCase):
     def test_aborted_maps_to_cancelled(self):
-        st = {"opened": True, "turn": 1}
+        st = {"opened": True, "observed_turn_ordinal": 1}
         evs = hook("turn_end", {"timestamp": 9,
                    "message": {"role": "assistant", "stopReason": "aborted"}}, st)
         ended = [e for e in evs if e["type"] == "turn.ended"][0]
         self.assertEqual(ended["payload"]["status"], "cancelled")
 
     def test_normal_end_has_no_status_key(self):
-        st = {"opened": True, "turn": 1}
+        st = {"opened": True, "observed_turn_ordinal": 1}
         evs = hook("turn_end", {"timestamp": 9,
                    "message": {"role": "assistant", "stopReason": "stop"}}, st)
         ended = [e for e in evs if e["type"] == "turn.ended"][0]

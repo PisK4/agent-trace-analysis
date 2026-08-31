@@ -315,7 +315,7 @@ export function Timeline({ rows, hasOlder, loadingOlder, selectedId, range, onRa
         <div className="turn-lines" style={{ '--domain-left': domainLeft, '--domain-width': domainWidth } as React.CSSProperties}>
           {m.bounds.map((b, i) => (
             // key 用位置不用 turn 号：loadOlder 前插后同 turn 理论上可能出现多条 start
-            <span key={`${b.time}-${i}`} className="turn-line" style={{ '--left': `${((b.time - m.start) / fullDuration) * 100}%` } as React.CSSProperties} />
+            <span key={`${b.key}-${b.time}-${i}`} className="turn-line" data-turn-label={b.label} title={b.label} style={{ '--left': `${((b.time - m.start) / fullDuration) * 100}%` } as React.CSSProperties} />
           ))}
         </div>
         <div className="lanes" style={{ '--domain-left': domainLeft, '--domain-width': domainWidth } as React.CSSProperties}>

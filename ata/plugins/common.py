@@ -146,7 +146,7 @@ def bump_turn_if_real_user(state, texts, agent_id, session_id, ts, emit):
             session_id=session_id,
             type_="turn.started",
             payload={},
-            turn=turn,
+            observed_turn_ordinal=turn,
             ts=ts,
             eid=f"{session_id}:turn:{turn}:start",
         ))
