@@ -8,5 +8,6 @@
 | `2026-08-16-ata-v2-dsh-trajectory-alignment.md` | v2 展示层差距清单与合入动作 | [`../features/viewer-presentation.md`](../features/viewer-presentation.md) |
 | `2026-08-17-system-prompt-and-tools-sources.md` | SYSTEM 数据边界核验记录 | [`../features/session-data-sources.md`](../features/session-data-sources.md), [`../features/proxy-capture-channel.md`](../features/proxy-capture-channel.md) |
 | `2026-08-26-strangler-parity-checklist.md` | React 版与 legacy 前端 parity 清单 | [`../features/webapp-strangler-restyle.md`](../features/webapp-strangler-restyle.md) |
+| `2026-08-29-ledger-seam-grilling.md` | Ledger seam 设计 grilling 快照与未决 frontier | [`../../CONTEXT.md`](../../CONTEXT.md) |
 
 > 这里不是入口。理解当前架构与决策，先看 [`../features/`](../features/)。
