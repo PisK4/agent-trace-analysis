@@ -36,7 +36,20 @@ transcript 采不到的事实（claude 的系统提示、工具目录、每轮 t
 
 把 agent 的 API base 指向 `http://127.0.0.1:8319`（上游默认
 api.anthropic.com，可用 `--proxy-upstream` 改）。代理只记录解析后的
-事实，认证头不留档；无法识别所属会话的流量直接放行不采集。
+事实，认证头不留档；无法识别所属会话的普通流量直接放行不采集，OpenAI
+路径则按下文规则使用 wire-only 虚拟 session。
+
+Codex 使用 OpenAI Responses 时：
+
+    python3 -m ata serve --proxy-port 8319 --proxy-agent codex
+
+此时默认上游为 `https://api.openai.com`；如使用兼容网关，显式传入
+`--proxy-upstream`。再把 Codex 的 OpenAI base URL 指向
+`http://127.0.0.1:8319`。请求体带有 `metadata.session_id` 时，代理事件会
+按该值 merge-on-write 到同一 session；没有稳定 session id 时，ATA 只建立
+`codex-wire-*` 的 wire-only session，不把它冒充成第一方 rollout session。
+Claude 与 Codex 同时采集时，为每个 profile 使用独立 proxy port 和独立
+ATA 进程；当前 relay interface 不做多 profile 路由。
 
 ## 支持的 agent
 
@@ -45,7 +58,7 @@ api.anthropic.com，可用 `--proxy-upstream` 改）。代理只记录解析后�
 | Pi | 官方 extension（live hook，需安装见下） | 首条用户消息 | 有（`before_agent_start`） | reported |
 | Cue | Pi 官方 extension（live hook，显式安装见下） | 首条用户消息 | 有（`before_agent_start`） | reported |
 | Claude Code | 第一方 transcript（文件 tail） | `ai-title` 行 | 无（transcript 不落盘系统提示） | reported（缺失或全 0 → Missing） |
-| Codex | 第一方 rollout（文件 tail） | `originator`（首条 prompt） | 有（`base_instructions`） | reported（`token_count.last_token_usage`） |
+| Codex | 第一方 rollout（文件 tail）；可选 OpenAI Responses proxy | `originator`；proxy 使用 wire session id | rollout 有 `base_instructions`；proxy 可补完整 tools | reported（rollout 或 proxy usage） |
 | Droid | 第一方 sessions（文件 tail） | `session_start.title` | 无 | 恒 Missing（JSONL 无 token 字段） |
 
 ## 安装 Pi extension（可选）

@@ -5,10 +5,9 @@ sessionId，往同一 session 追加，幂等键吸收重复；恢复不了就�
 绝不新建孤儿会话——ava 把会话归并推迟到读取侧，ata 是写入时收敛，
 平行会话会让投影/usage 合计翻倍。
 
-v1 只发账本里别处拿不到的事实：system.upserted（prompt_text +
-tools_catalog，transcript 侧 claude 永远发不出）与 turn.ended（每轮
-真实 usage，spec L214 的立项痛点）。message/tool 行 transcript 已有，
-代理重复发会在两条通道间产生 natural-key 写序竞态，刻意不发。
+代理补充 system.upserted（prompt_text + tools_catalog）与 turn.ended（每轮
+真实 usage），并主发请求/响应中可确认的 message/tool 行。写入仍通过同一
+canonical event 和 Ledger writer，重复事实由自然键收敛。
 """
 from __future__ import annotations
 
