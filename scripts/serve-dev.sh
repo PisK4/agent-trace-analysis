@@ -8,9 +8,10 @@ cd "$(dirname "$0")/.."
 PORT="${ATA_PORT:-17877}"
 LEDGER="${ATA_LEDGER:-$HOME/.ata/dev.sqlite}"
 AGE="${ATA_TAIL_MAX_AGE_DAYS:-7}"
-# 代理采集通道：默认开 17878（agent 的 API base 指过来就补采）；设 ATA_PROXY_PORT=0 关闭
+# 代理采集通道：默认开 17878；设 ATA_PROXY_PORT=0 关闭。
 PROXY_PORT="${ATA_PROXY_PORT:-17878}"
-PROXY_ARGS=(--proxy-port "$PROXY_PORT")
+PROXY_AGENT="${ATA_PROXY_AGENT:-claude}"
+PROXY_ARGS=(--proxy-port "$PROXY_PORT" --proxy-agent "$PROXY_AGENT")
 [ -n "${ATA_PROXY_UPSTREAM:-}" ] && PROXY_ARGS+=(--proxy-upstream "$ATA_PROXY_UPSTREAM")
 
 ARGS=()
