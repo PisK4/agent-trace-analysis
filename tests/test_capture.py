@@ -914,6 +914,167 @@ class StableUserMidTest(unittest.TestCase):
                          r"^stbl-2:user:0:[0-9a-f]{8}$")
 
 
+class CodexResponsesCaptureTest(unittest.TestCase):
+    def _record(self, request, response, sid="codex-wire-1"):
+        return {
+            "agent_id": "codex",
+            "path": "/v1/responses",
+            "request_headers": {},
+            "request_body": json.dumps(request).encode(),
+            "response_content_type": "application/json",
+            "response_body": json.dumps(response).encode(),
+            "started_at_ms": 1000,
+            "completed_at_ms": 2000,
+            "session_id": sid,
+        }
+
+    def _request(self, input_items):
+        return {
+            "model": "gpt-5",
+            "instructions": "You are Codex.",
+            "metadata": {"session_id": "codex-wire-1"},
+            "input": input_items,
+            "tools": [{
+                "type": "function",
+                "name": "Read",
+                "description": "read a file",
+                "parameters": {"type": "object"},
+            }],
+        }
+
+    def _response(self, response_id="resp-codex-1"):
+        return {
+            "id": response_id,
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "I will read it.",
+                    }],
+                },
+                {
+                    "type": "function_call",
+                    "id": "fc-codex-1",
+                    "call_id": "call-codex-1",
+                    "name": "Read",
+                    "arguments": '{"path":"README.md"}',
+                },
+            ],
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "total_tokens": 120,
+            },
+        }
+
+    def test_responses_summary_emits_assistant_usage_and_tool_start(self):
+        from ata.plugins.capture import translate_capture
+
+        events = translate_capture(
+            self._record(
+                self._request([{
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "read README"}],
+                }]),
+                self._response(),
+            ),
+            {"session_id": "codex-wire-1"},
+        )
+        assistant = next(
+            event for event in events
+            if event["type"] == "message.upserted"
+            and event["payload"]["role"] == "assistant"
+        )
+        self.assertEqual(assistant["payload"]["text"], "I will read it.")
+        self.assertEqual(assistant["payload"]["output_text"], "I will read it.")
+        self.assertEqual(assistant["payload"]["usage"]["input"], 100)
+        self.assertEqual(assistant["payload"]["usage"]["output"], 20)
+        self.assertEqual(assistant["payload"]["usage"]["total_tokens"], 120)
+
+        started = next(
+            event for event in events
+            if event["type"] == "tool.upserted"
+            and event["id"].endswith(":start")
+        )
+        self.assertEqual(started["payload"]["tool_call_id"], "call-codex-1")
+        self.assertEqual(started["payload"]["name"], "Read")
+        self.assertEqual(started["payload"]["payload"], {"path": "README.md"})
+
+    def test_responses_function_call_output_emits_tool_end(self):
+        from ata.plugins.capture import translate_capture
+
+        state = {"session_id": "codex-wire-1"}
+        first_input = [{
+            "role": "user",
+            "content": [{"type": "input_text", "text": "read README"}],
+        }]
+        translate_capture(
+            self._record(self._request(first_input), self._response()), state
+        )
+
+        second_input = [
+            *first_input,
+            {
+                "type": "function_call_output",
+                "call_id": "call-codex-1",
+                "output": "README contents",
+            },
+        ]
+        events = translate_capture(
+            self._record(
+                self._request(second_input),
+                self._response("resp-codex-2"),
+            ),
+            state,
+        )
+        ended = next(
+            event for event in events
+            if event["type"] == "tool.upserted"
+            and event["id"].endswith(":end")
+        )
+        self.assertEqual(ended["payload"]["tool_call_id"], "call-codex-1")
+        self.assertEqual(ended["payload"]["status"], "completed")
+        self.assertEqual(ended["payload"]["result"], "README contents")
+
+    def test_chat_completion_usage_aliases_are_reported(self):
+        from ata.plugins.capture import translate_capture
+
+        record = self._record(
+            {
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+            {
+                "id": "chatcmpl-codex-1",
+                "choices": [{
+                    "message": {"role": "assistant", "content": "hello"},
+                    "finish_reason": "stop",
+                }],
+                "usage": {
+                    "prompt_tokens": 12,
+                    "completion_tokens": 4,
+                    "total_tokens": 16,
+                    "prompt_tokens_details": {"cached_tokens": 3},
+                },
+            },
+            sid="codex-chat-1",
+        )
+        events = translate_capture(record, {"session_id": "codex-chat-1"})
+        ended = next(event for event in events if event["type"] == "turn.ended")
+        self.assertEqual(ended["payload"]["usage"], {
+            "status": "reported",
+            "input": 12,
+            "output": 4,
+            "cache_read": 3,
+            "cache_write": 0,
+            "total_tokens": 16,
+            "cost": None,
+        })
+
+
 class RecapInjectionTest(unittest.TestCase):
     """recap 注入 (user 走开后 harness 自动生成的 40 词总结指令) 无
     <xxx>/[KEY] 形态学特征, 漏过过滤被记成真人发言 (sid 74736c29
