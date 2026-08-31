@@ -36,7 +36,7 @@ _HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding"}
 #: 不同的 daemon 各自用自己的 17878 连接(client port 不同) 拿不同虚拟
 #: sid。 daemon 重连会让 client_port 变 → 新虚拟 sid, 这是设计取舍。
 _VIRTUAL_SID_PATH_SUFFIXES = (
-    "/v1/chat/completions", "/v1/responses")
+    "/v1/chat/completions", "/v1/responses", "/backend-api/codex/responses")
 
 #: 同一 client_port 复用虚拟 sid 的时间窗 (ms)。 5 分钟覆盖普通对话
 #: 一轮的间隔, 超过此间隔视作"新 session"换新虚拟 sid。
