@@ -192,30 +192,26 @@
       background: var(--agent-soft, var(--hover));
       box-shadow: inset 0 -1.5px 0 var(--agent, var(--ink));
     }
-    .sess-tabs[data-overflow-right]::after {
-      content: "";
-      position: absolute;
-      right: 0;
-      top: 0;
-      bottom: 0;
-      width: 12px;
-      background: linear-gradient(to left,
-        color-mix(in srgb, var(--ink-2) 14%, transparent),
-        transparent);
-      pointer-events: none;
+    /* 3607ad2 误删的 5 个 .agent-* 颜色类 + 溢出指示 1px 边线。
+       用 background-image 画在 padding 区，不压 tab 文字，不随 scroll 飘移。 */
+    .sess-tabs {
+      background:
+        linear-gradient(to right,
+          var(--ink-3) 0,
+          var(--ink-3) 1px,
+          transparent 1px,
+          transparent 100%) 0 0 / auto 100% no-repeat padding-box,
+        linear-gradient(to left,
+          var(--ink-3) calc(100% - 1px),
+          var(--ink-3) 100%,
+          transparent 100%,
+          transparent 0) 100% 0 / auto 100% no-repeat padding-box;
     }
-    .sess-tabs[data-overflow-left]::before {
-      content: "";
-      position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      width: 12px;
-      background: linear-gradient(to right,
-        color-mix(in srgb, var(--ink-2) 14%, transparent),
-        transparent);
-      pointer-events: none;
-    }
+    .agent-claude { --agent: var(--orange); --agent-soft: var(--orange-tint); }
+    .agent-codex { --agent: var(--green); --agent-soft: var(--green-tint); }
+    .agent-pi { --agent: var(--ink); --agent-soft: var(--hover); }
+    .agent-droid { --agent: var(--cyan); --agent-soft: var(--cyan-tint); }
+    .agent-cue { --agent: var(--pink); --agent-soft: var(--pink-tint); }
     .agent-omp { --agent: var(--violet); --agent-soft: var(--violet-tint); }
     /* 会话卡片 v2：标题 + meta 行（agent · 事件数 · 错误 · 标注点 · 时间），一眼分诊。
        中性 hover 底，选中才上 agent tint；描边代替三层阴影（灰底上更安静） */
@@ -232,7 +228,6 @@
       text-align: left;
       transition: box-shadow .15s;
     }
-    .item:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
     .item[aria-current="true"] {
       background: var(--agent-soft, var(--hover));
       color: var(--ink);
