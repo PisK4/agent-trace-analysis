@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import sqlite3
 import threading
@@ -46,6 +47,21 @@ def _dedupe_key(event: dict) -> str | None:
         if turn is not None:
             return f"{ns}:{typ}:{turn}"
     return None
+
+
+class _TxWriter:
+    """transaction() 块内的写入面：两种事实的追加原语，commit 由事务收口。"""
+
+    def __init__(self, ledger: "Ledger"):
+        self._ledger = ledger
+
+    def append_event(self, event: dict) -> int:
+        """追加 canonical event；重复 event_id 返回原 seq。"""
+        return self._ledger._append_locked(event)
+
+    def append_evaluation(self, fact: dict) -> int:
+        """追加 Evaluation fact；同一 (evaluation_id, event_id) 幂等。"""
+        return self._ledger._append_evaluation_locked(fact)
 
 
 class Ledger:
@@ -303,6 +319,27 @@ class Ledger:
                 self._conn.rollback()
                 raise
 
+    @contextmanager
+    def transaction(self):
+        """持锁写事务：块内经 tx 追加的事实退出时一次 commit，异常整体回滚。
+
+        Runtime 与 Evaluation 的「读取—裁决—追加」都走这一个接缝，不得再
+        伸手 _lock/_conn。块内读取直接用公开读方法（RLock 可重入）；事务
+        不可嵌套——内层退出会提前 commit，破坏外层原子性。
+        """
+        with self._lock:
+            try:
+                yield _TxWriter(self)
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+
+    def evaluation_ids(self) -> list[str]:
+        with self._lock:
+            return [row[0] for row in self._conn.execute(
+                "SELECT DISTINCT evaluation_id FROM evaluation_events")]
+
     def read(self, session_id: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
@@ -415,19 +452,6 @@ class Ledger:
                 " WHERE evaluation_id=? ORDER BY seq", (evaluation_id,)
             ).fetchall()
         return [{"seq": int(row["seq"]), "event": json.loads(row["event_json"])} for row in rows]
-
-    def _all_evaluation_records_locked(self):
-        """add_session 的跨 Evaluation 唯一性检查需要全部 membership 折叠；
-        单个 Evaluation 的折叠走 _fold_evaluation_locked，不要用这里。"""
-        rows = self._conn.execute(
-            "SELECT evaluation_id, seq, event_json FROM evaluation_events ORDER BY evaluation_id, seq"
-        ).fetchall()
-        records = {}
-        for row in rows:
-            records.setdefault(row["evaluation_id"], []).append({
-                "seq": int(row["seq"]), "event": json.loads(row["event_json"])
-            })
-        return records.items()
 
     def _fold_evaluation_locked(self, evaluation_id: str):
         rows = self._conn.execute(
