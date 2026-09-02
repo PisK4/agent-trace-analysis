@@ -240,7 +240,6 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         try:
             lifecycle_id = body.get("external_lifecycle_id")
             if body["name"] == "agent_start":
-                previous_run = bucket.get("run_id")
                 result = runtime.start(
                     sid,
                     external_lifecycle_id=lifecycle_id,
@@ -253,12 +252,9 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
                     }.items() if value is not None},
                 )
                 if result.get("status") in {"created", "duplicate"} and result.get("scope") is not None:
-                    if result.get("status") == "created" and previous_run != result["scope"].run_id:
-                        for key in ("turn", "turn_started", "user_pending", "last_assistant_id",
-                                    "request_no", "asst_no", "msg_start_ts", "msg_dur",
-                                    "tool_args", "tool_start_ts"):
-                            bucket.pop(key, None)
-                    bucket["run_id"] = result["scope"].run_id
+                    # 换档重置由适配器做（pi._RUN_RESET_KEYS）：这里只把 runtime
+                    # 裁决出的 run_id 交给 translate_hook，不碰它的 state 词表。
+                    ctx["run_id"] = result["scope"].run_id
             elif body["name"] == "agent_end":
                 result = runtime.end(
                     sid,
