@@ -151,7 +151,12 @@
       position: relative;
       display: flex;
       flex-wrap: nowrap;
+      align-items: center;
       gap: 0 2px;
+      /* 不写显式 height 时，overflow-y:hidden + flex-wrap:nowrap 会让
+         这个 flex item 在 column flex 容器里高度坍缩成 0，::before/::after
+         跟着看不见；给个 min-height 让 ::after 的渐变阴影真正有面积可画 */
+      min-height: 32px;
       margin: 0 10px 6px;
       padding: 0 12px 0 10px;
       overflow-x: auto;
@@ -161,26 +166,39 @@
       -ms-overflow-style: none;
       box-shadow: inset 0 -1px 0 var(--line);
     }
-    .sess-tabs::-webkit-scrollbar { display: none; }
-    /* 溢出指示：scrollLeft > 0 时左侧、右端有更多内容可滑时可显示箭头/阴影。
-       简化为仅用 1px inset shadow 表示"还有内容"，不画渐变避免与裁切文字视觉冲突。 */
+    /* 溢出指示：scrollLeft > 0 时左侧出现 1px 灰线、右端有更多内容时
+       拉一道 12px 背景色渐变 fade-in，比纯灰线更明显，又不挡文字 */
     .sess-tabs[data-overflow-left]::before,
     .sess-tabs[data-overflow-right]::after {
       content: "";
       position: absolute;
       top: 0;
       bottom: 0;
-      width: 1px;
-      background: var(--line-strong);
       pointer-events: none;
     }
-    .sess-tabs[data-overflow-left]::before { left: 0; }
-    .sess-tabs[data-overflow-right]::after { right: 0; }
+    .sess-tabs[data-overflow-left]::before {
+      left: 0;
+      width: 1px;
+      background: var(--line-strong);
+    }
+    .sess-tabs[data-overflow-right]::after {
+      right: 0;
+      width: 18px;
+      background: linear-gradient(to right,
+        color-mix(in srgb, var(--ink-3) 0%, transparent),
+        color-mix(in srgb, var(--ink-3) 18%, transparent) 70%,
+        color-mix(in srgb, var(--ink-3) 26%, transparent));
+    }
 
     /* 侧栏折叠开关 */
     body.nav-hidden .shell { grid-template-columns: 0 minmax(0, 1fr); }
     body.nav-hidden .nav { display: none; }
-    #navToggle[aria-pressed="true"] { color: var(--ink); }
+    .agent-claude { --agent: var(--orange); --agent-soft: var(--orange-tint); }
+    .agent-codex { --agent: var(--green); --agent-soft: var(--green-tint); }
+    .agent-pi { --agent: var(--ink); --agent-soft: var(--hover); }
+    .agent-droid { --agent: var(--cyan); --agent-soft: var(--cyan-tint); }
+    .agent-cue { --agent: var(--pink); --agent-soft: var(--pink-tint); }
+    .agent-omp { --agent: var(--violet); --agent-soft: var(--violet-tint); }
     /* 会话卡片 v2：标题 + meta 行（agent · 事件数 · 错误 · 标注点 · 时间），一眼分诊。
        中性 hover 底，选中才上 agent tint；描边代替三层阴影（灰底上更安静） */
     .item {
