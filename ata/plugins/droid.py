@@ -7,8 +7,12 @@ from pathlib import Path
 
 from ata.plugins.common import (
     PLACEHOLDER_MS,
+    block_texts,
     bump_turn_if_real_user,
+    content_blocks,
     is_context_text,
+    result_text,
+    split_text_thinking,
     tool_end_payload,
     tool_start_payload,
 )
@@ -155,7 +159,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
     if isinstance(msg, dict) and msg.get("hookEventName"):
         return out
     if role in {"user", "assistant"}:
-        texts, thinking = _split(content)
+        texts, thinking = split_text_thinking(content)
         is_tool_only = role == "user" and texts == "" and _has_tool_result(content)
         if not is_tool_only:
             if role == "user" and not is_context_text(texts):
@@ -192,7 +196,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
             ))
         else:
             turn = state.get("turn") or 1
-        for block in _blocks(content):
+        for block in content_blocks(content):
             if block.get("type") == "tool_use":
                 cid = str(block.get("id") or "")
                 if not cid:
@@ -219,7 +223,7 @@ def translate_line(raw: dict, state: dict) -> list[dict]:
                 cid = str(block.get("tool_use_id") or block.get("id") or "")
                 if not cid:
                     continue
-                result = _result_text(block.get("content"))
+                result = result_text(block.get("content"))
                 prev = state.setdefault("tools", {}).get(cid, {})
                 end_payload = tool_end_payload(prev, cid, state.get("last_assistant_id"), result, ts)
                 out.append(envelope(
@@ -240,49 +244,8 @@ def translate_file(path: Path, offset: int = 0, state: dict | None = None):
     return _jfile(path, translate_line, offset, state)
 
 
-def _blocks(content):
-    if isinstance(content, list):
-        return [b for b in content if isinstance(b, dict)]
-    return []
-
-
-def _split(content):
-    """把 content 拆成 (正文, thinking)。text 只含文本块，thinking 单独出字段，
-    供前端折叠展示（dsh 的 thinking 折叠同款）。tool_result 等共用路径仍见 _texts。
-    """
-    if isinstance(content, str):
-        return content, ""
-    texts, thinking = [], []
-    for block in _blocks(content):
-        if block.get("type") == "text" and block.get("text"):
-            texts.append(str(block["text"]))
-        elif block.get("type") == "thinking" and block.get("thinking"):
-            thinking.append(str(block["thinking"]))
-    return "\n".join(texts), "\n".join(thinking)
-
-
-def _texts(content):
-    if isinstance(content, str):
-        return content
-    parts = []
-    for block in _blocks(content):
-        if block.get("type") == "text" and block.get("text"):
-            parts.append(str(block["text"]))
-        elif block.get("type") == "thinking" and block.get("thinking"):
-            parts.append(str(block["thinking"]))
-    return "\n".join(parts)
-
-
 def _has_tool_result(content):
-    return any(b.get("type") == "tool_result" for b in _blocks(content))
-
-
-def _result_text(content):
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return _texts(content)
-    return "" if content is None else str(content)
+    return any(b.get("type") == "tool_result" for b in content_blocks(content))
 
 
 def _tool_text(name, args):
