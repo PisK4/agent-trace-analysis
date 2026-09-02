@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import re
 
-from ata.ingest import PiHookStates
+from ata.ingest import CaptureStates, PiHookStates
 from ata.plugins.pi import translate_hook
 from ata.projection_cache import ProjectionCache
 from ata.queries import (audit_usage, evaluation_detail, list_compactions, list_tools,
@@ -18,10 +18,12 @@ from ata.evaluation import EvaluationStore, EvaluationValidationError
 from ata.runtime import RuntimeCoordinator
 
 
-def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
+def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None,
+                capture_states=None):
     webroot = Path(webroot)
     cache = ProjectionCache()
     pi_states = PiHookStates() if pi_states is None else pi_states
+    capture_states = CaptureStates() if capture_states is None else capture_states
     evaluations = EvaluationStore(ledger)
     runtime = RuntimeCoordinator(ledger)
 
@@ -341,7 +343,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
             except Exception:
                 return 400, {"ok": False, "error": f"{key} must be base64"}
         try:
-            count = ingest_capture(ledger, rec)
+            count = ingest_capture(ledger, rec, capture_states)
         except (ValidationError, TypeError, ValueError) as exc:
             return 400, {"ok": False, "error": str(exc)}
         return 200, {"ok": True, "count": count}

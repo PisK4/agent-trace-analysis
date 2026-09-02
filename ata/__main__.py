@@ -108,13 +108,15 @@ def main(argv=None):
         import threading
 
         from ata.capture_proxy import start_capture_proxy
+        from ata.ingest import CaptureStates
         from ata.plugins.capture import ingest_capture
+        capture_states = CaptureStates()
         proxy_httpd = start_capture_proxy(
             "127.0.0.1",
             args.proxy_port,
             resolve_proxy_upstream(args.proxy_agent, args.proxy_upstream),
             args.proxy_agent,
-            lambda rec: ingest_capture(led, rec),
+            lambda rec: ingest_capture(led, rec, capture_states),
         )
         threading.Thread(target=proxy_httpd.serve_forever, daemon=True).start()
         print(

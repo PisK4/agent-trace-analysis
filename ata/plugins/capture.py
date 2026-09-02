@@ -14,7 +14,12 @@ from __future__ import annotations
 import hashlib
 import json
 
-from ata.plugins.common import tool_end_payload, tool_start_payload, usage_from_counts
+from ata.plugins.common import (
+    is_context_text,
+    tool_end_payload,
+    tool_start_payload,
+    usage_from_counts,
+)
 from ata.schema import envelope
 from ata.wire import parse_request as _wire_req
 from ata.wire import parse_response as _wire_resp
@@ -118,10 +123,9 @@ def real_user_blocks(item):
     过滤粒度是 block 不是消息: Claude Code 常把 <local-command-caveat> 等
     注入与真实提问放进同一 user 消息的相邻 text block, 整串判形态学时
     开头的 <xxx> 会把真实提问连带杀掉 (sid 74736c29「你是谁」实证)。
-    消息带 wire id 时整条豁免 (id 守门)。
+    消息带 wire id 时整条豁免 (id 守门)。is_context_text 的唯一归属地是
+    plugins.common, 读取侧投影同吃这份判定。
     """
-    from ata.project import is_context_text
-
     if not isinstance(item, dict):
         return []
     texts = _user_texts_from_item(item)
@@ -136,9 +140,9 @@ def count_real_user_turns(message_items):
     """wire message_items 里的真实 user 消息数 = 当前轮次号。
 
     与 jsonl 侧 bump_turn_if_real_user 同口径：CONTEXT 注入不开轮
-    （复用 ata.project.is_context_text，懒加载避免循环导入）。
-    一条消息只剩注入块时不计数; 混合消息 (注入块 + 真实提问) 算一条。
-    id 守门: 块带 wire id 时豁免形态学判据, 避免误杀真 user 写 <xxx> 形态。
+    （判定在 plugins.common）。一条消息只剩注入块时不计数; 混合消息
+    (注入块 + 真实提问) 算一条。id 守门: 块带 wire id 时豁免形态学判据,
+    避免误杀真 user 写 <xxx> 形态。
     """
     count = 0
     for item in message_items or []:
@@ -153,15 +157,6 @@ RECORD_KEYS = frozenset({
     "response_content_type", "response_body",
     "started_at_ms", "completed_at_ms",
 })
-
-
-def state_bucket(ledger, sid):
-    """按 session 分桶的翻译状态，挂在 ledger 上（与 _pi_states 同款约定）。"""
-    states = getattr(ledger, "_capture_states", None)
-    if states is None:
-        ledger._capture_states = {}
-        states = ledger._capture_states
-    return states.setdefault(sid, {"session_id": sid})
 
 
 def _catalog(tool_items):
@@ -500,21 +495,27 @@ def _append_with_dedupe(ledger, events):
     return written
 
 
-def ingest_capture(ledger, rec):
+def ingest_capture(ledger, rec, states=None):
     """解析 → 校验 → 入账本。返回写入数；校验失败抛 ValidationError。
 
     身份规则在此收口：恢复不出宿主 sessionId 就抛错丢弃（进程内壳吞掉，
     HTTP 端点回 400），绝不造 sid 新建孤儿会话。
+
+    states 是跨 record 的翻译状态桶（ata.ingest.CaptureStates），代理壳
+    与 HTTP 端点各自持有同一实例注入；缺省每次新建——单 record 仍正确
+    （SYSTEM 去重与重复事实由账本键兜底），但 tool start/end 跨 record
+    配对必须由调用方传桶。
     """
+    from ata.ingest import CaptureStates
     from ata.schema import parse_event
 
     agent_id = rec.get("agent_id") or "claude"
     sid = resolve_session_id(rec, agent_id)
     if not sid:
         raise ValueError("capture: no host session id; dropping (no orphan sessions)")
-    state = state_bucket(ledger, sid)
-    state["session_id"] = sid
-    events = [parse_event(ev) for ev in translate_capture(rec, state)]
+    bucket = (states if states is not None else CaptureStates()).bucket(sid)
+    bucket["session_id"] = sid
+    events = [parse_event(ev) for ev in translate_capture(rec, bucket)]
     if events:
         return _append_with_dedupe(ledger, events)
     return 0
