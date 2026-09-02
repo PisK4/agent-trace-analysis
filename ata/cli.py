@@ -36,7 +36,8 @@ def build_parser():
 
 def _local(ledger_path, args):
     from ata.ledger import Ledger
-    from ata.queries import list_compactions, list_tools, summarize_usage, list_runs, list_turns
+    from ata.queries import (list_compactions, list_tools, summarize_usage, list_runs,
+                             list_turns, session_events)
     led = Ledger(ledger_path)
     try:
         if args.what == "sessions":
@@ -54,12 +55,9 @@ def _local(ledger_path, args):
         if led.session(args.sid) is None:
             sys.exit('error: {"ok": false, "error": "unknown session"}')
         if args.what == "events":
-            recs = [r for r in led.read(args.sid)
-                    if args.after_seq is None or r["seq"] > args.after_seq]
-            if args.limit:
-                recs = recs[: args.limit]
-            return {"ok": True, "events": recs,
-                    "next_after_seq": recs[-1]["seq"] if recs else (args.after_seq or 0)}
+            picked, nxt = session_events(led, args.sid,
+                                         after=args.after_seq, limit=args.limit)
+            return {"ok": True, "events": picked, "next_after_seq": nxt}
         if args.what == "runs":
             return {"ok": True, "runs": list_runs(led, args.sid)}
         if args.what == "turns":

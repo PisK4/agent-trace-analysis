@@ -112,5 +112,41 @@ class TestSummarizeTools(unittest.TestCase):
                                                    "mounted": None, "usage_rate": None}})
 
 
+class TestSessionEvents(unittest.TestCase):
+    """HTTP events 端点与 CLI --ledger events 共用同一份游标分页口径。"""
+
+    class _Store:
+        def __init__(self, seqs):
+            self.recs = [{"seq": seq, "event": {"type": "note"}} for seq in seqs]
+
+        def read(self, session_id):
+            return list(self.recs)
+
+    @classmethod
+    def _page(cls, after=None, limit=None, seqs=(1, 2, 3)):
+        from ata.queries import session_events
+        return session_events(cls._Store(seqs), "s", after=after, limit=limit)
+
+    def test_from_head_returns_all_and_last_seq(self):
+        picked, nxt = self._page()
+        self.assertEqual([r["seq"] for r in picked], [1, 2, 3])
+        self.assertEqual(nxt, 3)
+
+    def test_after_is_strictly_greater(self):
+        picked, nxt = self._page(after=2)
+        self.assertEqual([r["seq"] for r in picked], [3])
+        self.assertEqual(nxt, 3)
+
+    def test_limit_caps_page_and_cursor(self):
+        picked, nxt = self._page(after=0, limit=2)
+        self.assertEqual([r["seq"] for r in picked], [1, 2])
+        self.assertEqual(nxt, 2)
+
+    def test_empty_page_keeps_after_as_cursor(self):
+        picked, nxt = self._page(after=9)
+        self.assertEqual(picked, [])
+        self.assertEqual(nxt, 9)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,9 +10,9 @@ import re
 from ata.ingest import PiHookStates
 from ata.plugins.pi import translate_hook
 from ata.projection_cache import ProjectionCache
-from ata.queries import (audit_usage, list_compactions, list_tools, list_runs, list_turns,
-                        project_session, run_detail, summarize_timing, summarize_tools,
-                        summarize_usage, tail_preview)
+from ata.queries import (audit_usage, evaluation_detail, list_compactions, list_tools,
+                        list_runs, list_turns, project_session, run_detail, session_events,
+                        summarize_timing, summarize_tools, summarize_usage, tail_preview)
 from ata.schema import ValidationError, envelope, parse_event
 from ata.evaluation import EvaluationStore, EvaluationValidationError
 from ata.runtime import RuntimeCoordinator
@@ -66,21 +66,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         return 200, {"ok": True, "turns": list_turns(ledger, sid, run_id=run_id)}
 
     def _evaluation_detail(evaluation_id):
-        state = evaluations.fold(evaluation_id)
-        if state is None:
-            return None
-        members = []
-        for member in state["members"]:
-            sid = member["session_id"]
-            meta = ledger.session(sid)
-            row = dict(member)
-            if meta is not None:
-                row["session"] = meta
-                # 评分仍是 Session fact；Evaluation 只展示最新值，不复制事实。
-                projected = project_session(sid, meta["agent"], ledger.read(sid))
-                row["score"] = (projected.get("scores") or [None])[-1]
-            members.append(row)
-        return {**state, "members": members}
+        return evaluation_detail(ledger, evaluations.fold(evaluation_id))
 
     def h_evaluations(m, qs, body):
         return 200, {"ok": True, "evaluations": evaluations.evaluations()}
@@ -186,8 +172,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
                 limit = min(int(qs.get("limit", ["100"])[0]), 500)
             except (TypeError, ValueError):
                 return 400, {"ok": False, "error": "invalid event cursor"}
-            picked = [r for r in ledger.read(sid) if r["seq"] > after][:limit]
-            nxt = picked[-1]["seq"] if picked else after
+            picked, nxt = session_events(ledger, sid, after=after, limit=limit)
             return 200, {"ok": True, "events": picked, "next_after_seq": nxt}
         if sub == "lineage":
             return 200, {"ok": True,
