@@ -192,21 +192,11 @@
       background: var(--agent-soft, var(--hover));
       box-shadow: inset 0 -1.5px 0 var(--agent, var(--ink));
     }
-    /* 3607ad2 误删的 5 个 .agent-* 颜色类 + 溢出指示 1px 边线。
-       用 background-image 画在 padding 区，不压 tab 文字，不随 scroll 飘移。 */
-    .sess-tabs {
-      background:
-        linear-gradient(to right,
-          var(--ink-3) 0,
-          var(--ink-3) 1px,
-          transparent 1px,
-          transparent 100%) 0 0 / auto 100% no-repeat padding-box,
-        linear-gradient(to left,
-          var(--ink-3) calc(100% - 1px),
-          var(--ink-3) 100%,
-          transparent 100%,
-          transparent 0) 100% 0 / auto 100% no-repeat padding-box;
-    }
+    /* 5 个 .agent-* 颜色类（之前 3607ad2 误删了）。
+       溢出指示（左右 1px 边线）放弃 background-image 和 ::after 伪元素方案：
+       - background-image 简写 + padding-box 在 chromium 解析时 background-clip 行为不一致，
+         整段渐变铺满 border box 把 tab 文字盖了；
+       - ::after + position:absolute + overflow:auto 在某些场景会随 scroll 飘移。 */
     .agent-claude { --agent: var(--orange); --agent-soft: var(--orange-tint); }
     .agent-codex { --agent: var(--green); --agent-soft: var(--green-tint); }
     .agent-pi { --agent: var(--ink); --agent-soft: var(--hover); }
