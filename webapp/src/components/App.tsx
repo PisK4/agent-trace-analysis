@@ -42,8 +42,23 @@ export function App() {
     return () => el.removeEventListener('wheel', onWheel)
   }, [sessions, agentFilter])
 
+  // 滚到左/右边界时切换 data-overflow-* 属性，CSS 用它来显示渐变边线
   useEffect(() => {
+    const el = tabsRef.current
+    if (!el) return
+    const update = () => {
+      const max = el.scrollWidth - el.clientWidth
+      el.dataset.overflowLeft = el.scrollLeft > 1 ? 'true' : ''
+      el.dataset.overflowRight = el.scrollLeft < max - 1 ? 'true' : ''
+    }
+    update()
+    el.addEventListener('scroll', update, { passive: true })
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => { el.removeEventListener('scroll', update); ro.disconnect() }
+  }, [sessions, agentFilter])
 
+  useEffect(() => {
     let alive = true
     api.listSessions()
       .then((list) => { if (alive) setSessions(list) })
