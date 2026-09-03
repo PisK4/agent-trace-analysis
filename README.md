@@ -1,6 +1,6 @@
 # ATA · Atatrace
 
-本地 Agent 轨迹阅读器。把 Pi、Droid、Claude Code、Codex 的会话翻译成统一账本，在浏览器里按轮次回看：消息、工具调用、每轮 usage、会话标题。
+本地 Agent 轨迹阅读器。把 Pi、Cue、omp、Droid、Claude Code、Codex 的会话翻译成统一账本，在浏览器里按轮次回看：消息、工具调用、每轮 usage、会话标题。
 
 - 纯 Python 标准库后端 + React 前端（`webapp/`，Vite 构建，产物落 `web/dist/`；首次使用先 `cd webapp && npm install && npm run build`）
 - 全部数据留在本机，不设服务端
@@ -52,11 +52,11 @@ Claude 与 Codex 同时采集时，为每个 profile 使用独立 proxy port 和
 ATA 进程；当前 relay interface 不做多 profile 路由。
 
 ## 支持的 agent
-
 | Agent | 数据通道 | 会话标题 | SYSTEM 快照 | 每轮 usage |
 | --- | --- | --- | --- | --- |
 | Pi | 官方 extension（live hook，需安装见下） | 首条用户消息 | 有（`before_agent_start`） | reported |
 | Cue | Pi 官方 extension（live hook，显式安装见下） | 首条用户消息 | 有（`before_agent_start`） | reported |
+| omp | Pi 官方 extension 的 omp 身份变体（live hook，显式安装见下） | 首条用户消息 | 有（`before_agent_start`） | reported |
 | Claude Code | 第一方 transcript（文件 tail） | `ai-title` 行 | 无（transcript 不落盘系统提示） | reported（缺失或全 0 → Missing） |
 | Codex | 第一方 rollout（文件 tail）；可选 OpenAI Responses proxy | `originator`；proxy 使用 wire session id | rollout 有 `base_instructions`；proxy 可补完整 tools | reported（rollout 或 proxy usage） |
 | Droid | 第一方 sessions（文件 tail） | `session_start.title` | 无 | 恒 Missing（JSONL 无 token 字段） |
@@ -68,6 +68,22 @@ ln -s "$PWD/extensions/pi-atatrace" ~/.pi/agent/extensions/pi-atatrace
 ```
 
 Pi 启动时自动加载，把 hook 事件推到 `ATA_URL`（默认 `http://127.0.0.1:8787`）。
+
+## 安装 omp extension（可选）
+
+omp（Oh My Pi）是 Pi 之上的桌面端产品，运行时仍是 Pi。ATA extension 用 omp 身份变体（`agent_id/host=omp`, `runtime=pi`）写账本。命令只写入 omp 的隔离配置目录，不修改 omp 仓库或其原生功能：
+
+```bash
+make attach-omp
+```
+
+安装器将 ATA extension 复制到 `~/.omp/agent/extensions/ata-omp-trace/`（omp 数据目录默认 `~/.omp`）。omp 的下一次会话会自动加载它。
+
+若 omp 使用了非默认的 agent 配置目录，可显式指定：
+
+```bash
+OMP_PI_AGENT_DIR=/path/to/omp-config make attach-omp
+```
 
 ## 安装 Cue Pi Trace extension（可选）
 

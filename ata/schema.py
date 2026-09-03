@@ -17,7 +17,7 @@ ALLOWED_TYPES = {
     "run.ended",
     "run.lifecycle.conflict",
 }
-ALLOWED_AGENTS = {"pi", "cue", "droid", "claude", "codex"}
+ALLOWED_AGENTS = {"pi", "cue", "omp", "droid", "claude", "codex"}
 USAGE_KEYS = ("status", "input", "output", "cache_read", "cache_write", "total_tokens", "cost")
 _SESSION_TYPES = {
     "session.opened",

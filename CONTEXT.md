@@ -1,6 +1,6 @@
 # Agent Trace Analysis (ATA)
 
-把 Pi、Cue、Claude Code、Codex、Droid 五家 agent 的会话翻译成统一事件账本，在浏览器里按轮次回看，并以「采集 → 观测 → 诊断 → 干预 → 对照复跑」飞轮支撑 agent 调优。产品名是 **Agent Trace Analysis** (ATA)。
+把 Pi、Cue、omp、Claude Code、Codex、Droid 六家 agent 的会话翻译成统一事件账本，在浏览器里按轮次回看，并以「采集 → 观测 → 诊断 → 干预 → 对照复跑」飞轮支撑 agent 调优。产品名是 **Agent Trace Analysis** (ATA)。
 
 ## Language
 
@@ -83,10 +83,8 @@ webapp 里只看「人说的话 + 模型答的话」的阅读模式，工具收�
 **血缘（lineage）**：
 会话的父子派生关系（parent_session_id / session.opened.payload.parent_session）。拿不到就是 NULL，NULL 是事实不是错误。Subagent 使用自己的 child Session，并在该 Session 内拥有自己的 Run；父子关系不通过把子 Run 挂到父 Session 表达。
 
-### Agent 身份
-
 **agent**：
-五个白名单值之一：pi / cue / droid / claude / codex。Cue 是 Screenpipe 品牌升级后的名称，运行时是 Pi，以自己的产品身份写入。
+六个白名单值之一：pi / cue / omp / droid / claude / codex。Cue 是 Screenpipe 品牌升级后的名称，运行时是 Pi，以自己的产品身份写入；omp（Oh My Pi）是 Pi 之上的桌面端产品身份，运行时仍是 Pi，但 `host` 与 `agent` 都写成 `omp`，`runtime` 保留 `pi`，由 `attach-omp-pi.sh` 安装的同名扩展把 hook 推给 ATA。
 
 **channel**：
 两处不同语义，说的时候要带上文：① session.opened 里该会话走的采集通道（如 Cue 的应答/主动通道）；② 回归任务项里「重跑时用哪个宿主」，取值就是 agent 名。
@@ -144,12 +142,11 @@ Evaluation 复用 Session 上已有的标注与 score 记录保存人工结论�
 
 ## 数据边界速记
 
-
-| agent    | SYSTEM 快照   | usage                                       |
-| -------- | ----------- | ------------------------------------------- |
-| pi / cue | 有           | reported                                    |
-| claude   | 无（代理通道开启时有） | reported（缺失或全 0 → missing）；每轮 usage 经代理通道补全 |
-| codex    | 有           | reported                                    |
-| droid    | 无           | 恒 missing                                   |
+| agent        | SYSTEM 快照   | usage                                       |
+| ------------ | ----------- | ------------------------------------------- |
+| pi / cue / omp | 有         | reported                                    |
+| claude       | 无（代理通道开启时有） | reported（缺失或全 0 → missing）；每轮 usage 经代理通道补全 |
+| codex        | 有           | reported                                    |
+| droid        | 无           | 恒 missing                                   |
 
 

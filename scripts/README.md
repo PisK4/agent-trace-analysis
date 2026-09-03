@@ -7,6 +7,7 @@
 | `serve-dev.sh` | 启动 ATA 本地 dev server（17877 主端口 + 17878 代理采集通道），自动 tail 已装 agent 的会话目录 |
 | `install-service.sh` | 把 ATA 注册成 macOS launchd 常驻服务（`com.ata.atatrace`），随登录自启，崩溃自动拉起 |
 | `attach-cue-pi.sh` | 把 Pi extension 安装到 Cue 的隔离 Pi 配置目录（`~/.cue/pi-config/...`） |
+| `attach-omp-pi.sh` | 把 Pi extension 以 omp 身份变体安装到 omp 的 agent 扩展目录（`~/.omp/agent/extensions/...`） |
 | `install-droid-hooks.sh` | 把 ATA 的 droid hook 命令挂到 droid CLI 的 7 类事件上（见下文） |
 | `_merge_droid_hooks.py` | 上面脚本调用的纯 Python JSON 合并器，方便跨平台和单测 |
 
