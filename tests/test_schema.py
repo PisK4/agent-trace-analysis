@@ -110,9 +110,13 @@ class EnvelopeTest(unittest.TestCase):
         self.assertEqual(ev["id"], "e2")
         self.assertIsNone(ev["run_id"])
         self.assertTrue(before <= ev["ts"] <= after)
-
     def test_allowed_agents_unchanged(self):
         self.assertIn("pi", ALLOWED_AGENTS)
+
+    def test_omp_is_whitelisted(self):
+        # omp 与 pi 共用同一扩展(attach-omp-pi.sh),事件契约同 pi,故在
+        # ALLOWED_AGENTS 中独立成项,产品身份与 Pi/Cue 平级。
+        self.assertIn("omp", ALLOWED_AGENTS)
 
 
 if __name__ == "__main__":

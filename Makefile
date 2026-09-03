@@ -4,7 +4,7 @@ PORT ?= 17877
 PROXY_PORT ?= 17878
 PROXY_UPSTREAM ?= http://127.0.0.1:31415
 
-.PHONY: help serve serve-no-proxy test seed attach-cue
+.PHONY: help serve serve-no-proxy test seed attach-cue attach-omp
 
 help: ## 列出可用命令
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "%-10s %s\n", $$1, $$2}'
@@ -24,3 +24,6 @@ seed: ## 灌入合成演示数据（pi-compact / droid-missing / pi-long），�
 
 attach-cue: ## 安装 Cue 的 Pi Trace extension
 	./scripts/attach-cue-pi.sh
+
+attach-omp: ## 安装 omp（Oh My Pi）的 ATA extension（pi-atatrace 的 omp 身份变体）
+	./scripts/attach-omp-pi.sh
