@@ -215,3 +215,20 @@ Claude Code 流量下仍暴露三个问题, 对照磁盘 jsonl
    （message → content → block → text），可拆 `_user_messages(req)` /
    `_assistant_text_thinking(blocks)` / `_tool_results(req)` 三个
    私有函数,降低维护成本。不紧急。
+
+### Codex capture activation（2026-08-31）
+
+Codex 走 OpenAI Responses 的解析与 capture 消费已经接入既有代理通道：
+`openai_parser` 负责 wire 摘要，`plugins/capture.py` 负责把
+`assistant_text`、Responses `function_call` / `function_call_output` 与
+OpenAI usage 翻译成 canonical event，账本 writer 和 projection 不新增路径。
+
+代理启动用 `--proxy-agent codex` 选择 Codex profile，默认上游为
+`https://api.openai.com`，显式 `--proxy-upstream` 优先。一个进程仍只有一个
+静态 profile，不引入隐含的多 agent 路由。
+
+身份裁决保持严格：请求体声明的 `metadata.session_id` 才能用于
+merge-on-write；缺少稳定字段时继续使用 `codex-wire-*` 作为 wire-only
+session。不得根据 client port、时间窗或 rollout 文件名猜测它与第一方
+Codex session 相同；除非未来的真实 wire 物证证明稳定 correlation 字段，
+才可以单独重开 identity seam。

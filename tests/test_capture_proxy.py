@@ -19,6 +19,27 @@ UPSTREAM_RESP = {
 }
 
 
+CODEX_UPSTREAM_RESP = {
+    "id": "resp-proxy-codex-1",
+    "status": "completed",
+    "output": [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "proxy answer"}],
+        },
+        {
+            "type": "function_call",
+            "id": "fc-proxy-codex-1",
+            "call_id": "call-proxy-codex-1",
+            "name": "Read",
+            "arguments": '{"path":"README.md"}',
+        },
+    ],
+    "usage": {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18},
+}
+
+
 #: 假上游收到的头（模块级，测试断言转发侧契约用）。
 SEEN_HEADERS = {}
 
@@ -209,6 +230,13 @@ class NeedsVirtualSidTest(unittest.TestCase):
     def test_responses_triggers(self):
         self.assertTrue(capture_proxy._needs_virtual_sid("/v1/responses"))
 
+    def test_backend_api_codex_responses_triggers(self):
+        self.assertTrue(
+            capture_proxy._needs_virtual_sid(
+                "/backend-api/codex/responses"
+            )
+        )
+
     def test_claude_messages_does_not_trigger(self):
         # claude 走 /v1/messages, 由 headers 提供 sid, 不需要兜底
         self.assertFalse(capture_proxy._needs_virtual_sid("/v1/messages"))
@@ -223,6 +251,139 @@ class NeedsVirtualSidTest(unittest.TestCase):
     def test_empty_path_returns_false(self):
         self.assertFalse(capture_proxy._needs_virtual_sid(""))
         self.assertFalse(capture_proxy._needs_virtual_sid(None))
+
+
+class CodexCaptureProxyTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.ledger = Ledger(Path(self.tmp.name))
+        self.upstream = make_upstream([CODEX_UPSTREAM_RESP])
+        self.upstream_port = self.upstream.server_address[1]
+        threading.Thread(
+            target=self.upstream.serve_forever,
+            daemon=True,
+        ).start()
+        with capture_proxy._virtual_sid_lock:
+            capture_proxy._virtual_sid_cache.clear()
+
+        from ata.plugins.capture import ingest_capture
+
+        self.proxy = start_capture_proxy(
+            "127.0.0.1",
+            0,
+            f"http://127.0.0.1:{self.upstream_port}",
+            "codex",
+            lambda record: ingest_capture(self.ledger, record),
+        )
+        self.proxy_thread = threading.Thread(
+            target=self.proxy.serve_forever,
+            daemon=True,
+        )
+        self.proxy_thread.start()
+
+    def tearDown(self):
+        self.proxy.shutdown()
+        self.proxy.server_close()
+        self.proxy_thread.join(timeout=2)
+        self.upstream.shutdown()
+        self.upstream.server_close()
+        self.ledger.close()
+        self.tmp.cleanup()
+        with capture_proxy._virtual_sid_lock:
+            capture_proxy._virtual_sid_cache.clear()
+
+    def _post(self, body):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.proxy.server_address[1]}/v1/responses",
+            data=json.dumps(body).encode(),
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer test-secret",
+            },
+        )
+        with urllib.request.urlopen(request) as response:
+            self.assertEqual(response.status, 200)
+            response.read()
+
+    def _wait_records(self, sid, predicate=None, timeout=5.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            records = self.ledger.read(sid)
+            if records and (predicate is None or predicate(records)):
+                return records
+            time.sleep(0.05)
+        return self.ledger.read(sid)
+
+    def test_codex_responses_lands_in_body_session_and_completes_tool(self):
+        request = {
+            "model": "gpt-5",
+            "instructions": "You are Codex.",
+            "metadata": {"session_id": "codex-proxy-session"},
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": "read README"}],
+            }],
+        }
+        self._post(request)
+        first = self._wait_records("codex-proxy-session")
+        self.assertTrue(first)
+        first_types = [record["event"]["type"] for record in first]
+        self.assertIn("system.upserted", first_types)
+        self.assertIn("message.upserted", first_types)
+        self.assertIn("turn.ended", first_types)
+        assistant = next(
+            record["event"] for record in first
+            if record["event"]["type"] == "message.upserted"
+            and record["event"]["payload"]["role"] == "assistant"
+        )
+        self.assertEqual(assistant["payload"]["text"], "proxy answer")
+
+        self._post({
+            **request,
+            "input": [
+                *request["input"],
+                {
+                    "type": "function_call_output",
+                    "call_id": "call-proxy-codex-1",
+                    "output": "README contents",
+                },
+            ],
+        })
+        records = self._wait_records(
+            "codex-proxy-session",
+            predicate=lambda rows: any(
+                row["event"]["type"] == "tool.upserted"
+                and row["event"]["id"].endswith(":end")
+                for row in rows
+            ),
+        )
+        ended = [
+            record["event"] for record in records
+            if record["event"]["type"] == "tool.upserted"
+            and record["event"]["id"].endswith(":end")
+        ]
+        self.assertEqual(len(ended), 1)
+        self.assertEqual(ended[0]["payload"]["result"], "README contents")
+        self.assertNotIn("test-secret", json.dumps(records))
+
+    def test_codex_without_body_session_uses_explicit_wire_only_sid(self):
+        self._post({
+            "model": "gpt-5",
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}],
+            }],
+        })
+        deadline = time.time() + 5
+        sessions = []
+        while time.time() < deadline:
+            sessions = self.ledger.sessions()
+            if sessions:
+                break
+            time.sleep(0.05)
+        self.assertEqual(len(sessions), 1)
+        self.assertTrue(sessions[0]["id"].startswith("codex-wire-"))
 
 
 class OpenAIProxyPathTest(unittest.TestCase):

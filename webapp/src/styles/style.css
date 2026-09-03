@@ -148,14 +148,24 @@
       text-transform: uppercase;
     }
     .sess-tabs {
+      position: relative;
       display: flex;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
+      align-items: center;
       gap: 0 2px;
+      min-height: 32px;
       margin: 0 10px 6px;
-      padding: 0;
+      padding: 0 12px 0 10px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
       box-shadow: inset 0 -1px 0 var(--line);
     }
+    .sess-tabs::-webkit-scrollbar { display: none; }
     .sess-tabs .tab {
+      flex: 0 0 auto;
       display: inline-flex;
       align-items: center;
       gap: 5px;
@@ -182,17 +192,17 @@
       background: var(--agent-soft, var(--hover));
       box-shadow: inset 0 -1.5px 0 var(--agent, var(--ink));
     }
+    /* 5 个 .agent-* 颜色类（之前 3607ad2 误删了）。
+       溢出指示（左右 1px 边线）放弃 background-image 和 ::after 伪元素方案：
+       - background-image 简写 + padding-box 在 chromium 解析时 background-clip 行为不一致，
+         整段渐变铺满 border box 把 tab 文字盖了；
+       - ::after + position:absolute + overflow:auto 在某些场景会随 scroll 飘移。 */
     .agent-claude { --agent: var(--orange); --agent-soft: var(--orange-tint); }
     .agent-codex { --agent: var(--green); --agent-soft: var(--green-tint); }
     .agent-pi { --agent: var(--ink); --agent-soft: var(--hover); }
     .agent-droid { --agent: var(--cyan); --agent-soft: var(--cyan-tint); }
     .agent-cue { --agent: var(--pink); --agent-soft: var(--pink-tint); }
-    #sessList { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 4px 10px 12px; }
-
-    /* 侧栏折叠开关 */
-    body.nav-hidden .shell { grid-template-columns: 0 minmax(0, 1fr); }
-    body.nav-hidden .nav { display: none; }
-    #navToggle[aria-pressed="true"] { color: var(--ink); }
+    .agent-omp { --agent: var(--violet); --agent-soft: var(--violet-tint); }
     /* 会话卡片 v2：标题 + meta 行（agent · 事件数 · 错误 · 标注点 · 时间），一眼分诊。
        中性 hover 底，选中才上 agent tint；描边代替三层阴影（灰底上更安静） */
     .item {
@@ -208,7 +218,6 @@
       text-align: left;
       transition: box-shadow .15s;
     }
-    .item:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
     .item[aria-current="true"] {
       background: var(--agent-soft, var(--hover));
       color: var(--ink);

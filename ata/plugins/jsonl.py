@@ -98,13 +98,10 @@ def step_tail(root: Path, translate_file_fn, ledger, state: dict, max_age_days: 
             continue
         events, new_offset = translate_file_fn(
             f, bucket["offset"], bucket["translate"])
-        # 跨 file 切换时 plugin 把上一 file 的 flush 暂存在 _pre_flush,先捞出来。
-        pre = bucket["translate"].pop("_pre_flush", None) or []
-        all_events = pre + events
-        if all_events:
-            parsed = [parse_event(ev) for ev in all_events]
+        if events:
+            parsed = [parse_event(ev) for ev in events]
             ledger.append_many(parsed)  # 一批一次 commit，减 WAL 抖动
-        batch.extend(all_events)
+        batch.extend(events)
         bucket["offset"] = new_offset
     return batch
 

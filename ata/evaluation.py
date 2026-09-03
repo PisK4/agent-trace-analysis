@@ -129,22 +129,17 @@ class EvaluationStore:
     def append(self, raw: dict) -> int:
         """追加 fact；同一 Evaluation 下重复 fact id 幂等。"""
         fact = validate_fact(raw)
-        with self.ledger._lock:
-            existing = self.ledger._conn.execute(
-                "SELECT seq FROM evaluation_events WHERE evaluation_id=? AND event_id=?",
-                (fact["evaluation_id"], fact["id"]),
-            ).fetchone()
-            if existing:
-                return int(existing["seq"])
-            self._validate_transition_locked(fact)
-            seq = self.ledger._append_evaluation_locked(fact)
-            self.ledger._conn.commit()
-            return seq
+        with self.ledger.transaction() as tx:
+            for record in self.ledger.read_evaluation_events(fact["evaluation_id"]):
+                if record["event"]["id"] == fact["id"]:
+                    return int(record["seq"])
+            self._validate_transition(fact)
+            return tx.append_evaluation(fact)
 
-    def _validate_transition_locked(self, fact: dict):
-        """调用方持有 Ledger 锁；阻止未知或已删除 identity 的状态变更。"""
+    def _validate_transition(self, fact: dict):
+        """在 Ledger 事务内调用；阻止未知或已删除 identity 的状态变更。"""
         evaluation_id = fact["evaluation_id"]
-        state = self.ledger._fold_evaluation_locked(evaluation_id)
+        state = self.ledger.fold_evaluation(evaluation_id)
         if fact["type"] == "evaluation.created":
             if state is not None:
                 raise EvaluationValidationError("evaluation already exists")
@@ -161,25 +156,20 @@ class EvaluationStore:
         return self.ledger.fold_evaluation(evaluation_id)
 
     def evaluations(self) -> list[dict]:
-        with self.ledger._lock:
-            ids = [row[0] for row in self.ledger._conn.execute(
-                "SELECT DISTINCT evaluation_id FROM evaluation_events"
-            )]
-        return [self.fold(eid) for eid in ids]
+        return [self.fold(eid) for eid in self.ledger.evaluation_ids()]
 
     list = evaluations
 
     def create(self, title: str, *, evaluation_id: str | None = None, ts=None) -> str:
         _require_text(title, "title")
         eid = evaluation_id or f"e-{uuid.uuid4().hex}"
-        with self.ledger._lock:
-            if self.ledger._fold_evaluation_locked(eid) is not None:
+        with self.ledger.transaction() as tx:
+            if self.ledger.fold_evaluation(eid) is not None:
                 raise EvaluationValidationError("evaluation already exists")
             fact = validate_fact(evaluation_envelope(
                 eid, "evaluation.created", {"title": title}, ts=ts,
             ))
-            self.ledger._append_evaluation_locked(fact)
-            self.ledger._conn.commit()
+            tx.append_evaluation(fact)
         return eid
 
     def rename(self, evaluation_id: str, title: str, *, ts=None) -> int:
@@ -198,20 +188,18 @@ class EvaluationStore:
         _require_text(session_id, "session_id")
         if not isinstance(task_label, str):
             raise EvaluationValidationError("task_label must be string")
-        with self.ledger._lock:
-            current = self.ledger._fold_evaluation_locked(evaluation_id)
+        with self.ledger.transaction() as tx:
+            current = self.ledger.fold_evaluation(evaluation_id)
             if current is None:
                 raise EvaluationValidationError("evaluation not found")
             if current["deleted"]:
                 raise EvaluationValidationError("evaluation deleted")
-            if self.ledger._conn.execute(
-                "SELECT 1 FROM sessions WHERE session_id=?", (session_id,)
-            ).fetchone() is None:
+            if self.ledger.session(session_id) is None:
                 raise EvaluationValidationError("session not found")
-            for other_id, records in self.ledger._all_evaluation_records_locked():
+            for other_id in self.ledger.evaluation_ids():
                 if other_id == evaluation_id:
                     continue
-                other = fold_evaluation_events(other_id, records)
+                other = self.ledger.fold_evaluation(other_id)
                 if other and not other["deleted"] and any(
                     member["session_id"] == session_id for member in other["members"]
                 ):
@@ -220,14 +208,12 @@ class EvaluationStore:
                 evaluation_id, "evaluation.session.added",
                 {"session_id": session_id, "task_label": task_label}, ts=ts,
             ))
-            seq = self.ledger._append_evaluation_locked(fact)
-            self.ledger._conn.commit()
-            return seq
+            return tx.append_evaluation(fact)
 
     def remove_session(self, evaluation_id: str, session_id: str, *, ts=None) -> int:
         _require_text(session_id, "session_id")
-        with self.ledger._lock:
-            current = self.ledger._fold_evaluation_locked(evaluation_id)
+        with self.ledger.transaction() as tx:
+            current = self.ledger.fold_evaluation(evaluation_id)
             if current is None:
                 raise EvaluationValidationError("evaluation not found")
             if current["deleted"]:
@@ -237,9 +223,7 @@ class EvaluationStore:
             fact = validate_fact(evaluation_envelope(
                 evaluation_id, "evaluation.session.removed", {"session_id": session_id}, ts=ts,
             ))
-            seq = self.ledger._append_evaluation_locked(fact)
-            self.ledger._conn.commit()
-            return seq
+            return tx.append_evaluation(fact)
 
     def _require_active(self, evaluation_id: str):
         state = self.fold(evaluation_id)

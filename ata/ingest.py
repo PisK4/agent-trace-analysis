@@ -1,5 +1,5 @@
 """采集编排（架构评审二轮候选 6）：文件 tail 线程、droid 标题补写调度、
-pi hook 状态桶的唯一归属地。
+pi hook 状态桶与 capture 翻译状态桶的唯一归属地。
 
 此前编排逻辑一半在 __main__（start_tail 三连 + droid refresh_loop 内联线程）、
 一半在 http（_pi_states 靠 setattr 动态挂在 Ledger 对象上）——Ledger 毫不知情
@@ -18,6 +18,23 @@ class PiHookStates:
 
     pi 走 HTTP 推送、没有可 tail 的转录文件，翻译状态只能活在服务进程里；
     单进程单 writer，一把锁防 ThreadingHTTPServer 并发 setdefault 竞态。
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._states: dict[str, dict] = {}
+
+    def bucket(self, session_id: str) -> dict:
+        with self._lock:
+            return self._states.setdefault(session_id, {"session_id": session_id})
+
+
+class CaptureStates:
+    """capture 适配器的会话状态桶：session_id → translate_capture 的 state dict。
+
+    capture 有代理壳与 HTTP 端点两个入口，翻译状态（SYSTEM 快照哈希、
+    tool start/end 配对）必须跨 record 活在同一只桶里；由组合根创建并
+    注入两个入口，Ledger 不承载采集状态。
     """
 
     def __init__(self):

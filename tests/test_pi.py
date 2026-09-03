@@ -103,6 +103,34 @@ class PiTest(unittest.TestCase):
         }, hook["ctx"], state)
         self.assertIn("skills_catalog", changed[0]["payload"])
 
+    def test_run_transition_resets_accumulators(self):
+        # 换档重置归适配器所有：hook 入口只把 runtime 裁决的 run_id 放进 ctx。
+        state = {"session_id": "s", "opened": True, "run_id": 1,
+                 "turn": 3, "turn_started": 3, "user_pending": False,
+                 "last_assistant_id": "a1", "request_no": 5,
+                 "tool_args": {"c1": {}}, "tool_start_ts": {"c1": 1}}
+        evs = translate_hook("agent_start", {"timestamp": 1},
+                             {"session_id": "s", "run_id": 2}, state)
+        self.assertEqual(evs, [])
+        self.assertEqual(state["run_id"], 2)
+        for key in ("turn", "turn_started", "user_pending", "last_assistant_id",
+                    "request_no", "tool_args", "tool_start_ts"):
+            self.assertNotIn(key, state)
+        # 新 Run 的第一条用户消息从 turn 1 起算，不继承上一 Run 的 3
+        evs2 = translate_hook("message_start", {"timestamp": 2, "message": {"role": "user", "content": []}},
+                              {"session_id": "s"}, state)
+        started = [e for e in evs2 if e["type"] == "turn.started"]
+        self.assertEqual(len(started), 1)
+        self.assertEqual(started[0]["run_id"], 2)
+        self.assertEqual(started[0]["turn_number"], 1)
+
+    def test_same_run_redelivery_keeps_accumulators(self):
+        state = {"session_id": "s", "opened": True, "run_id": 1, "turn": 2}
+        evs = translate_hook("agent_start", {"timestamp": 1},
+                             {"session_id": "s", "run_id": 1}, state)
+        self.assertEqual(evs, [])
+        self.assertEqual(state["turn"], 2)
+
     def test_hook_http_pipe(self):
         import json
         import tempfile

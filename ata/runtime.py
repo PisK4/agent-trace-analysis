@@ -39,14 +39,18 @@ class RuntimeCoordinator:
                   boundary_source: str, agent_id: str = "pi",
                   ts: int | None = None,
                   payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        """接收 agent_start/agent_end 证据，返回 created/matched/duplicate/conflict。"""
+        """接收 agent_start/agent_end 证据，返回 created/matched/duplicate/conflict。
+
+        读取 runs、裁决、追加边界事实在一个 Ledger 事务里完成：并发
+        agent_start 若不加锁会读到同一 max(run_id) 而分配出重复 Run。
+        """
         if phase not in {"start", "end"}:
             raise ValueError("phase must be start or end")
-        with self.ledger._lock:
+        with self.ledger.transaction() as tx:
             if phase == "start":
-                return self._start_locked(session_id, external_lifecycle_id,
+                return self._start_locked(tx, session_id, external_lifecycle_id,
                                           boundary_source, agent_id, ts, payload)
-            return self._end_locked(session_id, external_lifecycle_id,
+            return self._end_locked(tx, session_id, external_lifecycle_id,
                                     boundary_source, agent_id, ts, payload)
 
     def start(self, session_id: str, *, external_lifecycle_id: str | None = None,
@@ -72,12 +76,12 @@ class RuntimeCoordinator:
         body.update({"external_lifecycle_id": external, "boundary_source": source})
         return parse_event(envelope(agent_id, session_id, typ, body, run_id=run_id, ts=ts))
 
-    def _start_locked(self, sid: str, external: str | None, source: str, agent_id: str,
+    def _start_locked(self, tx, sid: str, external: str | None, source: str, agent_id: str,
                       ts: int | None, payload: dict[str, Any] | None) -> dict[str, Any]:
         if external is None:
             reason = "lifecycle id required"
             return self._conflict(
-                sid, external, source, reason,
+                tx, sid, external, source, reason,
                 self._fingerprint("start", sid, external, payload), ts, agent_id,
             )
         rows = self.ledger.runs(sid)
@@ -89,19 +93,18 @@ class RuntimeCoordinator:
                 current = self._fingerprint("start", sid, external, payload)
                 if prior == current:
                     return {"status": "duplicate", "scope": RuntimeScope(run["run_id"])}
-                return self._conflict(sid, external, source, "lifecycle id reused with different semantic payload", current, ts, agent_id)
+                return self._conflict(tx, sid, external, source, "lifecycle id reused with different semantic payload", current, ts, agent_id)
         run_id = max((int(r["run_id"]) for r in rows), default=0) + 1
         event = self._boundary_event(sid, "run.started", run_id, external, source, agent_id, ts, payload)
-        self.ledger._append_locked(event)
-        self.ledger._conn.commit()
+        tx.append_event(event)
         return {"status": "created", "scope": RuntimeScope(run_id=run_id)}
 
-    def _end_locked(self, sid: str, external: str | None, source: str, agent_id: str,
+    def _end_locked(self, tx, sid: str, external: str | None, source: str, agent_id: str,
                     ts: int | None, payload: dict[str, Any] | None) -> dict[str, Any]:
         if external is None:
             reason = "lifecycle id required"
             return self._conflict(
-                sid, external, source, reason,
+                tx, sid, external, source, reason,
                 self._fingerprint("end", sid, external, payload), ts, agent_id,
             )
         rows = self.ledger.runs(sid)
@@ -109,20 +112,19 @@ class RuntimeCoordinator:
         if len(matches) != 1:
             reason = "end has no matching start" if not matches else "end has ambiguous lifecycle id"
             fp = self._fingerprint("end", sid, external, payload)
-            return self._conflict(sid, external, source, reason, fp, ts, agent_id)
+            return self._conflict(tx, sid, external, source, reason, fp, ts, agent_id)
         run = matches[0]
         if run["status"] == "ended":
             prior = self._end_fingerprint(sid, int(run["run_id"]))
             current = self._fingerprint("end", sid, external, payload)
             if prior == current:
                 return {"status": "duplicate", "scope": RuntimeScope(run["run_id"])}
-            return self._conflict(sid, external, source, "lifecycle end reused with different semantic payload", current, ts, agent_id)
+            return self._conflict(tx, sid, external, source, "lifecycle end reused with different semantic payload", current, ts, agent_id)
         event = self._boundary_event(sid, "run.ended", int(run["run_id"]), external, source, agent_id, ts, payload)
-        self.ledger._append_locked(event)
-        self.ledger._conn.commit()
+        tx.append_event(event)
         return {"status": "matched", "scope": RuntimeScope(run_id=int(run["run_id"]))}
 
-    def _conflict(self, sid: str, external: str | None, source: str,
+    def _conflict(self, tx, sid: str, external: str | None, source: str,
                   reason: str, fingerprint: str, ts: int | None,
                   agent_id: str) -> dict[str, Any]:
         event = envelope(agent_id, sid, "run.lifecycle.conflict", {
@@ -130,8 +132,7 @@ class RuntimeCoordinator:
             "reason": reason, "semantic_fingerprint": fingerprint,
             "boundary_source": source,
         }, ts=ts, eid=f"{sid}:lifecycle-conflict:{fingerprint}")
-        self.ledger._append_locked(parse_event(event))
-        self.ledger._conn.commit()
+        tx.append_event(parse_event(event))
         return {"status": "conflict", "scope": None, "reason": reason}
 
     def _end_fingerprint(self, sid: str, run_id: int) -> str | None:
@@ -166,8 +167,12 @@ class RuntimeCoordinator:
         return RuntimeScope(observed_turn_ordinal=self._next_observed(session_id))
 
     def allocate_turn(self, session_id: str, run_id: int | None = None) -> RuntimeScope:
-        """为 Run 分配下一个 Turn；无唯一 Run 时返回显式 observed ordinal。"""
-        with self.ledger._lock:
+        """为 Run 分配下一个 Turn；无唯一 Run 时返回显式 observed ordinal。
+
+        读 max_turn 与返回 +1 之间没有写入，但两次读必须在同一把锁内，
+        并发分配才不会拿到同一个 turn_number。
+        """
+        with self.ledger.transaction():
             if run_id is None:
                 scope = self.scope_for_event(session_id)
                 if scope.run_id is None:

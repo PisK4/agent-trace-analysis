@@ -7,21 +7,23 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import re
 
-from ata.ingest import PiHookStates
+from ata.ingest import CaptureStates, PiHookStates
 from ata.plugins.pi import translate_hook
 from ata.projection_cache import ProjectionCache
-from ata.queries import (audit_usage, list_compactions, list_tools, list_runs, list_turns,
-                        project_session, run_detail, summarize_timing, summarize_tools,
-                        summarize_usage, tail_preview)
+from ata.queries import (audit_usage, evaluation_detail, list_compactions, list_tools,
+                        list_runs, list_turns, project_session, run_detail, session_events,
+                        summarize_timing, summarize_tools, summarize_usage, tail_preview)
 from ata.schema import ValidationError, envelope, parse_event
 from ata.evaluation import EvaluationStore, EvaluationValidationError
 from ata.runtime import RuntimeCoordinator
 
 
-def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
+def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None,
+                capture_states=None):
     webroot = Path(webroot)
     cache = ProjectionCache()
     pi_states = PiHookStates() if pi_states is None else pi_states
+    capture_states = CaptureStates() if capture_states is None else capture_states
     evaluations = EvaluationStore(ledger)
     runtime = RuntimeCoordinator(ledger)
 
@@ -66,21 +68,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         return 200, {"ok": True, "turns": list_turns(ledger, sid, run_id=run_id)}
 
     def _evaluation_detail(evaluation_id):
-        state = evaluations.fold(evaluation_id)
-        if state is None:
-            return None
-        members = []
-        for member in state["members"]:
-            sid = member["session_id"]
-            meta = ledger.session(sid)
-            row = dict(member)
-            if meta is not None:
-                row["session"] = meta
-                # 评分仍是 Session fact；Evaluation 只展示最新值，不复制事实。
-                projected = project_session(sid, meta["agent"], ledger.read(sid))
-                row["score"] = (projected.get("scores") or [None])[-1]
-            members.append(row)
-        return {**state, "members": members}
+        return evaluation_detail(ledger, evaluations.fold(evaluation_id))
 
     def h_evaluations(m, qs, body):
         return 200, {"ok": True, "evaluations": evaluations.evaluations()}
@@ -186,8 +174,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
                 limit = min(int(qs.get("limit", ["100"])[0]), 500)
             except (TypeError, ValueError):
                 return 400, {"ok": False, "error": "invalid event cursor"}
-            picked = [r for r in ledger.read(sid) if r["seq"] > after][:limit]
-            nxt = picked[-1]["seq"] if picked else after
+            picked, nxt = session_events(ledger, sid, after=after, limit=limit)
             return 200, {"ok": True, "events": picked, "next_after_seq": nxt}
         if sub == "lineage":
             return 200, {"ok": True,
@@ -255,7 +242,6 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
         try:
             lifecycle_id = body.get("external_lifecycle_id")
             if body["name"] == "agent_start":
-                previous_run = bucket.get("run_id")
                 result = runtime.start(
                     sid,
                     external_lifecycle_id=lifecycle_id,
@@ -268,12 +254,9 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
                     }.items() if value is not None},
                 )
                 if result.get("status") in {"created", "duplicate"} and result.get("scope") is not None:
-                    if result.get("status") == "created" and previous_run != result["scope"].run_id:
-                        for key in ("turn", "turn_started", "user_pending", "last_assistant_id",
-                                    "request_no", "asst_no", "msg_start_ts", "msg_dur",
-                                    "tool_args", "tool_start_ts"):
-                            bucket.pop(key, None)
-                    bucket["run_id"] = result["scope"].run_id
+                    # 换档重置由适配器做（pi._RUN_RESET_KEYS）：这里只把 runtime
+                    # 裁决出的 run_id 交给 translate_hook，不碰它的 state 词表。
+                    ctx["run_id"] = result["scope"].run_id
             elif body["name"] == "agent_end":
                 result = runtime.end(
                     sid,
@@ -360,7 +343,7 @@ def make_server(ledger, webroot, host="127.0.0.1", port=8787, pi_states=None):
             except Exception:
                 return 400, {"ok": False, "error": f"{key} must be base64"}
         try:
-            count = ingest_capture(ledger, rec)
+            count = ingest_capture(ledger, rec, capture_states)
         except (ValidationError, TypeError, ValueError) as exc:
             return 400, {"ok": False, "error": str(exc)}
         return 200, {"ok": True, "count": count}

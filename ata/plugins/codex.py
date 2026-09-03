@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from ata.plugins.common import (
     PLACEHOLDER_MS,
+    block_texts,
+    result_text,
     tool_end_payload,
     tool_start_payload,
     usage_from_counts,
@@ -195,7 +197,7 @@ def _response_item(payload, state, ts, out):
             state["turn"] = turn
             state["last_assistant_id"] = str(payload.get("id") or f"{session_id}:asst:{ts}")
             state["request_no"] = int(state.get("request_no") or 0) + 1
-        text = _texts(payload.get("content"))
+        text = block_texts(payload.get("content"), raw_strings=True)
         mid = str(payload.get("id") or f"{session_id}:{role}:{ts}")
         out.append(envelope(
             agent_id="codex",
@@ -245,7 +247,7 @@ def _response_item(payload, state, ts, out):
         cid = str(payload.get("call_id") or "")
         if not cid:
             return out
-        result = _result_text(payload.get("output"))
+        result = result_text(payload.get("output"))
         prev = state.setdefault("tools", {}).get(cid, {})
         end_payload = tool_end_payload(prev, cid, state.get("last_assistant_id"), result, ts)
         out.append(envelope(
@@ -262,26 +264,6 @@ def _response_item(payload, state, ts, out):
     return out
 
 
-def _blocks(content):
-    if isinstance(content, list):
-        return [b for b in content if isinstance(b, dict)]
-    return []
-
-
-def _texts(content):
-    if isinstance(content, str):
-        return content
-    parts = []
-    for b in _blocks(content):
-        if b.get("text"):
-            parts.append(str(b["text"]))
-    if isinstance(content, list):
-        for b in content:
-            if isinstance(b, str):
-                parts.append(b)
-    return "\n".join(parts)
-
-
 def _args(value):
     if isinstance(value, dict):
         return value
@@ -293,16 +275,6 @@ def _args(value):
         except (ValueError, TypeError):
             return {}
     return {}
-
-
-def _result_text(content):
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return _texts(content)
-    return str(content)
 
 
 def _tool_text(name, args):

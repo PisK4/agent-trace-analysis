@@ -9,6 +9,14 @@ from ata.schema import envelope
 
 ZERO = (0, 0, 0, 0)
 
+# Run 换档时丢弃的跨 Run 累计器：turn/request_no/tool 配对都是 Run-local，
+# 带进新 Run 会把上一 Run 的中间态算进新 Run 的轮次。清单是本适配器的
+# state 词表，唯一归属地在这里；hook 入口只负责把 runtime 裁决的 run_id
+# 放进 ctx，由 translate_hook 自己观察换档并重置。
+_RUN_RESET_KEYS = ("turn", "turn_started", "user_pending", "last_assistant_id",
+                   "request_no", "asst_no", "msg_start_ts", "msg_dur",
+                   "tool_args", "tool_start_ts")
+
 
 def usage_from_assistant(message: dict):
     raw = (message or {}).get("usage") or {}
@@ -103,14 +111,13 @@ def translate_hook(name, event, ctx, state) -> list[dict]:
         state["last_prompt"] = prompt
         return out
     if name == "agent_start":
-        if run_id is not None:
-            previous_run = state.get("run_id")
-            state["run_id"] = int(run_id)
-            if previous_run != state["run_id"]:
-                for key in ("turn", "turn_started", "user_pending", "last_assistant_id",
-                            "request_no", "asst_no", "msg_start_ts", "msg_dur",
-                            "tool_args", "tool_start_ts"):
+        new_run = ctx.get("run_id")
+        if new_run is not None:
+            new_run = int(new_run)
+            if new_run != state.get("run_id"):
+                for key in _RUN_RESET_KEYS:
                     state.pop(key, None)
+                state["run_id"] = new_run
         if not state.get("opened"):
             state["opened"] = True
             title = ctx.get("title") or session_id

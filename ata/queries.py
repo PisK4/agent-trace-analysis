@@ -1,4 +1,10 @@
-"""Runtime read facade：HTTP、CLI 与未来读取端共用同一组派生口径。"""
+"""读取侧唯一 interface：HTTP 路由与 CLI 共用的派生口径。
+
+权威层是 store.read 的裸事件流；便捷层投影的折叠实现都在 ata/project，
+本模块只收口「HTTP 与 CLI 都要用的那部分」：Run/Turn 折叠、事件游标
+分页、Evaluation 详情 join，以及投影函数的转发。分页口径只有这一份，
+HTTP 与 CLI 各写一遍会静默漂移。
+"""
 
 from ata.project import (
     audit_usage,
@@ -59,66 +65,43 @@ def list_turns(store, session_id, run_id=None):
     return [turns[key] for key in sorted(turns, key=lambda key: (key[0], key[1:]))]
 
 
-class ReadFacade:
-    """只读会话查询 facade；store 只需提供 session/read 两个方法。"""
+def session_events(store, session_id, after=None, limit=None):
+    """权威层游标分页：seq 严格大于 after 的事件 + 续读游标。
 
-    def __init__(self, store):
-        self.store = store
-
-    def session(self, session_id, *, tail=None, before=None):
-        meta = self.store.session(session_id)
-        if meta is None:
-            return None
-        return project_session(session_id, meta["agent"], self.store.read(session_id),
-                               tail=tail, before=before)
-
-    def usage(self, session_id):
-        return summarize_usage(self.store.read(session_id))
-
-    def usage_audit(self, session_id):
-        return audit_usage(self.store.read(session_id))
-
-    def tools(self, session_id, status=None, name=None):
-        return list_tools(self.store.read(session_id), status, name)
-
-    def tool_stats(self, session_id):
-        return summarize_tools(self.store.read(session_id))
-
-    def timing(self, session_id):
-        return summarize_timing(self.store.read(session_id))
-
-    def compactions(self, session_id):
-        return list_compactions(self.store.read(session_id))
+    after=None 表示从头读；limit=None 表示不截断。返回 (picked, next_after_seq)。
+    """
+    picked = [r for r in store.read(session_id)
+              if after is None or r["seq"] > after]
+    if limit is not None:
+        picked = picked[:limit]
+    return picked, (picked[-1]["seq"] if picked else (after or 0))
 
 
-SessionQueries = ReadFacade
+def evaluation_detail(ledger, state):
+    """Evaluation 折叠态 + 成员会话 meta 与最新标注。
+
+    标注仍是 Session fact：这里只读取每个成员 Session 的最新 score 供
+    展示，不复制评分事实。state 为 None（unknown evaluation）原样返回。
+    """
+    if state is None:
+        return None
+    members = []
+    for member in state["members"]:
+        sid = member["session_id"]
+        meta = ledger.session(sid)
+        row = dict(member)
+        if meta is not None:
+            row["session"] = meta
+            # 评分仍是 Session fact；Evaluation 只展示最新值，不复制事实。
+            projected = project_session(sid, meta["agent"], ledger.read(sid))
+            row["score"] = (projected.get("scores") or [None])[-1]
+        members.append(row)
+    return {**state, "members": members}
+
 
 __all__ = [
-    "ReadFacade", "SessionQueries", "audit_usage", "list_compactions", "list_tools",
-    "list_runs", "list_turns", "run_detail", "project_session", "summarize_timing",
-    "summarize_tools", "summarize_usage", "tail_preview",
+    "audit_usage", "evaluation_detail", "list_compactions", "list_tools",
+    "list_runs", "list_turns", "project_session", "run_detail",
+    "session_events", "summarize_timing", "summarize_tools", "summarize_usage",
+    "tail_preview",
 ]
-
-
-def session(store, session_id, *, tail=None, before=None):
-    return ReadFacade(store).session(session_id, tail=tail, before=before)
-
-
-def usage(store, session_id):
-    return ReadFacade(store).usage(session_id)
-
-
-def tools(store, session_id, status=None, name=None):
-    return ReadFacade(store).tools(session_id, status, name)
-
-
-def tool_stats(store, session_id):
-    return ReadFacade(store).tool_stats(session_id)
-
-
-def timing(store, session_id):
-    return ReadFacade(store).timing(session_id)
-
-
-def compactions(store, session_id):
-    return ReadFacade(store).compactions(session_id)

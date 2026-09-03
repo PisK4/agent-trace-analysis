@@ -10,6 +10,16 @@ from ata.plugins.droid import translate_file
 from ata.schema import parse_event
 
 
+_PROXY_UPSTREAMS = {
+    "claude": "https://api.anthropic.com",
+    "codex": "https://api.openai.com",
+}
+
+
+def resolve_proxy_upstream(agent_id, explicit):
+    return explicit or _PROXY_UPSTREAMS[agent_id]
+
+
 def seed_long(ledger: Ledger):
     ledger.append({
         "v": 1, "id": "o", "agent_id": "pi", "session_id": "pi-long",
@@ -72,8 +82,12 @@ def main(argv=None):
     p.add_argument("--tail-max-age-days", type=int, default=7)
     # 代理采集通道：默认关。开起来后把 agent 的 API base 指到这里即可补采。
     p.add_argument("--proxy-port", type=int, default=None)
-    p.add_argument("--proxy-upstream", default="https://api.anthropic.com")
-    p.add_argument("--proxy-agent", choices=["claude"], default="claude")
+    p.add_argument("--proxy-upstream", default=None)
+    p.add_argument(
+        "--proxy-agent",
+        choices=tuple(_PROXY_UPSTREAMS),
+        default="claude",
+    )
     args = p.parse_args(argv)
     led = Ledger(Path(args.ledger))
     if args.cmd == "seed":
@@ -94,12 +108,21 @@ def main(argv=None):
         import threading
 
         from ata.capture_proxy import start_capture_proxy
+        from ata.ingest import CaptureStates
         from ata.plugins.capture import ingest_capture
+        capture_states = CaptureStates()
         proxy_httpd = start_capture_proxy(
-            "127.0.0.1", args.proxy_port, args.proxy_upstream, args.proxy_agent,
-            lambda rec: ingest_capture(led, rec))
+            "127.0.0.1",
+            args.proxy_port,
+            resolve_proxy_upstream(args.proxy_agent, args.proxy_upstream),
+            args.proxy_agent,
+            lambda rec: ingest_capture(led, rec, capture_states),
+        )
         threading.Thread(target=proxy_httpd.serve_forever, daemon=True).start()
-        print(f"capture proxy http://127.0.0.1:{args.proxy_port} -> {args.proxy_upstream}")
+        print(
+            f"capture proxy http://127.0.0.1:{args.proxy_port} -> "
+            f"{resolve_proxy_upstream(args.proxy_agent, args.proxy_upstream)}"
+        )
     httpd = make_server(led, Path(args.web), "127.0.0.1", args.port)
     print(f"atatrace http://127.0.0.1:{args.port}")
     httpd.serve_forever()

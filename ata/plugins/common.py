@@ -5,16 +5,18 @@
 usage 三态四份方言映射、「全 0 计 missing」判定三处各写一遍。占位时长 bug
 （9a89d 修 pi 后 1d36d6 还要在消费端再防御一次）证明约定需要单一归属地。
 
-这里只收真正同构的部分；各家方言差异（字段名映射、事件路由）留给适配器。
-jsonl 适配器无状态机不参与；pi 走 hook 通道轮次逻辑不同构，只收 _ev 与
-usage 两块。
+这里只收真正同构的部分；各家方言差异（字段名映射、事件路由、工具展示
+文本）留给适配器，content 块拼接的差异用 thinking/raw_strings 参数表达。
+jsonl 适配器无状态机不参与；pi 走 hook 通道，message 文本拼接顺序交错，
+留在 pi.py 自己拼。
 """
 from __future__ import annotations
 
 from ata.schema import envelope
 
 # claude/codex/droid 的「耗时未知」占位约定：转录不带耗时统一写 1，
-# 消费端 summarize_timing 按 >PLACEHOLDER_MS 过滤。与 project.PLACEHOLDER_MS 同值。
+# 消费端 summarize_timing 按 >PLACEHOLDER_MS 过滤。project 从本模块
+# import 此值，不要另设副本。
 PLACEHOLDER_MS = 1
 
 # dsh 把非用户输入的注入消息标成 CONTEXT（system-reminder / skill 清单 /
@@ -151,3 +153,60 @@ def bump_turn_if_real_user(state, texts, agent_id, session_id, ts, emit):
             eid=f"{session_id}:turn:{turn}:start",
         ))
     return turn
+
+
+def content_blocks(content):
+    """content → dict 块列表；非 list 或块非 dict 一律丢弃。"""
+    if isinstance(content, list):
+        return [b for b in content if isinstance(b, dict)]
+    return []
+
+
+def block_texts(content, *, thinking=False, raw_strings=False):
+    """content（str 或块 list）→ 拼接文本。
+
+    thinking / raw_strings 是转录方言的真实差异，不是自由开关：droid 把
+    thinking 块并进正文，codex 保留裸字符串块，pi 的 hook 通道两者都要
+    且顺序交错（留在 pi.py 自己拼）。新适配器先对照真实转录再选。
+    """
+    if isinstance(content, str):
+        return content
+    parts = []
+    for block in content_blocks(content):
+        if block.get("type") == "thinking" and block.get("thinking"):
+            if thinking:
+                parts.append(str(block["thinking"]))
+        elif block.get("text"):
+            parts.append(str(block["text"]))
+    if raw_strings and isinstance(content, list):
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+    return "\n".join(parts)
+
+
+def split_text_thinking(content):
+    """content → (正文, thinking)：正文只含 text 块，thinking 单独出字段，
+    供前端折叠展示。tool_result 等共用路径走 block_texts。"""
+    if isinstance(content, str):
+        return content, ""
+    texts, thinking = [], []
+    for block in content_blocks(content):
+        if block.get("type") == "text" and block.get("text"):
+            texts.append(str(block["text"]))
+        elif block.get("type") == "thinking" and block.get("thinking"):
+            thinking.append(str(block["thinking"]))
+    return "\n".join(texts), "\n".join(thinking)
+
+
+def result_text(content):
+    """tool_result / function_call_output 的 content → 文本：
+    str 原样，list 走块拼接（含 thinking 与裸字符串块，覆盖各家方言），
+    其余 str()。"""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return block_texts(content, thinking=True, raw_strings=True)
+    return str(content)

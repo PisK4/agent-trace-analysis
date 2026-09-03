@@ -5,17 +5,21 @@ sessionId，往同一 session 追加，幂等键吸收重复；恢复不了就�
 绝不新建孤儿会话——ava 把会话归并推迟到读取侧，ata 是写入时收敛，
 平行会话会让投影/usage 合计翻倍。
 
-v1 只发账本里别处拿不到的事实：system.upserted（prompt_text +
-tools_catalog，transcript 侧 claude 永远发不出）与 turn.ended（每轮
-真实 usage，spec L214 的立项痛点）。message/tool 行 transcript 已有，
-代理重复发会在两条通道间产生 natural-key 写序竞态，刻意不发。
+代理补充 system.upserted（prompt_text + tools_catalog）与 turn.ended（每轮
+真实 usage），并主发请求/响应中可确认的 message/tool 行。写入仍通过同一
+canonical event 和 Ledger writer，重复事实由自然键收敛。
 """
 from __future__ import annotations
 
 import hashlib
 import json
 
-from ata.plugins.common import tool_end_payload, tool_start_payload, usage_from_counts
+from ata.plugins.common import (
+    is_context_text,
+    tool_end_payload,
+    tool_start_payload,
+    usage_from_counts,
+)
 from ata.schema import envelope
 from ata.wire import parse_request as _wire_req
 from ata.wire import parse_response as _wire_resp
@@ -119,10 +123,9 @@ def real_user_blocks(item):
     过滤粒度是 block 不是消息: Claude Code 常把 <local-command-caveat> 等
     注入与真实提问放进同一 user 消息的相邻 text block, 整串判形态学时
     开头的 <xxx> 会把真实提问连带杀掉 (sid 74736c29「你是谁」实证)。
-    消息带 wire id 时整条豁免 (id 守门)。
+    消息带 wire id 时整条豁免 (id 守门)。is_context_text 的唯一归属地是
+    plugins.common, 读取侧投影同吃这份判定。
     """
-    from ata.project import is_context_text
-
     if not isinstance(item, dict):
         return []
     texts = _user_texts_from_item(item)
@@ -137,9 +140,9 @@ def count_real_user_turns(message_items):
     """wire message_items 里的真实 user 消息数 = 当前轮次号。
 
     与 jsonl 侧 bump_turn_if_real_user 同口径：CONTEXT 注入不开轮
-    （复用 ata.project.is_context_text，懒加载避免循环导入）。
-    一条消息只剩注入块时不计数; 混合消息 (注入块 + 真实提问) 算一条。
-    id 守门: 块带 wire id 时豁免形态学判据, 避免误杀真 user 写 <xxx> 形态。
+    （判定在 plugins.common）。一条消息只剩注入块时不计数; 混合消息
+    (注入块 + 真实提问) 算一条。id 守门: 块带 wire id 时豁免形态学判据,
+    避免误杀真 user 写 <xxx> 形态。
     """
     count = 0
     for item in message_items or []:
@@ -154,15 +157,6 @@ RECORD_KEYS = frozenset({
     "response_content_type", "response_body",
     "started_at_ms", "completed_at_ms",
 })
-
-
-def state_bucket(ledger, sid):
-    """按 session 分桶的翻译状态，挂在 ledger 上（与 _pi_states 同款约定）。"""
-    states = getattr(ledger, "_capture_states", None)
-    if states is None:
-        ledger._capture_states = {}
-        states = ledger._capture_states
-    return states.setdefault(sid, {"session_id": sid})
 
 
 def _catalog(tool_items):
@@ -181,6 +175,106 @@ def _system_hash(prompt_text, catalog):
     blob = json.dumps(
         {"p": prompt_text, "t": catalog}, ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def _nonnegative_int(value):
+    return value if type(value) is int and value >= 0 else 0
+
+
+def _capture_usage(raw):
+    if not isinstance(raw, dict):
+        return None
+
+    inp = _nonnegative_int(raw.get("input_tokens"))
+    if not inp:
+        inp = _nonnegative_int(raw.get("prompt_tokens"))
+    outp = _nonnegative_int(raw.get("output_tokens"))
+    if not outp:
+        outp = _nonnegative_int(raw.get("completion_tokens"))
+
+    cache_read = _nonnegative_int(raw.get("cache_read_input_tokens"))
+    if not cache_read:
+        cache_read = _nonnegative_int(raw.get("cached_input_tokens"))
+    for key in ("input_tokens_details", "prompt_tokens_details"):
+        details = raw.get(key)
+        if not cache_read and isinstance(details, dict):
+            cache_read = _nonnegative_int(details.get("cached_tokens"))
+
+    cache_write = _nonnegative_int(raw.get("cache_creation_input_tokens"))
+    if not cache_write:
+        cache_write = _nonnegative_int(raw.get("cache_write_input_tokens"))
+
+    if not any((inp, outp, cache_read, cache_write)):
+        return None
+
+    total = _nonnegative_int(raw.get("total_tokens"))
+    if not total:
+        total = inp + outp + cache_read + cache_write
+    return usage_from_counts(inp, outp, cache_read, cache_write, total_tokens=total)
+
+
+def _assistant_parts(resp):
+    text_parts = []
+    thinking_parts = []
+    blocks = resp.get("response_blocks") or []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text" and isinstance(block.get("text"), str):
+            text_parts.append(block["text"])
+        elif block.get("type") == "thinking" and isinstance(block.get("thinking"), str):
+            thinking_parts.append(block["thinking"])
+
+    text = "\n".join(text_parts)
+    if not text:
+        for key in ("assistant_text", "response_text"):
+            value = resp.get(key)
+            if isinstance(value, str):
+                text = value
+                break
+    thinking = "\n".join(thinking_parts) or None
+    return text, thinking
+
+
+def _capture_result_text(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(
+            item.get("text", "")
+            for item in value
+            if isinstance(item, dict) and isinstance(item.get("text"), str)
+        )
+    return ""
+
+
+def _request_tool_results(req):
+    results = []
+
+    # OpenAI Chat Completions and Responses are represented by message_items;
+    # both use role=tool and expose the pairing id in one of these two fields.
+    for item in req.get("message_items") or []:
+        if not isinstance(item, dict) or item.get("role") != "tool":
+            continue
+        cid = item.get("tool_call_id") or item.get("call_id")
+        if isinstance(cid, str) and cid:
+            results.append((cid, item.get("text") or ""))
+
+    # Anthropic keeps tool_result inside a role=user content block; this is the
+    # only request shape not represented as role=tool by the shared summary.
+    for message in req.get("messages") or []:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            cid = block.get("tool_use_id")
+            if isinstance(cid, str) and cid:
+                results.append((cid, _capture_result_text(block.get("content"))))
+    return results
 
 
 def translate_capture(rec, state):
@@ -223,10 +317,7 @@ def _translate(rec, state):
     # 每轮真实 usage：轮次号 = 请求上下文真实用户消息数（与 transcript 侧
     # bump_turn_if_real_user 同口径，两条通道才能落在同一 turn 上）。
     usage = resp.get("usage") if isinstance(resp.get("usage"), dict) else {}
-    inp = int(usage.get("input_tokens") or 0)
-    outp = int(usage.get("output_tokens") or 0)
-    cr = int(usage.get("cache_read_input_tokens") or 0)
-    cw = int(usage.get("cache_creation_input_tokens") or 0)
+    normalized_usage = _capture_usage(usage)
     started = int(rec.get("started_at_ms") or ts)
     completed = int(rec.get("completed_at_ms") or ts)
     duration = completed - started
@@ -292,17 +383,7 @@ def _translate(rec, state):
     resp_id = resp.get("response_id")
     if isinstance(resp_id, str) and resp_id:
         # dedupe_key 走 Ledger 层兜底, 翻译层不再用 seen 内存 set
-        blocks = resp.get("response_blocks") or []
-        texts, thinking_parts = [], []
-        for b in blocks:
-            if isinstance(b, dict):
-                btype = b.get("type")
-                if btype == "text" and isinstance(b.get("text"), str):
-                    texts.append(b["text"])
-                elif btype == "thinking" and isinstance(b.get("thinking"), str):
-                    thinking_parts.append(b["thinking"])
-        text_joined = "\n".join(texts)
-        thinking_joined = "\n".join(thinking_parts) or None
+        text_joined, thinking_joined = _assistant_parts(resp)
         out.append(envelope(
             agent_id=agent_id,
             session_id=sid,
@@ -313,9 +394,7 @@ def _translate(rec, state):
                 "text": text_joined[:200],
                 "status": "completed",
                 "request_no": turn,
-                "usage": usage_from_counts(
-                    inp, outp, cr, cw,
-                    total_tokens=inp + outp + cr + cw) if (inp or outp or cr or cw) else None,
+                "usage": normalized_usage,
                 "started_at": started,
                 "duration_ms": duration,
                 "output_text": text_joined or None,
@@ -327,19 +406,17 @@ def _translate(rec, state):
             eid=f"{sid}:msg:{resp_id}",
         ))
 
-    if inp or outp or cr or cw:
-        if turn >= 1:
-            rid = resp.get("response_id")
-            out.append(envelope(
-                agent_id=agent_id,
-                session_id=sid,
-                type_="turn.ended",
-                payload={"usage": usage_from_counts(
-                    inp, outp, cr, cw, total_tokens=inp + outp + cr + cw)},
-                observed_turn_ordinal=turn,
-                ts=ts,
-                eid=f"{sid}:turn:{turn}:ended:{rid or ts}",
-            ))
+    if normalized_usage and turn >= 1:
+        rid = resp.get("response_id")
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=sid,
+            type_="turn.ended",
+            payload={"usage": normalized_usage},
+            observed_turn_ordinal=turn,
+            ts=ts,
+            eid=f"{sid}:turn:{turn}:ended:{rid or ts}",
+        ))
 
     # tool.upserted: start 从 response.tool_calls 提, end 从本 request 的
     # tool_result 块提 (响应里没有 result — 它在下一次请求里)。
@@ -375,38 +452,20 @@ def _translate(rec, state):
             eid=f"{sid}:tool:{cid}:start",
         ))
 
-    # end: 扫本 request 全部 messages 的 tool_result 块
-    for m in req.get("messages") or []:
-        if not isinstance(m, dict):
-            continue
-        content = m.get("content")
-        if not isinstance(content, list):
-            continue
-        for b in content:
-            if not isinstance(b, dict) or b.get("type") != "tool_result":
-                continue
-            cid = b.get("tool_use_id")
-            if not isinstance(cid, str) or not cid:
-                continue
-            if cid not in tools_state:
-                continue  # 没有对应 start (代理漏了一次响应), 不发 end
-            prev = tools_state.pop(cid)
-            res = b.get("content")
-            if isinstance(res, list):
-                res = "\n".join(
-                    bb.get("text", "") for bb in res
-                    if isinstance(bb, dict) and isinstance(bb.get("text"), str)
-                )
-            res_text = res if isinstance(res, str) else ""
-            out.append(envelope(
-                agent_id=agent_id,
-                session_id=sid,
-                type_="tool.upserted",
-                payload=tool_end_payload(prev, cid, response_id, res_text, completed),
-                observed_turn_ordinal=turn,
-                ts=ts,
-                eid=f"{sid}:tool:{cid}:end",
-            ))
+    # end: 扫本 request 的标准化 tool result 摘要
+    for cid, res_text in _request_tool_results(req):
+        if cid not in tools_state:
+            continue  # 没有对应 start (代理漏了一次响应), 不发 end
+        prev = tools_state.pop(cid)
+        out.append(envelope(
+            agent_id=agent_id,
+            session_id=sid,
+            type_="tool.upserted",
+            payload=tool_end_payload(prev, cid, response_id, res_text, completed),
+            observed_turn_ordinal=turn,
+            ts=ts,
+            eid=f"{sid}:tool:{cid}:end",
+        ))
 
     return out
 
@@ -436,21 +495,27 @@ def _append_with_dedupe(ledger, events):
     return written
 
 
-def ingest_capture(ledger, rec):
+def ingest_capture(ledger, rec, states=None):
     """解析 → 校验 → 入账本。返回写入数；校验失败抛 ValidationError。
 
     身份规则在此收口：恢复不出宿主 sessionId 就抛错丢弃（进程内壳吞掉，
     HTTP 端点回 400），绝不造 sid 新建孤儿会话。
+
+    states 是跨 record 的翻译状态桶（ata.ingest.CaptureStates），代理壳
+    与 HTTP 端点各自持有同一实例注入；缺省每次新建——单 record 仍正确
+    （SYSTEM 去重与重复事实由账本键兜底），但 tool start/end 跨 record
+    配对必须由调用方传桶。
     """
+    from ata.ingest import CaptureStates
     from ata.schema import parse_event
 
     agent_id = rec.get("agent_id") or "claude"
     sid = resolve_session_id(rec, agent_id)
     if not sid:
         raise ValueError("capture: no host session id; dropping (no orphan sessions)")
-    state = state_bucket(ledger, sid)
-    state["session_id"] = sid
-    events = [parse_event(ev) for ev in translate_capture(rec, state)]
+    bucket = (states if states is not None else CaptureStates()).bucket(sid)
+    bucket["session_id"] = sid
+    events = [parse_event(ev) for ev in translate_capture(rec, bucket)]
     if events:
         return _append_with_dedupe(ledger, events)
     return 0

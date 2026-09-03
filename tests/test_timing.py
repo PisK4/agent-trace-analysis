@@ -86,7 +86,7 @@ class TestSummarizeTiming(unittest.TestCase):
 
     def test_dirty_ts_excluded_from_span(self):
         # ts=1 脏行（历史推送端 bug 的存量数据）不参与墙钟跨度，
-        # 否则 span 被拉成 50+ 年（与 ledger._REAL_TS_FLOOR 同一约定）
+        # 否则 span 被拉成 50+ 年（与 fold.REAL_TS_FLOOR 同一约定）
         recs = [
             rec(1, "system.upserted", -TS0 + 1, {}),
             rec(2, "message.upserted", 0, {"message_id": "a1",

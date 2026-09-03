@@ -1,16 +1,15 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import sqlite3
 import threading
 import time
 from pathlib import Path
 
-from ata.fold import REAL_TS_FLOOR, fold_session_meta
+from ata.fold import fold_session_meta
 from ata.schema import parse_event
 from ata.evaluation import fold_evaluation_events
-
-_REAL_TS_FLOOR = REAL_TS_FLOOR
 
 
 class ResetRequiredError(RuntimeError):
@@ -48,6 +47,21 @@ def _dedupe_key(event: dict) -> str | None:
         if turn is not None:
             return f"{ns}:{typ}:{turn}"
     return None
+
+
+class _TxWriter:
+    """transaction() 块内的写入面：两种事实的追加原语，commit 由事务收口。"""
+
+    def __init__(self, ledger: "Ledger"):
+        self._ledger = ledger
+
+    def append_event(self, event: dict) -> int:
+        """追加 canonical event；重复 event_id 返回原 seq。"""
+        return self._ledger._append_locked(event)
+
+    def append_evaluation(self, fact: dict) -> int:
+        """追加 Evaluation fact；同一 (evaluation_id, event_id) 幂等。"""
+        return self._ledger._append_evaluation_locked(fact)
 
 
 class Ledger:
@@ -305,6 +319,27 @@ class Ledger:
                 self._conn.rollback()
                 raise
 
+    @contextmanager
+    def transaction(self):
+        """持锁写事务：块内经 tx 追加的事实退出时一次 commit，异常整体回滚。
+
+        Runtime 与 Evaluation 的「读取—裁决—追加」都走这一个接缝，不得再
+        伸手 _lock/_conn。块内读取直接用公开读方法（RLock 可重入）；事务
+        不可嵌套——内层退出会提前 commit，破坏外层原子性。
+        """
+        with self._lock:
+            try:
+                yield _TxWriter(self)
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+
+    def evaluation_ids(self) -> list[str]:
+        with self._lock:
+            return [row[0] for row in self._conn.execute(
+                "SELECT DISTINCT evaluation_id FROM evaluation_events")]
+
     def read(self, session_id: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
@@ -382,54 +417,6 @@ class Ledger:
     def open_runs(self, session_id: str) -> list[dict]:
         return [r for r in self.runs(session_id) if r["status"] == "open"]
 
-    def _score_rows(self) -> list[dict]:
-        """折叠 Session score facts，并附带只读会话统计。"""
-        with self._lock:
-            metas = self._conn.execute(
-                "SELECT s.session_id,s.agent_id,s.title,COALESCE(c.event_count,0) event_count,"
-                "COALESCE(c.error_count,0) error_count FROM sessions s LEFT JOIN ("
-                "SELECT session_id,COUNT(*) event_count,SUM(CASE WHEN type='tool.upserted' "
-                "AND json_extract(event_json,'$.payload.status')='failed' THEN 1 ELSE 0 END) error_count "
-                "FROM events GROUP BY session_id) c ON c.session_id=s.session_id"
-            ).fetchall()
-            events = self._conn.execute(
-                "SELECT session_id,seq,ts,type,event_json FROM events "
-                "WHERE type IN ('session.scored','session.score.cleared') ORDER BY seq"
-            ).fetchall()
-        by_session = {}
-        for row in metas:
-            by_session[row["session_id"]] = {
-                "session_id": row["session_id"], "agent": row["agent_id"],
-                "title": row["title"], "event_count": int(row["event_count"]),
-                "error_count": int(row["error_count"] or 0), "score": None,
-            }
-        for row in events:
-            item = by_session.get(row["session_id"])
-            if item is None:
-                continue
-            if row["type"] == "session.score.cleared":
-                item["score"] = None
-            else:
-                payload = json.loads(row["event_json"]).get("payload") or {}
-                item["score"] = {
-                    "value": payload.get("value"), "note": payload.get("note"),
-                    "ts": int(row["ts"]), "seq": int(row["seq"]),
-                }
-        result = []
-        for item in by_session.values():
-            score = item.pop("score")
-            if score is not None:
-                result.append({**item, **score})
-        return sorted(result, key=lambda item: item["ts"], reverse=True)
-
-    def scores(self) -> list[dict]:
-        """返回每个 Session 的最新 score；score 是 Session-level fact。"""
-        return self._score_rows()
-
-    def score_events(self) -> list[dict]:
-        """返回 score facts 的最新 Session-level 视图。"""
-        return self._score_rows()
-
     def _append_evaluation_locked(self, fact: dict) -> int:
         """调用方必须持有 _lock；Evaluation seq 独立于 Session seq。"""
         eid = fact["evaluation_id"]
@@ -458,10 +445,6 @@ class Ledger:
 
         return EvaluationStore(self).append(fact)
 
-    def append_evaluation_event(self, fact: dict) -> int:
-        """Evaluation fact 追加的显式名称。"""
-        return self.append_evaluation(fact)
-
     def read_evaluation_events(self, evaluation_id: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
@@ -470,29 +453,14 @@ class Ledger:
             ).fetchall()
         return [{"seq": int(row["seq"]), "event": json.loads(row["event_json"])} for row in rows]
 
-    # 兼容较短的领域名；facts 仍以带 seq 的记录返回，便于审计与折叠。
-    def evaluation_events(self, evaluation_id: str) -> list[dict]:
-        return self.read_evaluation_events(evaluation_id)
-
-    def read_evaluation(self, evaluation_id: str) -> list[dict]:
-        """Evaluation facts 的公开短名。"""
-        return self.read_evaluation_events(evaluation_id)
-
-    def _all_evaluation_records_locked(self):
-        rows = self._conn.execute(
-            "SELECT evaluation_id, seq, event_json FROM evaluation_events ORDER BY evaluation_id, seq"
-        ).fetchall()
-        records = {}
-        for row in rows:
-            records.setdefault(row["evaluation_id"], []).append({
-                "seq": int(row["seq"]), "event": json.loads(row["event_json"])
-            })
-        return records.items()
-
     def _fold_evaluation_locked(self, evaluation_id: str):
-        records = [records for eid, records in self._all_evaluation_records_locked()
-                    if eid == evaluation_id]
-        return fold_evaluation_events(evaluation_id, records[0] if records else [])
+        rows = self._conn.execute(
+            "SELECT seq, event_json FROM evaluation_events"
+            " WHERE evaluation_id=? ORDER BY seq", (evaluation_id,)
+        ).fetchall()
+        records = [{"seq": int(row["seq"]), "event": json.loads(row["event_json"])}
+                   for row in rows]
+        return fold_evaluation_events(evaluation_id, records)
 
     def fold_evaluation(self, evaluation_id: str) -> dict | None:
         with self._lock:

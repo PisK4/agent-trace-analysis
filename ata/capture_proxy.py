@@ -29,14 +29,14 @@ _HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding"}
 
 #: 哪些 wire 路径的请求走「虚拟 sid」兜底(代理壳不知道发起方是哪个
 #: host——droid 真实流量既无 x-droid-* 头也无 body metadata.session_id,
-#: 唯一可观察信号是 HTTP path)。 当前只覆盖 OpenAI Chat Completions /
-#: Responses 两条(都是 droid / codex 走 OpenAI 协议用的 path 后缀)。
+#: 唯一可观察信号是 HTTP path)。当前覆盖 OpenAI Chat Completions、Responses
+#: 与 Codex 的 backend-api Responses 后缀。
 #:
 #: 多 daemon 区分: 同一 client_port 短时间内(默认 5min) 复用同一虚拟 sid,
 #: 不同的 daemon 各自用自己的 17878 连接(client port 不同) 拿不同虚拟
 #: sid。 daemon 重连会让 client_port 变 → 新虚拟 sid, 这是设计取舍。
 _VIRTUAL_SID_PATH_SUFFIXES = (
-    "/v1/chat/completions", "/v1/responses")
+    "/v1/chat/completions", "/v1/responses", "/backend-api/codex/responses")
 
 #: 同一 client_port 复用虚拟 sid 的时间窗 (ms)。 5 分钟覆盖普通对话
 #: 一轮的间隔, 超过此间隔视作"新 session"换新虚拟 sid。

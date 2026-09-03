@@ -69,6 +69,21 @@ class LedgerTest(unittest.TestCase):
             with self.assertRaisesRegex(ResetRequiredError, "reset required"):
                 Ledger(path)
 
+    def test_transaction_rolls_back_atomically(self):
+        with tempfile.TemporaryDirectory() as td:
+            led = Ledger(Path(td))
+            self.addCleanup(led.close)
+            led.append(opened())
+            with self.assertRaises(ValueError):
+                with led.transaction() as tx:
+                    tx.append_event(message("s1", "m1", 1787000000020, 1, 1))
+                    raise ValueError("boom")
+            # 回滚后事件流里只剩事务前的事实；单条 append/append_many 不受影响
+            self.assertEqual(
+                [r["event"]["type"] for r in led.read("s1")], ["session.opened"])
+            led.append(message("s1", "m1", 1787000000020, 1, 1))
+            self.assertEqual(len(led.read("s1")), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
